@@ -18,7 +18,8 @@ const TESTS = [
     ['test-regeln.js', 'Tennisregeln'],
     ['test-aufsprung.js', 'Aufsprungpunkte'],
     ['test-gegner.js', 'Verhalten des Gegners'],
-    ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz']
+    ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz'],
+    ['test-browser.js', 'Start im echten Browser (Chrome headless)']
 ];
 
 let fehlgeschlagen = 0;
