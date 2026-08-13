@@ -1,7 +1,7 @@
 /* =============================================================================
  * XPERION ARCADE — "KARAOKOVIC" / VOICE TENNIS
- * Version : V39  (Moduswahl, Duell-Modus, Range-Bestätigung,
- *                 dynamische Klaviatur)
+ * Version : V40  (Onboarding-Feinschliff, Balltempo wie vor der Bremsung,
+ *                 Platzbild ohne Fremdlogos)
  * Build   : Single-File, kein ES6-Import, kein Bundler, kein Server.
  *           Startet offline per file:// (index.html -> <script src="app.js">).
  * Ziel    : Live-Bühne, Chrome Fullscreen, LED-Wand, 60 FPS, Segmentlänge <= 7 min
@@ -4906,7 +4906,7 @@
             this.handleResize();
 
             this.bindOnboarding();
-            console.info('[Karaokovic] V39 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset.');
+            console.info('[Karaokovic] V40 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset.');
         }
 
         /** Canvasgröße nachziehen; im Ruhezustand den Aufschlag neu aufbauen. */
