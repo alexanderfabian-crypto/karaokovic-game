@@ -6,43 +6,82 @@
     <style>
         body { background-color: #050508; color: #fff; font-family: 'Courier New', monospace; text-align: center; margin: 0; padding: 0; overflow: hidden; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; position: relative; }
         h1 { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; font-size: 1.5rem; margin: 10px 0; }
-        
-        #gameCanvas { background-color: #33994d; width: 100vw; height: 100vh; display: block; position: fixed; top: 0; left: 0; }
-        
+
+        #gameCanvas { background-color: #05050a; width: 100vw; height: 100vh; display: block; position: fixed; top: 0; left: 0; }
+
         #onboarding { background: #111122; border: 2px solid #00ffcc; border-radius: 10px; padding: 30px; width: 600px; position: relative; z-index: 10; box-shadow: 0 0 30px rgba(0, 255, 204, 0.2); }
         .step { display: none; }
         .step.active { display: block; }
-        
+
         button { background: #ff007f; color: white; border: none; padding: 15px 40px; font-size: 1.2rem; cursor: pointer; border-radius: 5px; font-weight: bold; text-transform: uppercase; box-shadow: 0 0 15px rgba(255, 0, 127, 0.6); transition: 0.2s; margin-top: 15px; }
         button:hover { background: #ff3399; transform: scale(1.05); }
         button.cyan { background: #00ffcc; color: #000; box-shadow: 0 0 15px rgba(0, 255, 204, 0.6); }
         button.cyan:hover { background: #33ffdd; }
-        
+
         #livePitch { font-size: 2rem; color: #ff007f; margin: 20px 0; font-weight: bold; height: 40px;}
         #debug { font-size: 1rem; color: #888; padding: 10px; background: #000; }
+
+        /* Wer gerade dran ist — im Duell die einzige Stelle, an der das steht. */
+        .wer { color: #00ffcc; font-size: 1.1rem; letter-spacing: 0.08em; margin: 0 0 6px; }
+        .hinweis { color: #7a7a90; font-size: 0.85rem; line-height: 1.45; margin-top: 18px; }
+        .rangeWert { font-size: 1.35rem; color: #00ffcc; font-weight: bold; margin: 6px 0 2px; }
+        .rangeDetail { color: #aaa; font-size: 0.9rem; margin: 0 0 4px; }
+        .modusZeile { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+        .modusZeile button { flex: 1 1 240px; padding: 18px 20px; font-size: 1.05rem; }
     </style>
 </head>
 <body>
     <div id="onboarding">
         <h1>🎤 KARAOKOVIC 🎾</h1>
-        <div id="step1" class="step active">
-            <h3>SCHRITT 1: MIKROFON-CHECK</h3>
+
+        <!-- Schritt 1: Spielmodus. Muss VOR dem Mikrofon kommen — im Duell
+             wird der Eingang zweikanalig geöffnet, das lässt sich nachträglich
+             nicht mehr umstellen. -->
+        <div id="step0" class="step active">
+            <h3>SCHRITT 1: SPIELMODUS</h3>
+            <p>Wie wird gespielt?</p>
+            <div class="modusZeile">
+                <button id="btnModeArcade" class="cyan">Arcade<br><small>allein gegen Alex</small></button>
+                <button id="btnModeVersus">Duell<br><small>zwei Spieler, zwei Mikros</small></button>
+            </div>
+            <p class="hinweis">
+                Im Duell steuert Spieler 1 die untere und Spieler 2 die obere Figur.
+                Nötig ist ein zweikanaliger Eingang: Spieler 1 auf dem linken,
+                Spieler 2 auf dem rechten Kanal.
+            </p>
+        </div>
+
+        <div id="step1" class="step">
+            <h3>SCHRITT 2: MIKROFON-CHECK</h3>
             <p>Willkommen im Backstage. Lass uns das System hochfahren.</p>
             <button id="btnMic">Mikrofon aktivieren</button>
         </div>
 
         <div id="step2" class="step">
-            <h3>SCHRITT 2: STIMM-PROFILER</h3>
-            <p>Singe jetzt einen Ton. Das System misst deine Stimme in Echtzeit.</p>
+            <h3>SCHRITT 3: STIMM-PROFILER</h3>
+            <p id="calibWho" class="wer"></p>
             <div id="livePitch">-- Hz</div>
-            
-            <p style="color: #aaa;">1. Singe einen gemütlichen <b>TIEFEN</b> Ton und klicke:</p>
-            <button id="btnLow" class="cyan">Tiefen Ton (Links) speichern</button>
-            
-            <p style="color: #aaa; margin-top: 20px;">2. Singe einen gemütlichen <b>HOHEN</b> Ton und klicke:</p>
-            <button id="btnHigh" class="cyan" disabled style="opacity: 0.3;">Hohen Ton (Rechts) speichern</button>
-            
-            <br><br>
+
+            <!-- Phase A: einsingen -->
+            <div id="calibSing">
+                <p style="color: #aaa;">1. Singe einen gemütlichen <b>TIEFEN</b> Ton und klicke:</p>
+                <button id="btnLow" class="cyan">Tiefen Ton (Links) speichern</button>
+
+                <p style="color: #aaa; margin-top: 20px;">2. Singe einen gemütlichen <b>HOHEN</b> Ton und klicke:</p>
+                <button id="btnHigh" class="cyan" disabled style="opacity: 0.3;">Hohen Ton (Rechts) speichern</button>
+            </div>
+
+            <!-- Phase B: passt der Bereich? Die Klaviatur oben und unten im
+                 Bild zeigt ihn währenddessen an. -->
+            <div id="calibConfirm" style="display: none;">
+                <p id="calibRange" class="rangeWert"></p>
+                <p id="calibRangeDetail" class="rangeDetail"></p>
+                <p style="color: #aaa;">Passt dieser Bereich? Die Klaviatur zeigt ihn an.</p>
+                <button id="btnRangeOk" class="cyan">Range okay!</button>
+                <button id="btnRangeRedo">Range nochmal einsingen</button>
+            </div>
+
+            <br>
             <button id="btnStartGame" style="display: none; width: 100%;">MATCH STARTEN</button>
         </div>
     </div>
@@ -50,6 +89,6 @@
     <canvas id="gameCanvas"></canvas>
 
     <!-- Cache Buster V5 -->
-    <script src="./app.js?v=arcade_v38"></script>
+    <script src="./app.js?v=arcade_v39"></script>
 </body>
 </html>

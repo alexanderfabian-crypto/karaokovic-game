@@ -46,6 +46,8 @@
      * @typedef  {Object} GameConfig
      * @property {number} minFreq      Kalibrierter tiefster Ton in Hz (= linker Rand)
      * @property {number} maxFreq      Kalibrierter höchster Ton in Hz (= rechter Rand)
+     * @property {number} minFreq2     Dasselbe für Spieler 2 (nur im Versus-Modus)
+     * @property {number} maxFreq2     Dasselbe für Spieler 2 (nur im Versus-Modus)
      * @property {number} volumeGate   RMS-Schwelle: darunter gilt "Stille"
      * @property {number} serveVolume  RMS-Schwelle für den Aufschlag
      * @property {number} baseSpeed    Grundgeschwindigkeit des Balls (px/Frame)
@@ -58,6 +60,30 @@
     const CONFIG = {
         minFreq: 100,
         maxFreq: 300,
+
+        /**
+         * Stimmumfang von Spieler 2 (obere Figur), nur im Versus-Modus benutzt.
+         *
+         * BEWUSST EIN ZWEITES PAAR statt eines gemeinsamen Bereichs. Ein Bass
+         * und ein Sopran auf einer gemeinsamen Skala hieße: einer von beiden
+         * erreicht die Seitenlinien nie, der andere steht dauernd am Anschlag.
+         * Jeder Spieler bekommt seinen eigenen Umfang, und beide bilden ihn
+         * auf DIESELBE Feldbreite ab — die Steuerung fühlt sich dadurch für
+         * beide gleich an, unabhängig von der Stimmlage.
+         *
+         * Im Arcade-Modus bleiben diese Werte unbenutzt; die KI hat keine
+         * Stimme.
+         */
+        minFreq2: 100,
+        maxFreq2: 300,
+
+        /**
+         * Gewählter Spielmodus (Wert aus MODE). Wird vor dem Onboarding
+         * gesetzt und danach nicht mehr verändert. Default ist Arcade —
+         * ohne Moduswahl verhält sich das Spiel wie bis V38.
+         */
+        mode: 'ARCADE',
+
         volumeGate: 0.02,
 
         /* ---------------------------------------------------------------------
@@ -466,6 +492,19 @@
     const PLAYER = { ANDREA: 'andrea', ALEX: 'alex' };
 
     /**
+     * Spielmodus. @enum {string}
+     *
+     * `ARCADE`  — untere Figur wird gesungen, obere ist die KI (Stand bis V38).
+     * `VERSUS`  — beide Figuren werden gesungen, je ein Mikrofon pro Spieler.
+     *
+     * Der Modus wird VOR dem Onboarding gewählt, weil er den gesamten weiteren
+     * Ablauf bestimmt: im Versus-Modus wird das Mikrofon zweikanalig geöffnet
+     * und zweimal kalibriert. Nachträglich umschalten geht deshalb nicht ohne
+     * Neuladen — die Signalkette steht dann bereits.
+     */
+    const MODE = { ARCADE: 'ARCADE', VERSUS: 'VERSUS' };
+
+    /**
      * Spielabschnitt — Einspielen oder Match. @enum {string}
      *
      * BEWUSST NEBEN `STATE`, NICHT DARIN. Angefragt war ein `STATE.WARMUP`,
@@ -812,26 +851,35 @@
          * @returns {Promise<void>}
          */
         async init(constraints) {
-            const audioConstraints = constraints !== undefined ? constraints : (
-                FEATURES.RAW_AUDIO_CONSTRAINTS
-                    ? {
-                        /* Dante-Clean-Feed: Chrome darf das Signal NICHT anfassen.
-                           AGC würde die Lautstärke normalisieren und damit sowohl
-                           das Volume-Gate als auch die Schlagkraft zerstören. */
-                        echoCancellation: false,
-                        noiseSuppression: false,
-                        autoGainControl: false,
-                        channelCount: 1
-                    }
-                    : true
-            );
+            const audioConstraints = constraints !== undefined
+                ? constraints
+                : AudioEngine.constraintsFor(1);
 
             const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
 
             this.audioCtx = new AudioContext();
-            const source = this.audioCtx.createMediaStreamSource(stream);
+            this.attachTo(this.audioCtx, this.audioCtx.createMediaStreamSource(stream));
 
-            this.biquadFilter = this.audioCtx.createBiquadFilter();
+            if (this.audioCtx.state === 'suspended') await this.audioCtx.resume();
+        }
+
+        /**
+         * Filter und Analyser an einen bereits bestehenden Knoten hängen.
+         *
+         * Herausgezogen aus `init()`, damit zwei Instanzen an EINEM Eingang
+         * hängen können — im Versus-Modus an je einem Kanal desselben
+         * Mikrofonsignals. Der Mono-Pfad geht durch dieselbe Methode und ist
+         * dadurch nachweislich identisch zu vorher.
+         *
+         * @param {AudioContext} ctx
+         * @param {AudioNode}    node    Quelle (MediaStreamSource oder Splitter)
+         * @param {number}       [channel] Ausgangsindex an `node`; ohne Angabe
+         *                                 der einzige Ausgang.
+         */
+        attachTo(ctx, node, channel) {
+            this.audioCtx = ctx;
+
+            this.biquadFilter = ctx.createBiquadFilter();
             this.biquadFilter.type = 'lowpass';
             /* Während der Kalibrierung weit offen — ein 320-Hz-Tiefpass dämpft
                einen hohen Kalibrierton bei 550 Hz auf 38 % und schiebt ihn
@@ -840,16 +888,71 @@
             this.biquadFilter.frequency.value = CONFIG.filterCalibrationHz;
             this.biquadFilter.Q.value = 1;
 
-            this.analyser = this.audioCtx.createAnalyser();
+            this.analyser = ctx.createAnalyser();
             this.analyser.fftSize = 2048;
 
-            source.connect(this.biquadFilter);
+            if (channel === undefined) node.connect(this.biquadFilter);
+            else node.connect(this.biquadFilter, channel);
             this.biquadFilter.connect(this.analyser);
 
             this.dataArray = new Float32Array(this.analyser.fftSize);
             this._corr = new Float64Array(this.analyser.fftSize + 1);
+        }
 
-            if (this.audioCtx.state === 'suspended') await this.audioCtx.resume();
+        /**
+         * Beide Eingänge für den Versus-Modus öffnen.
+         *
+         * EIN Mikrofongerät, zwei Kanäle: so liefert die Dante Virtual
+         * Soundcard die beiden Clean-Feeds. Ein `getUserMedia` pro Spieler
+         * ginge nicht — der Browser kennt nur Geräte, keine Einzelkanäle.
+         *
+         * ACHTUNG BÜHNE: Liefert das Gerät nur einen Kanal, bekommt Spieler 2
+         * Stille und seine Figur steht. Deshalb wird die tatsächliche
+         * Kanalzahl zurückgegeben und vom Aufrufer geprüft — ein stiller
+         * zweiter Kanal sieht sonst aus wie ein kaputtes Spiel.
+         *
+         * @param   {AudioEngine} eins Spieler 1 (untere Figur), Kanal 0
+         * @param   {AudioEngine} zwei Spieler 2 (obere Figur), Kanal 1
+         * @returns {Promise<number>} Tatsächliche Kanalzahl der Spur.
+         */
+        static async initPair(eins, zwei) {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: AudioEngine.constraintsFor(2)
+            });
+
+            const ctx = new AudioContext();
+            const source = ctx.createMediaStreamSource(stream);
+            const splitter = ctx.createChannelSplitter(2);
+            source.connect(splitter);
+
+            eins.attachTo(ctx, splitter, 0);
+            zwei.attachTo(ctx, splitter, 1);
+
+            if (ctx.state === 'suspended') await ctx.resume();
+
+            const settings = stream.getAudioTracks()[0].getSettings();
+            return settings.channelCount || 1;
+        }
+
+        /**
+         * Aufnahme-Constraints für `kanaele` Kanäle.
+         * @param   {number} kanaele
+         * @returns {MediaTrackConstraints|boolean}
+         */
+        static constraintsFor(kanaele) {
+            if (!FEATURES.RAW_AUDIO_CONSTRAINTS) return true;
+            return {
+                /* Dante-Clean-Feed: Chrome darf das Signal NICHT anfassen.
+                   AGC würde die Lautstärke normalisieren und damit sowohl das
+                   Volume-Gate als auch die Schlagkraft zerstören.
+                   Zusätzlich im Versus-Modus entscheidend: Echo Cancellation
+                   und Noise Suppression zwingen Chrome zu einem Mono-Downmix —
+                   damit lägen beide Stimmen auf beiden Kanälen. */
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+                channelCount: kanaele
+            };
         }
 
         /**
@@ -866,9 +969,10 @@
          * durch und hebt damit den RMS. Nach einer Kalibrierung deutlich über
          * 200 Hz `volumeGate` und `serveVolume` einmal gegenprüfen.
          */
-        applyCalibratedFilter() {
+        applyCalibratedFilter(player) {
             if (!this.biquadFilter) return;
-            const cutoff = Math.max(320, Math.min(4000, CONFIG.maxFreq * 1.6));
+            const cutoff = Math.max(320,
+                Math.min(4000, Physics.voiceRange(player).max * 1.6));
             this.biquadFilter.frequency.value = cutoff;
             console.info(`[AudioEngine] Vorfilter auf ${Math.round(cutoff)} Hz gesetzt.`);
         }
@@ -1384,15 +1488,18 @@
          * @param {Paddle}      paddleAndrea
          * @param {Paddle}      paddleAlex
          * @param {BounceMarks} bounceMarks
-         * @param {AudioEngine} audio
+         * @param {AudioEngine} audio  Eingang Spieler 1 (untere Figur)
+         * @param {AudioEngine} [audio2] Eingang Spieler 2 (obere Figur, Versus)
          */
-        constructor(match, ball, paddleAndrea, paddleAlex, bounceMarks, audio) {
+        constructor(match, ball, paddleAndrea, paddleAlex, bounceMarks, audio, audio2) {
             this.match = match;
             this.ball = ball;
             this.paddleAndrea = paddleAndrea;
             this.paddleAlex = paddleAlex;
             this.bounceMarks = bounceMarks;
             this.audio = audio;
+            /** @type {AudioEngine|null} Nur im Versus-Modus verkabelt. */
+            this.audio2 = audio2 || null;
 
             /** @type {number} Gefilterte Ziel-X-Position von Andrea. */
             this.targetX = VIRTUAL_WIDTH / 2;
@@ -1414,6 +1521,16 @@
              * schießt die Figur mit alter Geschwindigkeit weiter.
              */
             this.velocityX = 0;
+
+            /**
+             * @type {number} Ziel-X der OBEREN Figur im Versus-Modus.
+             * Im Arcade-Modus unbenutzt — dort schiebt die KI `paddleAlex.x`
+             * direkt, ohne Ziel und ohne Geschwindigkeit.
+             */
+            this.alexTargetX = VIRTUAL_WIDTH / 2;
+            /** @type {number} Geschwindigkeit der oberen Figur (Versus-Modus). */
+            this.alexVelocityX = 0;
+
             /** @type {boolean} KI-Merker: verfehlt Alex den nächsten Ball absichtlich? */
             this.pcWillMiss = false;
             /** @type {number} Aufgeladene Frames über der Aufschlagschwelle. */
@@ -1466,11 +1583,13 @@
          * jetzt genau von Linie zu Linie.
          *
          * @param   {number} freq Tonhöhe in Hz
+         * @param   {string} [player] Wert aus PLAYER; ohne Angabe Andrea.
          * @returns {number} X-Position in Weltkoordinaten
          */
-        freqToQuantizedX(freq) {
-            const minMidi = 12 * Math.log2(CONFIG.minFreq / 440) + 69;
-            const maxMidi = 12 * Math.log2(CONFIG.maxFreq / 440) + 69;
+        freqToQuantizedX(freq, player) {
+            const range = Physics.voiceRange(player);
+            const minMidi = 12 * Math.log2(range.min / 440) + 69;
+            const maxMidi = 12 * Math.log2(range.max / 440) + 69;
             const midiNote = 12 * Math.log2(freq / 440) + 69;
 
             const percentage = (midiNote - minMidi) / (maxMidi - minMidi);
@@ -1488,8 +1607,11 @@
             /* Mit zurücksetzen, sonst spannt die Trefferzone im ersten Frame
                nach dem Sprung in die Feldmitte über das halbe Feld. */
             this.prevCurrentX = VIRTUAL_WIDTH / 2;
-            this.paddleAlex.x = VIRTUAL_WIDTH / 2;
+            /* Auch die obere Figur mit Geschwindigkeit auf null — im Duell
+               trägt sie sonst ihren Schwung in den nächsten Aufschlag. */
+            this.haltAlexAt();
             this.audio.resetSmoothing();
+            if (this.audio2) this.audio2.resetSmoothing();
 
             const b = this.ball;
             b.x = this.currentX;
@@ -1528,15 +1650,60 @@
          * ein Frame, passend zur übrigen Physik.
          */
         glideToTarget() {
-            const omega = 2 / CONFIG.glideFrames;
-            const exp = 1 / (1 + omega + 0.48 * omega * omega
-                + 0.235 * omega * omega * omega);
+            const r = Physics.glideStep(this.currentX, this.targetX, this.velocityX);
+            this.currentX = r.x;
+            this.velocityX = r.v;
+        }
 
-            const change = this.currentX - this.targetX;
-            const temp = this.velocityX + omega * change;
+        /**
+         * Dasselbe für die obere Figur (Versus-Modus).
+         *
+         * Sie benutzt bewusst DIESELBE Bewegungsroutine wie die untere. Zwei
+         * unterschiedlich gedämpfte Figuren würden sich beim Zuschauen sofort
+         * verraten, und der Vergleich zwischen den Spielern wäre unfair.
+         */
+        glideAlexToTarget() {
+            const r = Physics.glideStep(
+                this.paddleAlex.x, this.alexTargetX, this.alexVelocityX);
+            this.paddleAlex.x = r.x;
+            this.alexVelocityX = r.v;
+        }
 
-            this.velocityX = (this.velocityX - omega * temp) * exp;
-            this.currentX = this.targetX + (change + temp) * exp;
+        /**
+         * Obere Figur hart anhalten — Gegenstück zu `haltAt()`.
+         * @param {number} [x] Zielposition, Default Bildmitte
+         */
+        haltAlexAt(x) {
+            const px = (x === undefined) ? VIRTUAL_WIDTH / 2 : x;
+            this.paddleAlex.x = px;
+            this.alexTargetX = px;
+            this.alexVelocityX = 0;
+        }
+
+        /**
+         * X-Position der Figur, die gerade aufschlägt.
+         * @returns {number} Weltkoordinate
+         */
+        serverX() {
+            return this.match.server === PLAYER.ANDREA
+                ? this.currentX
+                : this.paddleAlex.x;
+        }
+
+        /**
+         * Der Eingang, dessen Lautstärke den Aufschlag auslöst.
+         *
+         * Im Duell schlägt jeder mit der eigenen Stimme auf. Im Arcade-Modus
+         * hat die KI keine — dort löst wie bisher die einzige Stimme im Raum
+         * auch Alex' Aufschlag aus.
+         *
+         * @returns {AudioEngine}
+         */
+        serverAudio() {
+            const zweiter = CONFIG.mode === MODE.VERSUS
+                && this.match.server === PLAYER.ALEX
+                && this.audio2;
+            return zweiter ? this.audio2 : this.audio;
         }
 
         /**
@@ -1828,13 +1995,19 @@
             this.prevCurrentX = this.currentX;
             const prevAlexX = this.paddleAlex.x;
 
-            /* --- Aufschlagaufbau: Ball klebt am Schläger ---------------------- */
+            /* --- Aufschlagaufbau: Ball klebt am Schläger ----------------------
+             * Am Schläger DES AUFSCHLÄGERS, nicht fest an Andreas Position.
+             * Solange Alex eine KI war, fiel der Unterschied nicht auf: beide
+             * standen im Aufbau in der Feldmitte. Mit einer zweiten Stimme
+             * bewegt sich Alex im Aufbau aber selbst — der Ball hing sonst
+             * sichtbar an der falschen Figur.
+             * ------------------------------------------------------------- */
             if (match.state === STATE.SERVE_WAIT || match.state === STATE.SILENCE_CHECK) {
-                b.x = this.currentX;
+                b.x = this.serverX();
                 b.y = this.serveRestY();
 
                 if (match.state === STATE.SERVE_WAIT) {
-                    if (this.audio.currentVolume >= CONFIG.serveVolume) {
+                    if (this.serverAudio().currentVolume >= CONFIG.serveVolume) {
                         this.serveCharge++;
                         /* Siehe Physics.SERVE_CHARGE_FRAMES — nur eine Sperre
                            gegen einzelne Messspitzen, kein Durchhaltetest. */
@@ -1912,7 +2085,12 @@
              * knappe Schlägerbreite neben den Ball, sichtbar als verpasster
              * Laufweg, aber garantiert außerhalb der Trefferzone.
              * ------------------------------------------------------------- */
-            if (!this.pcWillMiss) {
+            if (CONFIG.mode === MODE.VERSUS) {
+                /* Im Duell gibt es keine KI. Die obere Figur folgt der zweiten
+                   Stimme, gesetzt in Game.step() — hier wird sie nur noch
+                   bewegt, mit derselben Dämpfung wie die untere. */
+                this.glideAlexToTarget();
+            } else if (!this.pcWillMiss) {
                 /* Vorausschauend: Alex läuft dorthin, wo der Ball SEINE Linie
                    kreuzen wird, nicht dorthin, wo der Ball gerade ist. Das
                    frühere Nachziehen (Lerp auf die aktuelle Ballposition)
@@ -1981,10 +2159,15 @@
             if (b.vy < 0 && prevY > this.paddleAlex.y && b.y - b.radius < this.paddleAlex.y) {
                 if (b.x >= pLeft && b.x <= pRight) {
                     b.y = this.paddleAlex.y + b.radius;
-                    /* V36 setzte hierfür kurzzeitig die globale Lautstärke.
-                       Jetzt explizit als simulierte Schlagkraft übergeben —
-                       gleiche Werte, gleiche Wirkung, keine versteckte Kopplung. */
-                    const simulatedVolume = 0.04 + Math.random() * 0.03;
+                    /* Schlagkraft der oberen Figur. Im Duell kommt sie aus dem
+                       zweiten Mikrofon — genauso wie Andreas Schlagkraft aus
+                       dem ersten. Nur im Arcade-Modus wird sie gewürfelt:
+                       V36 setzte dafür kurzzeitig die globale Lautstärke, jetzt
+                       explizit übergeben — gleiche Werte, gleiche Wirkung,
+                       keine versteckte Kopplung. */
+                    const simulatedVolume = (CONFIG.mode === MODE.VERSUS && this.audio2)
+                        ? this.audio2.currentVolume
+                        : 0.04 + Math.random() * 0.03;
                     this.calculateHit(this.paddleAlex.x, false, simulatedVolume);
                 }
             }
@@ -2082,6 +2265,50 @@
      * ---------------------------------------------------------------------- */
     Physics.PLAYER_MIN_X = COURT_LEFT;
     Physics.PLAYER_MAX_X = COURT_RIGHT;
+
+    /**
+     * Kalibrierter Stimmumfang eines Spielers.
+     *
+     * Einzige Stelle, an der entschieden wird, welches Wertepaar aus CONFIG
+     * gilt. Ohne Angabe kommt Andreas Umfang — dadurch verhalten sich alle
+     * bestehenden Aufrufer (und die Entwickler-Tests) unverändert.
+     *
+     * @param   {string} [player] Wert aus PLAYER.
+     * @returns {{min:number, max:number}} Frequenzen in Hz.
+     */
+    /**
+     * Ein Schritt der kritisch gedämpften Annäherung.
+     *
+     * Herausgezogen aus `glideToTarget()`, damit die obere Figur im
+     * Versus-Modus exakt dieselbe Bewegung bekommt. Die Rechnung selbst ist
+     * unverändert: `velocity` wird aus dem ALTEN Wert und `temp` gebildet,
+     * `x` aus `change` und `temp` — beide aus denselben Zwischenwerten, die
+     * Reihenfolge der Zuweisungen ist deshalb ohne Bedeutung.
+     *
+     * @param   {number} current
+     * @param   {number} target
+     * @param   {number} velocity
+     * @returns {{x:number, v:number}} Neue Position und Geschwindigkeit.
+     */
+    Physics.glideStep = function (current, target, velocity) {
+        const omega = 2 / CONFIG.glideFrames;
+        const exp = 1 / (1 + omega + 0.48 * omega * omega
+            + 0.235 * omega * omega * omega);
+
+        const change = current - target;
+        const temp = velocity + omega * change;
+
+        return {
+            x: target + (change + temp) * exp,
+            v: (velocity - omega * temp) * exp,
+        };
+    };
+
+    Physics.voiceRange = function (player) {
+        return player === PLAYER.ALEX
+            ? { min: CONFIG.minFreq2, max: CONFIG.maxFreq2 }
+            : { min: CONFIG.minFreq, max: CONFIG.maxFreq };
+    };
 
     /**
      * Frames über der Aufschlagschwelle, bevor ausgelöst wird.
@@ -2255,7 +2482,7 @@
             this.drawBall(scene.ball);
 
             const scoreLine = scene.match.scoreLine();
-            this.drawHud(scene.match, scene.audio);
+            this.drawHud(scene.match, scene.audio, scene.audio2);
             this.drawDimOverlay(scene.match);
 
             if (scene.match.state === STATE.POINT_SCORED) {
@@ -2405,6 +2632,36 @@
          */
         hasCourtBackdrop() {
             return this.assets.isReady('court_surface');
+        }
+
+        /**
+         * Untergrund für das Onboarding — bewusst OHNE Tennisplatz.
+         *
+         * Bis V38 stand der fertige Platz schon hinter dem Onboarding-Kasten.
+         * Das nimmt dem Übergang ins Einspielen seine Wirkung: wenn der Platz
+         * von Anfang an da ist, passiert beim Start des Spiels optisch nichts
+         * mehr. Jetzt ist während des Einsingens nur die Klaviatur zu sehen —
+         * der Platz erscheint erst, wenn es losgeht.
+         *
+         * Dieselbe Fläche wie der Letterbox-Rand, damit der Übergang später
+         * nur den Platz einblendet und nicht auch noch den Hintergrund wechselt.
+         */
+        drawOnboardingBackdrop() {
+            const ctx = this.ctx;
+            const w = this.viewport.width;
+            const h = this.viewport.height;
+
+            ctx.fillStyle = Renderer.ONBOARDING_BACKDROP_EDGE;
+            ctx.fillRect(0, 0, w, h);
+
+            /* Leichter Verlauf zur Mitte: eine völlig flache Fläche wirkt auf
+               einer LED-Wand dieser Größe wie ein Ausfall des Zuspielers. */
+            const g = ctx.createLinearGradient(0, 0, 0, h);
+            g.addColorStop(0, Renderer.ONBOARDING_BACKDROP_EDGE);
+            g.addColorStop(0.5, Renderer.ONBOARDING_BACKDROP_MID);
+            g.addColorStop(1, Renderer.ONBOARDING_BACKDROP_EDGE);
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, w, h);
         }
 
         /**
@@ -3068,7 +3325,7 @@
          * derselben Stelle stehen, wenn aus "0" ein "40" oder "ADV" wird.
          * @param {MatchState} match
          */
-        drawHud(match, audio) {
+        drawHud(match, audio, audio2) {
             const ctx = this.ctx;
             const p = this.viewport.toScreen(Renderer.HUD_X, Renderer.HUD_Y, this._p1);
             const s = p.scale;
@@ -3167,7 +3424,7 @@
 
             ctx.restore();
 
-            if (match.isWarmup) this.drawKeyboards(audio);
+            if (match.isWarmup) this.drawKeyboards(audio, audio2);
         }
 
         /* --------------------------------------------------------------------
@@ -3192,11 +3449,7 @@
          *
          * @param {AudioEngine} [audio]
          */
-        drawKeyboards(audio) {
-            const minMidi = Math.round(Renderer.midiOf(CONFIG.minFreq));
-            const maxMidi = Math.round(Renderer.midiOf(CONFIG.maxFreq));
-            if (!(maxMidi > minMidi)) return;
-
+        drawKeyboards(audio, audio2) {
             const liveMidi = Renderer.liveMidiOf(audio);
             const scale = this.viewport.scale;
 
@@ -3205,14 +3458,27 @@
             const near = this.viewport.toScreen(0, Renderer.KEYS_Y_NEAR, this.proj.scratchA);
             const nl = this.proj.project(COURT_LEFT, COURT_BOTTOM, 0, this._p1).x;
             const nr = this.proj.project(COURT_RIGHT, COURT_BOTTOM, 0, this._p2).x;
-            this.drawKeyboardStrip(nl, near.y, nr - nl,
-                Renderer.KEYS_HEIGHT_NEAR * scale, minMidi, maxMidi, liveMidi);
+            const unten = Renderer.keyboardSpan(PLAYER.ANDREA, nl, nr - nl);
+            if (unten) {
+                this.drawKeyboardStrip(unten.x, near.y, unten.w,
+                    Renderer.KEYS_HEIGHT_NEAR * scale,
+                    unten.minMidi, unten.maxMidi, liveMidi);
+            }
 
+            /* Die obere Tastatur gehört im Versus-Modus Spieler 2 und zeigt
+               dessen Umfang und dessen Ton. Im Arcade-Modus hat die KI keine
+               Stimme — dort bleibt es bei Andreas Umfang, wie bisher. */
+            const versus = CONFIG.mode === MODE.VERSUS;
             const far = this.viewport.toScreen(0, Renderer.KEYS_Y_FAR, this.proj.scratchA);
             const fl = this.proj.project(COURT_LEFT, COURT_TOP, 0, this._p1).x;
             const fr = this.proj.project(COURT_RIGHT, COURT_TOP, 0, this._p2).x;
-            this.drawKeyboardStrip(fl, far.y, fr - fl,
-                Renderer.KEYS_HEIGHT_FAR * scale, minMidi, maxMidi, liveMidi);
+            const oben = Renderer.keyboardSpan(
+                versus ? PLAYER.ALEX : PLAYER.ANDREA, fl, fr - fl);
+            if (oben) {
+                this.drawKeyboardStrip(oben.x, far.y, oben.w,
+                    Renderer.KEYS_HEIGHT_FAR * scale, oben.minMidi, oben.maxMidi,
+                    versus ? Renderer.liveMidiOf(audio2) : liveMidi);
+            }
         }
 
         /**
@@ -3236,20 +3502,29 @@
          * @param {AudioEngine} audio
          * @param {{top:number, bottom:number, left:number, width:number}} rect
          */
-        drawOnboardingKeyboards(audio, rect) {
+        drawOnboardingKeyboards(audio, rect, player) {
             const liveMidi = Renderer.liveMidiOf(audio);
-            const lo = Renderer.ONBOARDING_MIDI_LOW;
-            const hi = Renderer.ONBOARDING_MIDI_HIGH;
+            const range = Physics.voiceRange(player);
 
             /* Bereits gespeicherte Kalibriertöne markieren. Der Vergleich auf
                die Vorgabewerte verhindert, dass vor dem ersten Klick zwei
                beliebige Tasten als "gespeichert" markiert erscheinen. */
+            const tiefGesetzt = range.min !== Renderer.ONBOARDING_DEFAULT_MIN;
+            const hochGesetzt = range.max !== Renderer.ONBOARDING_DEFAULT_MAX;
             const marks = [];
-            if (CONFIG.minFreq !== Renderer.ONBOARDING_DEFAULT_MIN) {
-                marks.push(Math.round(Renderer.midiOf(CONFIG.minFreq)));
-            }
-            if (CONFIG.maxFreq !== Renderer.ONBOARDING_DEFAULT_MAX) {
-                marks.push(Math.round(Renderer.midiOf(CONFIG.maxFreq)));
+            if (tiefGesetzt) marks.push(Math.round(Renderer.midiOf(range.min)));
+            if (hochGesetzt) marks.push(Math.round(Renderer.midiOf(range.max)));
+
+            /* Sobald BEIDE Töne stehen, zeigt die Klaviatur nicht mehr drei
+               Oktaven, sondern genau den eingesungenen Bereich — mit zwei
+               Tasten Luft links und rechts, damit seine Grenze sichtbar wird.
+               Das ist die Visualisierung, gegen die im nächsten Schritt
+               entschieden wird: "Range okay!" oder noch einmal. */
+            let lo = Renderer.ONBOARDING_MIDI_LOW;
+            let hi = Renderer.ONBOARDING_MIDI_HIGH;
+            if (tiefGesetzt && hochGesetzt) {
+                const span = Renderer.keyboardSpan(player, 0, 1);
+                if (span) { lo = span.minMidi; hi = span.maxMidi; }
             }
 
             const gap = Renderer.KEYS_ONBOARDING_GAP;
@@ -4060,6 +4335,24 @@
      * @param   {number} target
      * @returns {boolean}
      */
+    /**
+     * Tonname zu einer Frequenz, deutsche Schreibweise mit Oktavlage.
+     *
+     * Für den Bestätigungsschritt im Onboarding: "147 Hz" sagt niemandem
+     * etwas, "D3" schon — und wer damit auch nichts anfängt, sieht daneben
+     * die Klaviatur.
+     *
+     * @param   {number} hz
+     * @returns {string} z. B. "A2"
+     */
+    Renderer.noteName = function (hz) {
+        if (!(hz > 0)) return '—';
+        const midi = Math.round(Renderer.midiOf(hz));
+        const namen = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'H'];
+        /* MIDI 60 = C4 in der hier üblichen Zählung. */
+        return namen[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
+    };
+
     Renderer.isNear = function (hz, target) {
         if (!(hz > 0) || !(target > 0)) return false;
         return Math.abs(Renderer.midiOf(hz) - Renderer.midiOf(target))
@@ -4086,6 +4379,56 @@
     Renderer.KEYS_HEIGHT_NEAR = 54;
     Renderer.KEYS_Y_FAR = 10;
     Renderer.KEYS_HEIGHT_FAR = 38;
+
+    /**
+     * Zusätzliche Halbtöne links und rechts neben dem kalibrierten Umfang.
+     *
+     * Die Tastatur endet sonst exakt an den beiden Kalibriertönen, und dann
+     * sieht sie aus wie ein Instrument, das genau dort aufhört, wo man gerade
+     * singt — man sieht nicht, dass links und rechts Schluss ist, weil kein
+     * Rand da ist, gegen den man es sehen könnte. Zwei Tasten Luft auf jeder
+     * Seite machen die Grenze sichtbar.
+     *
+     * Symmetrisch, damit die Mitte des Stimmumfangs die Mitte der Tastatur
+     * bleibt.
+     */
+    Renderer.KEYS_MARGIN_SEMITONES = 2;
+
+    /** Hintergrund des Onboardings (siehe Renderer.drawOnboardingBackdrop). */
+    Renderer.ONBOARDING_BACKDROP_EDGE = '#05050a';
+    Renderer.ONBOARDING_BACKDROP_MID = '#101026';
+
+    /**
+     * Lage und Tonumfang einer Tastatur für einen Spieler.
+     *
+     * Der kalibrierte Umfang wird auf `courtW` abgebildet — genau die Breite,
+     * über die auch `freqToQuantizedX()` die Figur schickt. Die Randtasten
+     * kommen AUSSERHALB dazu: die Tastatur wird breiter, statt dieselbe Breite
+     * auf mehr Tasten aufzuteilen. Nur so behält jede Taste des kalibrierten
+     * Bereichs exakt die Position, die sie ohne den Rand hätte, und die
+     * Tastatur bleibt gegen das Feld lesbar.
+     *
+     * @param   {string} player Wert aus PLAYER
+     * @param   {number} courtX Linke Feldkante in Bildschirmpixeln
+     * @param   {number} courtW Feldbreite in Bildschirmpixeln
+     * @returns {{x:number, w:number, minMidi:number, maxMidi:number}|null}
+     *          null, wenn der Umfang unbrauchbar ist (dann lieber nichts zeichnen).
+     */
+    Renderer.keyboardSpan = function (player, courtX, courtW) {
+        const range = Physics.voiceRange(player);
+        const minMidi = Math.round(Renderer.midiOf(range.min));
+        const maxMidi = Math.round(Renderer.midiOf(range.max));
+        if (!(maxMidi > minMidi) || !(courtW > 0)) return null;
+
+        const rand = Renderer.KEYS_MARGIN_SEMITONES;
+        const keyW = courtW / (maxMidi - minMidi + 1);
+        return {
+            x: courtX - rand * keyW,
+            w: courtW + 2 * rand * keyW,
+            minMidi: minMidi - rand,
+            maxMidi: maxMidi + rand,
+        };
+    };
 
     /** Weichzeichnerradius der leuchtenden Taste, bezogen auf 18 px Tastenbreite. */
     Renderer.KEYS_GLOW = 22;
@@ -4377,6 +4720,13 @@
 
             this.assets = new AssetManager();
             this.audio = new AudioEngine();
+            /**
+             * Zweiter Eingang für Spieler 2 (obere Figur), nur im Versus-Modus
+             * verkabelt. Im Arcade-Modus bleibt die Instanz bestehen, aber ohne
+             * Audiograph — `analyse()` wird dort nie aufgerufen.
+             * @type {AudioEngine}
+             */
+            this.audio2 = new AudioEngine();
             this.match = new MatchState();
 
             this.ball = new Ball();
@@ -4387,15 +4737,17 @@
 
             this.physics = new Physics(
                 this.match, this.ball, this.paddleAndrea,
-                this.paddleAlex, this.bounceMarks, this.audio
+                this.paddleAlex, this.bounceMarks, this.audio, this.audio2
             );
             this.renderer = new Renderer(this.ctx, this.viewport, this.projection, this.assets);
             this.input = new InputHandler(this.match, this.physics);
 
             /** @type {boolean} Läuft das Spiel (nach dem Onboarding)? */
             this.running = false;
-            /** @type {boolean} Läuft die Kalibrierung (Onboarding Schritt 2)? */
+            /** @type {boolean} Läuft die Kalibrierung (Onboarding Schritt 3)? */
             this.calibrating = false;
+            /** @type {string} Wer singt gerade ein (Wert aus PLAYER). */
+            this.calibPlayer = PLAYER.ANDREA;
 
             /** Wiederverwendetes Szenen-Objekt für den Renderer. */
             this._scene = {
@@ -4407,7 +4759,8 @@
                 dvd: this.dvd,
                 andreaX: 0,
                 /* Für die Live-Anzeige von Tonhöhe und Pegel im Canvas. */
-                audio: this.audio
+                audio: this.audio,
+                audio2: this.audio2
             };
 
             /* Fixed-Timestep-Notnagel (nur aktiv, wenn FEATURES.FIXED_TIMESTEP) */
@@ -4450,18 +4803,54 @@
          * Onboarding (Mikrofon + Stimmkalibrierung)
          * ----------------------------------------------------------------- */
 
+        /**
+         * Der Eingang des Spielers, der gerade einsingt.
+         * @returns {AudioEngine}
+         */
+        calibAudio() {
+            return this.calibPlayer === PLAYER.ALEX ? this.audio2 : this.audio;
+        }
+
         /** Buttons aus index.html verdrahten. */
         bindOnboarding() {
-            const btnMic = document.getElementById('btnMic');
             const btnLow = document.getElementById('btnLow');
             const btnHigh = document.getElementById('btnHigh');
             const btnStart = document.getElementById('btnStartGame');
 
-            btnMic.addEventListener('click', async () => {
+            /* --- Schritt 1: Modus ------------------------------------------ */
+            const waehleModus = (modus) => {
+                CONFIG.mode = modus;
+                document.getElementById('step0').classList.remove('active');
+                document.getElementById('step1').classList.add('active');
+                console.info(`[Karaokovic] Modus: ${modus}`);
+            };
+            document.getElementById('btnModeArcade')
+                .addEventListener('click', () => waehleModus(MODE.ARCADE));
+            document.getElementById('btnModeVersus')
+                .addEventListener('click', () => waehleModus(MODE.VERSUS));
+
+            /* --- Schritt 2: Mikrofon --------------------------------------- */
+            document.getElementById('btnMic').addEventListener('click', async () => {
                 try {
-                    await this.audio.init();
+                    if (CONFIG.mode === MODE.VERSUS) {
+                        const kanaele = await AudioEngine.initPair(this.audio, this.audio2);
+                        if (kanaele < 2) {
+                            /* Nicht stillschweigend weiterlaufen: Spieler 2
+                               bekäme Stille und stünde die ganze Show über
+                               regungslos in der Mitte. */
+                            this.showCalibrationHint(
+                                'Achtung: Eingang liefert nur einen Kanal — '
+                                + 'Spieler 2 bekommt kein Signal.');
+                            console.warn(
+                                `[AudioEngine] Duell gewählt, Gerät liefert aber `
+                                + `${kanaele} Kanal. Spieler 2 bleibt stumm.`);
+                        }
+                    } else {
+                        await this.audio.init();
+                    }
                     document.getElementById('step1').classList.remove('active');
                     document.getElementById('step2').classList.add('active');
+                    this.beginCalibration(PLAYER.ANDREA);
                     this.calibrating = true;
                     this.start();
                 } catch (err) {
@@ -4470,60 +4859,173 @@
                 }
             });
 
-            /* WICHTIG: `stablePitch` statt `livePitch`. Gesungen wird ZUERST,
-               geklickt DANACH — livePitch ist beim Klick schon wieder 0.
-               Und jeder abgelehnte Klick sagt jetzt, warum: vorher passierte
-               einfach nichts und das Onboarding wirkte kaputt. */
+            /* --- Schritt 3a: einsingen -------------------------------------
+             * WICHTIG: `stablePitch` statt `livePitch`. Gesungen wird ZUERST,
+             * geklickt DANACH — livePitch ist beim Klick schon wieder 0.
+             * Und jeder abgelehnte Klick sagt jetzt, warum: vorher passierte
+             * einfach nichts und das Onboarding wirkte kaputt.
+             * -------------------------------------------------------------- */
             btnLow.addEventListener('click', () => {
-                const hz = this.audio.stablePitch;
+                const hz = this.calibAudio().stablePitch;
                 if (hz <= 0) {
                     this.showCalibrationHint('Kein Ton erkannt — singen und dabei klicken.');
                     return;
                 }
-                CONFIG.minFreq = hz;
+                this.setVoiceRange(this.calibPlayer, hz, null);
                 btnHigh.disabled = false;
                 btnHigh.style.opacity = '1';
                 this.showCalibrationHint(`Tiefer Ton gespeichert: ${Math.round(hz)} Hz`, true);
             });
 
             btnHigh.addEventListener('click', () => {
-                const hz = this.audio.stablePitch;
+                const hz = this.calibAudio().stablePitch;
                 if (hz <= 0) {
                     this.showCalibrationHint('Kein Ton erkannt — singen und dabei klicken.');
                     return;
                 }
+                const tief = Physics.voiceRange(this.calibPlayer).min;
                 /* Mindestabstand statt "irgendwie höher": liegen beide Töne zu
                    dicht beieinander, wird die Spielfigur später hypernervös,
                    weil der halbe Platz auf wenige Hertz abgebildet wird. */
-                if (hz < CONFIG.minFreq * Game.MIN_CALIBRATION_RATIO) {
+                if (hz < tief * Game.MIN_CALIBRATION_RATIO) {
                     this.showCalibrationHint(
                         `${Math.round(hz)} Hz ist zu nah am tiefen Ton `
-                        + `(${Math.round(CONFIG.minFreq)} Hz) — bitte höher singen.`
+                        + `(${Math.round(tief)} Hz) — bitte höher singen.`
                     );
                     return;
                 }
-                CONFIG.maxFreq = hz;
-                btnStart.style.display = 'block';
-                this.showCalibrationHint(
-                    `Bereich: ${Math.round(CONFIG.minFreq)} – ${Math.round(hz)} Hz`, true
-                );
+                this.setVoiceRange(this.calibPlayer, null, hz);
+                this.showRangeConfirmation();
             });
 
+            /* --- Schritt 3b: Bereich bestätigen oder verwerfen -------------- */
+            document.getElementById('btnRangeOk').addEventListener('click', () => {
+                if (CONFIG.mode === MODE.VERSUS && this.calibPlayer === PLAYER.ANDREA) {
+                    this.beginCalibration(PLAYER.ALEX);
+                    return;
+                }
+                document.getElementById('calibConfirm').style.display = 'none';
+                btnStart.style.display = 'block';
+            });
+
+            document.getElementById('btnRangeRedo').addEventListener('click', () => {
+                this.beginCalibration(this.calibPlayer);
+                this.showCalibrationHint('Bereich verworfen — bitte neu einsingen.');
+            });
+
+            /* --- Start ------------------------------------------------------ */
             btnStart.addEventListener('click', () => {
                 this.calibrating = false;
                 /* Vorfilter erst jetzt auf den gemessenen Stimmumfang setzen —
-                   während der Kalibrierung musste er offen sein. */
-                this.audio.applyCalibratedFilter();
+                   während der Kalibrierung musste er offen sein. Jeder Eingang
+                   bekommt den Filter SEINES Spielers: ein Bass und ein Sopran
+                   brauchen unterschiedliche Grenzfrequenzen. */
+                this.audio.applyCalibratedFilter(PLAYER.ANDREA);
+                if (CONFIG.mode === MODE.VERSUS) {
+                    this.audio2.applyCalibratedFilter(PLAYER.ALEX);
+                }
                 document.getElementById('onboarding').style.display = 'none';
                 this.canvas.style.display = 'block';
                 this.physics.haltAt();
+                this.physics.haltAlexAt();
                 this.audio.resetSmoothing();
+                this.audio2.resetSmoothing();
                 this.handleResize();
                 this.physics.prepareServe();
                 this.match.resetSilenceTimer();
                 this.running = true;
-                console.info(`[Kalibrierung] min ${CONFIG.minFreq.toFixed(1)} Hz / max ${CONFIG.maxFreq.toFixed(1)} Hz`);
+                console.info(
+                    `[Kalibrierung] Spieler 1: ${CONFIG.minFreq.toFixed(1)}`
+                    + ` – ${CONFIG.maxFreq.toFixed(1)} Hz`
+                    + (CONFIG.mode === MODE.VERSUS
+                        ? ` | Spieler 2: ${CONFIG.minFreq2.toFixed(1)}`
+                          + ` – ${CONFIG.maxFreq2.toFixed(1)} Hz`
+                        : ''));
             });
+        }
+
+        /**
+         * Kalibrierung für einen Spieler (neu) beginnen.
+         *
+         * Setzt den Umfang auf die Vorgabewerte zurück. Das ist nicht nur
+         * Kosmetik: die Klaviatur erkennt an genau diesen Werten, dass noch
+         * nichts eingesungen wurde, und zeigt dann drei Oktaven statt eines
+         * Bereichs, den niemand bestätigt hat.
+         *
+         * @param {string} player Wert aus PLAYER
+         */
+        beginCalibration(player) {
+            this.calibPlayer = player;
+            this.setVoiceRange(player,
+                Renderer.ONBOARDING_DEFAULT_MIN, Renderer.ONBOARDING_DEFAULT_MAX);
+
+            const btnHigh = document.getElementById('btnHigh');
+            btnHigh.disabled = true;
+            btnHigh.style.opacity = '0.3';
+
+            document.getElementById('calibSing').style.display = 'block';
+            document.getElementById('calibConfirm').style.display = 'none';
+            document.getElementById('btnStartGame').style.display = 'none';
+
+            const wer = document.getElementById('calibWho');
+            if (wer) {
+                wer.innerText = CONFIG.mode === MODE.VERSUS
+                    ? (player === PLAYER.ALEX
+                        ? 'SPIELER 2 — obere Figur (rechter Kanal)'
+                        : 'SPIELER 1 — untere Figur (linker Kanal)')
+                    : '';
+            }
+        }
+
+        /**
+         * Bestätigungsschritt anzeigen: Bereich in Hz, Umfang in Halbtönen.
+         *
+         * Die eigentliche Anschauung liefert die Klaviatur im Canvas — sie
+         * zeigt ab jetzt genau diesen Bereich. Hier steht nur die Zahl dazu.
+         */
+        showRangeConfirmation() {
+            const r = Physics.voiceRange(this.calibPlayer);
+            const halbtoene = Math.round(
+                Renderer.midiOf(r.max) - Renderer.midiOf(r.min));
+
+            document.getElementById('calibSing').style.display = 'none';
+            document.getElementById('calibConfirm').style.display = 'block';
+            document.getElementById('calibRange').innerText =
+                `${Math.round(r.min)} – ${Math.round(r.max)} Hz`;
+            document.getElementById('calibRangeDetail').innerText =
+                `${halbtoene} Halbtöne — ${Renderer.noteName(r.min)} bis ${Renderer.noteName(r.max)}`;
+        }
+
+        /**
+         * Stimmumfang eines Spielers setzen. `null` lässt den Wert stehen.
+         * @param {string}      player Wert aus PLAYER
+         * @param {number|null} min
+         * @param {number|null} max
+         */
+        setVoiceRange(player, min, max) {
+            if (player === PLAYER.ALEX) {
+                if (min !== null) CONFIG.minFreq2 = min;
+                if (max !== null) CONFIG.maxFreq2 = max;
+            } else {
+                if (min !== null) CONFIG.minFreq = min;
+                if (max !== null) CONFIG.maxFreq = max;
+            }
+        }
+
+        /**
+         * Lautester Eingang dieses Frames.
+         *
+         * Grundlage der 3-Sekunden-Ruhe: im Duell zählt der lautere der beiden
+         * Kanäle, sonst könnte einer der beiden die Ruhe brechen, ohne dass es
+         * jemand merkt. Im Arcade-Modus ist es schlicht der einzige Kanal.
+         *
+         * @returns {number} RMS
+         */
+        loudestVolume() {
+            if (CONFIG.mode !== MODE.VERSUS || !this.audio2.analyser) {
+                return this.audio.currentVolume;
+            }
+            return Math.max(this.audio.currentVolume, this.audio2.currentVolume);
         }
 
         /** Frame-Loop starten (einmalig nach der Mikrofonfreigabe). */
@@ -4555,8 +5057,21 @@
             try {
                 const result = this.audio.analyse();
 
+                /* Zweiter Eingang nur im Duell — im Arcade-Modus hat diese
+                   Instanz keinen Audiograph, `analyse()` würde werfen. */
+                let result2 = null;
+                if (CONFIG.mode === MODE.VERSUS && this.audio2.analyser) {
+                    result2 = this.audio2.analyse();
+                    if (this.running) {
+                        this.audio2.updateSmoothedPitch(result2.freq, result2.volume);
+                    }
+                }
+
                 if (this.calibrating) {
-                    this.updateCalibrationReadout(result);
+                    /* Angezeigt wird der Kanal DESSEN, der gerade einsingt —
+                       sonst sieht Spieler 2 die Töne von Spieler 1. */
+                    this.updateCalibrationReadout(
+                        this.calibPlayer === PLAYER.ALEX ? (result2 || result) : result);
                     this.renderOnboarding();
                 }
 
@@ -4589,10 +5104,9 @@
         /**
          * Canvas während der Kalibrierung: Stadion plus zwei Klaviaturen.
          *
-         * Bis hierher war der Canvas im Onboarding einfach eine leere grüne
-         * Fläche hinter dem HTML-Kasten — der Loop lief zwar, zeichnete aber
-         * erst ab `running`. Jetzt steht der Platz schon da, und über und unter
-         * dem Kasten liegt je eine Klaviatur, die den gesungenen Ton zeigt.
+         * Über und unter dem Kasten liegt je eine Klaviatur, die den gesungenen
+         * Ton zeigt. Der Tennisplatz bleibt hier bewusst weg — er erscheint
+         * erst beim Wechsel ins Einspielen, siehe drawOnboardingBackdrop().
          *
          * Die Lage der Klaviaturen kommt aus dem HTML-Kasten selbst: er wächst,
          * sobald der zweite Knopf freigeschaltet wird.
@@ -4601,13 +5115,14 @@
             const el = document.getElementById('onboarding');
             if (!el || el.style.display === 'none') return;
 
-            this.renderer.drawBackground(this.match.courtPalette());
+            this.renderer.drawOnboardingBackdrop();
 
             const rect = el.getBoundingClientRect();
             /* Vor dem Layout (oder bei display:none) liefert der Rect Nullen —
                dann lieber gar keine Klaviatur als zwei am Bildrand. */
             if (rect.width <= 0) return;
-            this.renderer.drawOnboardingKeyboards(this.audio, rect);
+            this.renderer.drawOnboardingKeyboards(
+                this.calibAudio(), rect, this.calibPlayer);
         }
 
         /**
@@ -4642,8 +5157,11 @@
                 /* --- GESCHÜTZT: 3 Sekunden absolute Ruhe ---------------------- */
                 case STATE.SILENCE_CHECK:
                     this.physics.haltAt();
-                    this.paddleAlex.x = VIRTUAL_WIDTH / 2;
-                    if (this.audio.currentVolume >= CONFIG.volumeGate) match.resetSilenceTimer();
+                    this.physics.haltAlexAt();
+                    /* Im Duell muss es an BEIDEN Mikrofonen still sein — sonst
+                       hält der eine Spieler die Ruhe und der andere redet sie
+                       kaputt, ohne dass man sähe, woran es liegt. */
+                    if (this.loudestVolume() >= CONFIG.volumeGate) match.resetSilenceTimer();
                     if (match.isSilenceComplete()) {
                         match.state = STATE.SERVE_WAIT;
                         this.physics.serveCharge = 0;
@@ -4652,22 +5170,35 @@
 
                 case STATE.SERVE_WAIT:
                     this.physics.haltAt();
+                    this.physics.haltAlexAt();
                     break;
 
-                case STATE.PLAYING:
+                case STATE.PLAYING: {
                     /* --- Serve-Movement-Lock ---------------------------------
                      * Nach dem Aufschlag klingt der auslösende Ton noch nach.
                      * Solange er anliegt, steht die Figur strikt in der Mitte,
                      * sonst rennt sie ihrem eigenen Aufschlag hinterher.
                      * Gesetzt in Physics.triggerServe().
                      * -------------------------------------------------------- */
-                    if (this.physics.serveMovementLock) {
+                    /* Die Sperre gilt NUR für den Aufschläger. Im Duell darf
+                       der Rückschläger sich längst bewegen — er singt ja nicht
+                       den Aufschlag. Im Arcade-Modus läuft es auf dasselbe
+                       hinaus wie vorher: die einzige Stimme im Raum gehört dem
+                       Aufschläger, also ist immer sie gesperrt. */
+                    const versus = CONFIG.mode === MODE.VERSUS;
+                    const alexSchlaegtAuf = match.server === PLAYER.ALEX;
+                    const gesperrt = this.physics.serveMovementLock;
+                    const untenGesperrt = gesperrt && !(versus && alexSchlaegtAuf);
+                    const obenGesperrt = gesperrt && alexSchlaegtAuf;
+
+                    if (gesperrt) {
                         /* Position, Ziel UND Geschwindigkeit werden gehalten.
                            Die Geschwindigkeit ist neu und zwingend: eine
                            gedämpfte Bewegung trägt ihren Schwung im Zustand
                            mit, die Figur würde sonst im Moment der Freigabe
                            mit der alten Geschwindigkeit weiterlaufen. */
-                        this.physics.haltAt();
+                        if (untenGesperrt) this.physics.haltAt();
+                        if (obenGesperrt) this.physics.haltAlexAt();
 
                         /* Schwelle ist CONFIG.moveGate, NICHT volumeGate.
                            Der Zusammenhang ist zwingend: die Sperre darf erst
@@ -4681,7 +5212,8 @@
                            der Schwellen lag moveGate bei 0.025 und damit über
                            volumeGate; die Reihenfolge stimmte zufällig.
                            MERKE: Freigabeschwelle <= moveGate. */
-                        if (this.audio.currentVolume < CONFIG.moveGate) {
+                        const aufschlagTon = this.physics.serverAudio();
+                        if (aufschlagTon.currentVolume < CONFIG.moveGate) {
                             this.physics.serveMovementLock = false;
 
                             /* KERN DES FEHLERS: `smoothedPitch` überlebt die
@@ -4694,21 +5226,37 @@
                                der Aufschlag gesungen worden war.
                                Zurücksetzen auf -1 heißt: bis zum NÄCHSTEN
                                erkannten Ton bleibt targetX in der Mitte. */
-                            this.audio.resetSmoothing();
+                            aufschlagTon.resetSmoothing();
                         }
-                        break;
                     }
 
-                    if (this.audio.smoothedPitch !== -1) {
-                        this.physics.targetX = this.physics.freqToQuantizedX(this.audio.smoothedPitch);
+                    /* --- untere Figur (Spieler 1) ---------------------------- */
+                    if (!untenGesperrt) {
+                        if (this.audio.smoothedPitch !== -1) {
+                            this.physics.targetX = this.physics.freqToQuantizedX(
+                                this.audio.smoothedPitch, PLAYER.ANDREA);
+                        }
+                        /* Gedämpft statt linear interpoliert — siehe glideToTarget().
+                           Wichtig: die Figur gleitet auch dann weiter, wenn gerade
+                           KEIN Ton anliegt. Bei abgehackt gesungenen Tönen bleibt
+                           targetX zwischen den Tönen einfach stehen, die Bewegung
+                           läuft sauber aus statt mitten im Weg einzufrieren. */
+                        this.physics.glideToTarget();
                     }
-                    /* Gedämpft statt linear interpoliert — siehe glideToTarget().
-                       Wichtig: die Figur gleitet auch dann weiter, wenn gerade
-                       KEIN Ton anliegt. Bei abgehackt gesungenen Tönen bleibt
-                       targetX zwischen den Tönen einfach stehen, die Bewegung
-                       läuft sauber aus statt mitten im Weg einzufrieren. */
-                    this.physics.glideToTarget();
+
+                    /* --- obere Figur (Spieler 2, nur im Duell) --------------- *
+                     * Nur das ZIEL wird hier gesetzt. Bewegt wird sie in
+                     * Physics.update(), an genau der Stelle, an der im
+                     * Arcade-Modus die KI läuft — damit bleibt die
+                     * Reihenfolge Bewegung -> Aufsprung -> Schläger für beide
+                     * Modi dieselbe.
+                     * -------------------------------------------------------- */
+                    if (versus && !obenGesperrt && this.audio2.smoothedPitch !== -1) {
+                        this.physics.alexTargetX = this.physics.freqToQuantizedX(
+                            this.audio2.smoothedPitch, PLAYER.ALEX);
+                    }
                     break;
+                }
 
                 case STATE.POINT_SCORED:
                     if (match.elapsed() > TIMING.POINT_MS) {
@@ -4771,7 +5319,7 @@
             /* Auch der gehaltene Ton wird angezeigt: die Sängerin sieht so,
                dass ihr Ton noch "im Speicher" liegt, während sie zum Knopf
                greift. Genau dieses Fenster hat vorher gefehlt. */
-            const held = this.audio.stablePitch;
+            const held = this.calibAudio().stablePitch;
             if (result.freq !== -1) {
                 this.livePitchDiv.innerText =
                     `${Math.round(result.freq)} Hz | VOL: ${result.volume.toFixed(3)}`;
@@ -4807,4 +5355,12 @@
     /* Diagnosezugriff für die Live-Produktion (Chrome DevTools):
        window.KARAOKOVIC.match.scoreLine(), .physics.prepareServe(), ... */
     window.KARAOKOVIC = game;
+
+    /* Die Stellschrauben aus der Übergabe (glideFrames, pitchSmooth,
+       serveVolume, ...) liegen alle in CONFIG. Ohne diesen Zugriff müsste
+       zum Nachjustieren auf der Bühne die Datei bearbeitet und neu geladen
+       werden — mit ihm genügt eine Zeile in der Konsole. */
+    game.config = CONFIG;
+    game.PLAYER = PLAYER;
+    game.MODE = MODE;
 })();

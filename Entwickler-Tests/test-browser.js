@@ -250,7 +250,12 @@ class Browser {
         check('Fehlweg nach einem Richtungswechsel bleibt unter 30 px',
             richtung.fehlweg < 30, `${richtung.fehlweg} px (war 50 px bei pitchSmooth 0.15)`);
 
-        /* --- 6. Onboarding bis ins Einspielen --------------------------- */
+        /* --- 6. Onboarding bis ins Einspielen ---------------------------- *
+         * BEWUSST über die echten Knöpfe in ihrer echten Reihenfolge:
+         * Modus -> Mikrofon -> tief -> hoch -> Bereich bestätigen -> Start.
+         * `.click()` feuert auch auf unsichtbaren Knöpfen — ein Test, der
+         * Schritte überspringt, würde ein kaputtes Onboarding nicht bemerken.
+         * ---------------------------------------------------------------- */
         const einspielen = await b.werteAus(`(async () => {
             const K = window.KARAOKOVIC;
             /* Der Haltespeicher wird direkt gefüllt: das Fake-Mikrofon von
@@ -258,11 +263,33 @@ class Browser {
                verschiedene für tief und hoch. */
             const singe = (hz) => { K.audio.livePitch = 0; K.audio.heldPitch = hz;
                                     K.audio.heldPitchAt = Date.now(); };
+            const sichtbar = (id) => {
+                const e = document.getElementById(id);
+                return !!e && e.offsetParent !== null;
+            };
+            const schritte = {};
+
+            schritte.modusZuerst = sichtbar('btnModeArcade') && !sichtbar('btnMic');
+            document.getElementById('btnModeArcade').click();
+            schritte.dannMikrofon = sichtbar('btnMic');
+
             document.getElementById('btnMic').click();
             await new Promise(r => setTimeout(r, 1500));
+            schritte.dannEinsingen = sichtbar('btnLow');
+
             singe(110); document.getElementById('btnLow').click();
             singe(330); document.getElementById('btnHigh').click();
-            await new Promise(r => setTimeout(r, 200));
+            await new Promise(r => setTimeout(r, 100));
+
+            /* Erst der Bestätigungsschritt, DANN der Start. */
+            schritte.bestaetigungKommt = sichtbar('btnRangeOk');
+            schritte.startNochVersteckt = !sichtbar('btnStartGame');
+            schritte.bereichText = document.getElementById('calibRange').innerText;
+
+            document.getElementById('btnRangeOk').click();
+            schritte.startFrei = sichtbar('btnStartGame');
+
+            /* Platz darf erst jetzt erscheinen, vorher nur die Klaviatur. */
             document.getElementById('btnStartGame').click();
             await new Promise(r => setTimeout(r, 1200));
 
@@ -277,17 +304,107 @@ class Browser {
                 requestAnimationFrame(takt);
             });
             t.sort((a, b) => a - b);
-            return { phase: String(K.match.phase),
+            return { ...schritte, phase: String(K.match.phase),
                      onboarding: document.getElementById('onboarding').style.display,
                      medianMs: +t[Math.floor(t.length / 2)].toFixed(2) };
         })()`);
+        check('Die Moduswahl steht vor dem Mikrofon', einspielen.modusZuerst);
+        check('Nach der Moduswahl kommt der Mikrofon-Check', einspielen.dannMikrofon);
+        check('Nach der Mikrofonfreigabe kommt das Einsingen', einspielen.dannEinsingen);
+        check('Nach dem hohen Ton wird der Bereich zur Bestätigung gezeigt',
+            einspielen.bestaetigungKommt, einspielen.bereichText);
+        check('MATCH STARTEN erscheint NICHT vor der Bestätigung',
+            einspielen.startNochVersteckt);
+        check('"Range okay!" schaltet MATCH STARTEN frei', einspielen.startFrei);
         check('Onboarding läuft bis ins Einspielen durch',
             einspielen.phase === 'WARMUP', `phase = ${einspielen.phase}`);
         check('Onboarding ist danach ausgeblendet', einspielen.onboarding === 'none');
         check('Bildrate im Einspielen bleibt unter 20 ms pro Frame',
             einspielen.medianMs < 20, `${einspielen.medianMs} ms Median`);
 
-        /* --- 7. Nichts ist unterwegs geflogen --------------------------- */
+        /* --- 7. Klaviatur folgt dem Stimmumfang -------------------------- *
+         * Die Randtasten kommen AUSSERHALB dazu. Verteilte man dieselbe
+         * Breite auf mehr Tasten, verschöbe sich jede Taste des kalibrierten
+         * Bereichs gegen die Feldposition, zu der ihr Ton die Figur schickt —
+         * die Klaviatur würde in die Irre führen.
+         * ---------------------------------------------------------------- */
+        const klaviatur = await b.werteAus(`(() => {
+            const K = window.KARAOKOVIC, R = K.renderer.constructor;
+            K.setVoiceRange(K.PLAYER.ANDREA, 110, 330);
+            const feldL = 460.5, feldB = 679;
+            const span = R.keyboardSpan(K.PLAYER.ANDREA, feldL, feldB);
+            const minMidi = Math.round(R.midiOf(110));
+            const maxMidi = Math.round(R.midiOf(330));
+            const keyW = feldB / (maxMidi - minMidi + 1);
+            return {
+                randLinks: +(feldL - span.x).toFixed(2),
+                randRechts: +((span.x + span.w) - (feldL + feldB)).toFixed(2),
+                zweiTasten: +(2 * keyW).toFixed(2),
+                tastenGesamt: span.maxMidi - span.minMidi + 1,
+                tastenImUmfang: maxMidi - minMidi + 1,
+                mitteUmfang: (minMidi + maxMidi) / 2,
+                mitteKlaviatur: (span.minMidi + span.maxMidi) / 2,
+                keyWimUmfang: +keyW.toFixed(4),
+                keyWgesamt: +(span.w / (span.maxMidi - span.minMidi + 1)).toFixed(4),
+            };
+        })()`);
+        check('Die Mitte des Stimmumfangs ist die Mitte der Klaviatur',
+            klaviatur.mitteUmfang === klaviatur.mitteKlaviatur,
+            `MIDI ${klaviatur.mitteUmfang} = ${klaviatur.mitteKlaviatur}`);
+        check('Links und rechts kommen genau zwei Tasten dazu',
+            klaviatur.tastenGesamt === klaviatur.tastenImUmfang + 4,
+            `${klaviatur.tastenImUmfang} im Umfang, ${klaviatur.tastenGesamt} gesamt`);
+        check('Die Randtasten liegen AUSSERHALB des Feldes',
+            Math.abs(klaviatur.randLinks - klaviatur.zweiTasten) < 0.01
+            && Math.abs(klaviatur.randRechts - klaviatur.zweiTasten) < 0.01,
+            `${klaviatur.randLinks} px / ${klaviatur.randRechts} px = 2 Tasten (${klaviatur.zweiTasten} px)`);
+        check('Die Tastenbreite bleibt dadurch unverändert',
+            Math.abs(klaviatur.keyWimUmfang - klaviatur.keyWgesamt) < 0.0001,
+            `${klaviatur.keyWimUmfang} px`);
+
+        /* --- 8. Steuerung der oberen Figur (Duell) ----------------------- *
+         * Die ganze Kette für Spieler 2: eigener Stimmumfang -> Zielposition
+         * -> gedämpfte Bewegung. Ohne Mikrofon geprüft, indem `smoothedPitch`
+         * des zweiten Eingangs direkt gesetzt wird.
+         * ---------------------------------------------------------------- */
+        const duell = await b.werteAus(`(() => {
+            const K = window.KARAOKOVIC, P = K.physics;
+            K.config.mode = K.MODE.VERSUS;
+            K.setVoiceRange(K.PLAYER.ALEX, 200, 600);   // andere Lage als Spieler 1
+
+            const laufe = (hz) => {
+                P.haltAlexAt(800);
+                for (let i = 0; i < 90; i++) {
+                    P.alexTargetX = P.freqToQuantizedX(hz, K.PLAYER.ALEX);
+                    P.glideAlexToTarget();
+                }
+                return +P.paddleAlex.x.toFixed(1);
+            };
+            const links = laufe(200);      // tiefster Ton von Spieler 2
+            const rechts = laufe(600);     // höchster Ton von Spieler 2
+
+            /* Gegenprobe: derselbe Ton bei Spieler 1 landet woanders, weil
+               dessen Umfang ein anderer ist. */
+            K.setVoiceRange(K.PLAYER.ANDREA, 100, 300);
+            const gleicherTonSpieler1 = +P.freqToQuantizedX(200, K.PLAYER.ANDREA).toFixed(1);
+            const gleicherTonSpieler2 = +P.freqToQuantizedX(200, K.PLAYER.ALEX).toFixed(1);
+
+            K.config.mode = K.MODE.ARCADE;   // Testzustand zurückgeben
+            return { links, rechts, gleicherTonSpieler1, gleicherTonSpieler2,
+                     linkeLinie: P.constructor.PLAYER_MIN_X,
+                     rechteLinie: P.constructor.PLAYER_MAX_X };
+        })()`);
+        check('Spieler 2 erreicht mit seinem tiefsten Ton die linke Linie',
+            Math.abs(duell.links - duell.linkeLinie) < 1,
+            `${duell.links} vs. ${duell.linkeLinie}`);
+        check('Spieler 2 erreicht mit seinem höchsten Ton die rechte Linie',
+            Math.abs(duell.rechts - duell.rechteLinie) < 1,
+            `${duell.rechts} vs. ${duell.rechteLinie}`);
+        check('Derselbe Ton bedeutet für beide Spieler eine andere Position',
+            Math.abs(duell.gleicherTonSpieler1 - duell.gleicherTonSpieler2) > 100,
+            `200 Hz: Spieler 1 bei ${duell.gleicherTonSpieler1}, Spieler 2 bei ${duell.gleicherTonSpieler2}`);
+
+        /* --- 9. Nichts ist unterwegs geflogen --------------------------- */
         check('Keine Exception und kein console.error während des Laufs',
             b.fehler.length === 0, b.fehler.join(' | ') || 'sauber');
 

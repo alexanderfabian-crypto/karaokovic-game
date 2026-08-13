@@ -61,8 +61,18 @@ check('"Hohen Ton speichern" ist freigeschaltet', btnHigh.disabled === false);
 sing(560);
 pause();
 btnHigh.click();
-check('Hoher Ton (560 Hz) wird angenommen', btnStart.style.display === 'block',
-    anzeige.innerText);
+check('Hoher Ton (560 Hz) wird angenommen',
+    el('calibConfirm').style.display === 'block', anzeige.innerText);
+/* Die Autokorrelation trifft nicht auf das Hertz genau (560 gesungen -> 558
+   gemessen). Geprüft wird deshalb das Format, nicht der Wunschwert. */
+check('Der eingesungene Bereich wird zur Bestätigung angezeigt',
+    /^\d+ – \d+ Hz$/.test(el('calibRange').innerText), el('calibRange').innerText);
+check('Der Umfang wird zusätzlich in Halbtönen und Tonnamen genannt',
+    /Halbtöne/.test(el('calibRangeDetail').innerText),
+    el('calibRangeDetail').innerText);
+
+el('btnRangeOk').click();
+check('"Range okay!" schaltet MATCH STARTEN frei', btnStart.style.display === 'block');
 
 /* --- Gegenprobe: Klick ohne Ton sagt jetzt, was fehlt --------------------- */
 audio.heldPitchAt = Date.now() - 999999;   // Haltefenster abgelaufen
@@ -93,5 +103,39 @@ audio.applyCalibratedFilter();
 check('Tiefe Kalibrierung behält den bisherigen 320-Hz-Filter',
     audio.biquadFilter.frequency.value === 320,
     `${audio.biquadFilter.frequency.value} Hz`);
+
+/* --- "Range nochmal einsingen" verwirft den Bereich wirklich -------------- *
+ * Sonst bliebe der alte Umfang stehen und der Knopf wäre eine Lüge: die
+ * Klaviatur zeigte weiter den verworfenen Bereich, und wer nur den tiefen Ton
+ * neu einsänge, bekäme ihn mit dem alten hohen Ton kombiniert.
+ * ------------------------------------------------------------------------ */
+el('btnRangeRedo').click();
+check('Neu einsingen sperrt den Knopf für den hohen Ton wieder',
+    btnHigh.disabled === true);
+check('Neu einsingen blendet die Bestätigung aus',
+    el('calibConfirm').style.display === 'none');
+check('Neu einsingen setzt den Umfang auf die Vorgabe zurück',
+    game.config.minFreq === 100 && game.config.maxFreq === 300,
+    `${game.config.minFreq} – ${game.config.maxFreq} Hz`);
+check('Neu einsingen nimmt MATCH STARTEN wieder weg',
+    btnStart.style.display === 'none');
+
+/* --- Zweiter Spieler bekommt einen EIGENEN Umfang ------------------------- *
+ * Beide auf einer gemeinsamen Skala wäre für den mit der kleineren Stimme
+ * unspielbar. Die Abbildung muss für jeden von Seitenlinie zu Seitenlinie
+ * laufen, unabhängig von der Stimmlage.
+ * ------------------------------------------------------------------------ */
+game.setVoiceRange(game.PLAYER.ANDREA, 100, 200);   // tiefe Stimme
+game.setVoiceRange(game.PLAYER.ALEX, 300, 600);     // hohe Stimme
+
+const p = game.physics;
+check('Spieler 1 erreicht mit SEINEM tiefsten Ton die linke Linie',
+    Math.round(p.freqToQuantizedX(100, game.PLAYER.ANDREA)) === Math.round(p.freqToQuantizedX(300, game.PLAYER.ALEX)),
+    `${p.freqToQuantizedX(100, game.PLAYER.ANDREA).toFixed(1)} vs. ${p.freqToQuantizedX(300, game.PLAYER.ALEX).toFixed(1)}`);
+check('Spieler 1 erreicht mit SEINEM höchsten Ton die rechte Linie',
+    Math.round(p.freqToQuantizedX(200, game.PLAYER.ANDREA)) === Math.round(p.freqToQuantizedX(600, game.PLAYER.ALEX)),
+    `${p.freqToQuantizedX(200, game.PLAYER.ANDREA).toFixed(1)} vs. ${p.freqToQuantizedX(600, game.PLAYER.ALEX).toFixed(1)}`);
+check('Ohne Spielerangabe gilt weiterhin Spieler 1 (Rückwärtskompatibilität)',
+    p.freqToQuantizedX(150) === p.freqToQuantizedX(150, game.PLAYER.ANDREA));
 
 summary();
