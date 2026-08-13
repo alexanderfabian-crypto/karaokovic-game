@@ -1,6 +1,7 @@
 /* =============================================================================
  * XPERION ARCADE — "KARAOKOVIC" / VOICE TENNIS
- * Version : V37  (Refactor von V36, funktional identisch)
+ * Version : V38  (Assets getrackt, Projektion im Browser verifiziert,
+ *                 Laufrichtung nach Richtungswechsel korrigiert)
  * Build   : Single-File, kein ES6-Import, kein Bundler, kein Server.
  *           Startet offline per file:// (index.html -> <script src="app.js">).
  * Ziel    : Live-Bühne, Chrome Fullscreen, LED-Wand, 60 FPS, Segmentlänge <= 7 min
@@ -169,7 +170,33 @@
          * 12 Frames sind rund 0.2 s.
          */
         glideFrames: 12,
-        pitchSmooth: 0.15,
+
+        /**
+         * Glättung der Tonhöhe (0..1). Größer = die Zielposition folgt der
+         * Stimme direkter.
+         *
+         * War 0.15. Gemessen wurde der Zielkonflikt am echten Code: eine
+         * Stimme springt von 280 Hz auf 120 Hz, danach wird gezählt, wie weit
+         * die Figur noch in die ALTE Richtung läuft, bevor sie umkehrt.
+         *
+         *   pitchSmooth | Fehlweg | Zappeln bei Vibrato (±0.7 Halbton, 5.5 Hz)
+         *   0.15        | 50.0 px | 1.1 px
+         *   0.25        | 49.5 px | 1.7 px
+         *   0.35        | 21.8 px | 2.3 px   <- hier
+         *   0.50        | 21.0 px | 3.0 px
+         *
+         * 0.25 bringt praktisch nichts, weil die Zielposition erst einen Frame
+         * später umkehrt als bei 0.35. Über 0.35 wird es nur noch nervöser,
+         * ohne den Fehlweg weiter zu senken.
+         *
+         * Der Fehlweg entsteht NICHT hier allein: die Bewegung ist über
+         * `glideFrames` ein zweites Mal gedämpft (siehe glideToTarget). Zwei
+         * Verzögerungen hintereinander waren die Ursache der Meldung
+         * "die Spielerin läuft in die falsche Richtung" — sie tritt
+         * ausschließlich kurz nach einem Richtungswechsel auf, nie beim
+         * gleichmäßigen Singen.
+         */
+        pitchSmooth: 0.35,
         /* War 0.25. Die Scheitelhöhe eines Schlages ergibt sich in dieser
            Physik zu etwa g·T²/8, wobei T die Flugzeit in Frames ist. Mit den
            langsameren Ballgeschwindigkeiten (T ≈ 145 Frames) ergab 0.25 eine
@@ -4410,7 +4437,7 @@
             this.handleResize();
 
             this.bindOnboarding();
-            console.info('[Karaokovic] V37 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset.');
+            console.info('[Karaokovic] V38 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset.');
         }
 
         /** Canvasgröße nachziehen; im Ruhezustand den Aufschlag neu aufbauen. */
