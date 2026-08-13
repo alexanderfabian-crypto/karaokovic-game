@@ -18,16 +18,37 @@
         button.cyan { background: #00ffcc; color: #000; box-shadow: 0 0 15px rgba(0, 255, 204, 0.6); }
         button.cyan:hover { background: #33ffdd; }
 
-        #livePitch { font-size: 2rem; color: #ff007f; margin: 20px 0; font-weight: bold; height: 40px;}
+        #livePitch { font-size: 2rem; color: #ff007f; margin: 20px 0 4px; font-weight: bold; height: 40px; line-height: 40px; white-space: nowrap; overflow: hidden; }
         #debug { font-size: 1rem; color: #888; padding: 10px; background: #000; }
+
+        /* Rückmeldungen bekommen eine EIGENE Zeile. Vorher schrieben sie in
+           #livePitch, das auf 40 px Höhe fixiert ist — ein langer Satz brach
+           dort um und lief in die Schrift darunter. */
+        #calibHint { min-height: 22px; font-size: 0.95rem; line-height: 22px; margin: 0 0 10px; color: #ffcc00; }
+        #calibHint.ok { color: #00ffcc; }
 
         /* Wer gerade dran ist — im Duell die einzige Stelle, an der das steht. */
         .wer { color: #00ffcc; font-size: 1.1rem; letter-spacing: 0.08em; margin: 0 0 6px; }
         .hinweis { color: #7a7a90; font-size: 0.85rem; line-height: 1.45; margin-top: 18px; }
         .rangeWert { font-size: 1.35rem; color: #00ffcc; font-weight: bold; margin: 6px 0 2px; }
         .rangeDetail { color: #aaa; font-size: 0.9rem; margin: 0 0 4px; }
-        .modusZeile { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
-        .modusZeile button { flex: 1 1 240px; padding: 18px 20px; font-size: 1.05rem; }
+
+        /* Zwei gleich große Knöpfe nebeneinander, mit Abstand dazwischen.
+           `flex: 1 1 0` statt `1 1 auto`: sonst bestimmt die Textlänge die
+           Breite und "Range okay!" wäre halb so breit wie sein Nachbar. */
+        .knopfPaar { display: flex; gap: 24px; justify-content: center; align-items: stretch; margin-top: 18px; }
+        .knopfPaar button { flex: 1 1 0; min-width: 0; margin-top: 0; padding: 16px 12px; font-size: 1rem; line-height: 1.25; }
+
+        .modusZeile { display: flex; gap: 24px; justify-content: center; align-items: stretch; }
+        .modusZeile button { flex: 1 1 0; min-width: 0; padding: 18px 12px; font-size: 1.05rem; }
+
+        /* Ein gespeicherter Kalibrierton: der Knopf ist erledigt und sagt das
+           auch. Ohne diese Rückmeldung sah er aus wie ein Knopf, der noch
+           gedrückt werden will — und ein zweiter Klick überschrieb den Ton. */
+        button.erledigt, button.erledigt:hover {
+            background: #14332e; color: #00ffcc; box-shadow: none;
+            cursor: default; transform: none; border: 1px solid #00ffcc;
+        }
     </style>
 </head>
 <body>
@@ -61,6 +82,7 @@
             <h3>SCHRITT 3: STIMM-PROFILER</h3>
             <p id="calibWho" class="wer"></p>
             <div id="livePitch">-- Hz</div>
+            <div id="calibHint"></div>
 
             <!-- Phase A: einsingen -->
             <div id="calibSing">
@@ -77,12 +99,21 @@
                 <p id="calibRange" class="rangeWert"></p>
                 <p id="calibRangeDetail" class="rangeDetail"></p>
                 <p style="color: #aaa;">Passt dieser Bereich? Die Klaviatur zeigt ihn an.</p>
-                <button id="btnRangeOk" class="cyan">Range okay!</button>
-                <button id="btnRangeRedo">Range nochmal einsingen</button>
+                <div class="knopfPaar">
+                    <button id="btnRangeOk" class="cyan">Range okay!</button>
+                    <button id="btnRangeRedo">Range nochmal einsingen</button>
+                </div>
             </div>
 
-            <br>
-            <button id="btnStartGame" style="display: none; width: 100%;">MATCH STARTEN</button>
+            <!-- Phase C: womit wird begonnen? Das Einspielen zählt keine
+                 Punkte; das Match beginnt sofort bei 0:0. -->
+            <div id="startWahl" style="display: none;">
+                <p style="color: #aaa; margin-top: 22px;">Womit soll begonnen werden?</p>
+                <div class="knopfPaar">
+                    <button id="btnStartWarmup" class="cyan">Einspielen starten<br><small>ohne Zählung</small></button>
+                    <button id="btnStartGame">Match starten<br><small>zählt ab 0:0</small></button>
+                </div>
+            </div>
         </div>
     </div>
 

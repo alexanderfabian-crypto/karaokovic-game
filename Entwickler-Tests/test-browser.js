@@ -286,11 +286,29 @@ class Browser {
             schritte.startNochVersteckt = !sichtbar('btnStartGame');
             schritte.bereichText = document.getElementById('calibRange').innerText;
 
-            document.getElementById('btnRangeOk').click();
-            schritte.startFrei = sichtbar('btnStartGame');
+            /* Der gespeicherte Ton muss auf seinem Knopf stehen. */
+            schritte.tiefErledigt = /Hz/.test(document.getElementById('btnLow').innerText)
+                && document.getElementById('btnLow').disabled;
 
-            /* Platz darf erst jetzt erscheinen, vorher nur die Klaviatur. */
-            document.getElementById('btnStartGame').click();
+            /* Die beiden Bestätigungsknöpfe müssen gleich breit sein. */
+            const rOk = document.getElementById('btnRangeOk').getBoundingClientRect();
+            const rRedo = document.getElementById('btnRangeRedo').getBoundingClientRect();
+            schritte.knoepfeGleichBreit = Math.abs(rOk.width - rRedo.width) < 1;
+            schritte.knopfAbstand = +(rRedo.left - rOk.right).toFixed(1);
+
+            /* Der Hinweistext darf nichts überlagern: eigene Zeile, und die
+               Hertz-Anzeige darüber bleibt sichtbar. */
+            K.showCalibrationHint('Bereich verworfen — bitte neu einsingen.');
+            const rHint = document.getElementById('calibHint').getBoundingClientRect();
+            const rPitch = document.getElementById('livePitch').getBoundingClientRect();
+            schritte.hinweisUeberlagertNicht = rHint.top >= rPitch.bottom - 0.5;
+            schritte.hinweisEinzeilig = rHint.height < 40;
+
+            document.getElementById('btnRangeOk').click();
+            schritte.startWahlFrei = sichtbar('btnStartWarmup') && sichtbar('btnStartGame');
+
+            /* Einspielen starten -> Phase WARMUP, keine Zählung. */
+            document.getElementById('btnStartWarmup').click();
             await new Promise(r => setTimeout(r, 1200));
 
             const t = []; let vorher = performance.now();
@@ -313,10 +331,19 @@ class Browser {
         check('Nach der Mikrofonfreigabe kommt das Einsingen', einspielen.dannEinsingen);
         check('Nach dem hohen Ton wird der Bereich zur Bestätigung gezeigt',
             einspielen.bestaetigungKommt, einspielen.bereichText);
-        check('MATCH STARTEN erscheint NICHT vor der Bestätigung',
+        check('Der Start erscheint NICHT vor der Bestätigung',
             einspielen.startNochVersteckt);
-        check('"Range okay!" schaltet MATCH STARTEN frei', einspielen.startFrei);
-        check('Onboarding läuft bis ins Einspielen durch',
+        check('Der gespeicherte tiefe Ton steht auf seinem Knopf und sperrt ihn',
+            einspielen.tiefErledigt);
+        check('Die beiden Bestätigungsknöpfe sind gleich breit',
+            einspielen.knoepfeGleichBreit);
+        check('Zwischen den Bestätigungsknöpfen ist Abstand',
+            einspielen.knopfAbstand >= 16, `${einspielen.knopfAbstand} px`);
+        check('Der Hinweistext überlagert die Hertz-Anzeige nicht',
+            einspielen.hinweisUeberlagertNicht && einspielen.hinweisEinzeilig);
+        check('"Range okay!" führt zur Auswahl Einspielen / Match',
+            einspielen.startWahlFrei);
+        check('"Einspielen starten" landet in der Phase WARMUP',
             einspielen.phase === 'WARMUP', `phase = ${einspielen.phase}`);
         check('Onboarding ist danach ausgeblendet', einspielen.onboarding === 'none');
         check('Bildrate im Einspielen bleibt unter 20 ms pro Frame',
@@ -404,7 +431,43 @@ class Browser {
             Math.abs(duell.gleicherTonSpieler1 - duell.gleicherTonSpieler2) > 100,
             `200 Hz: Spieler 1 bei ${duell.gleicherTonSpieler1}, Spieler 2 bei ${duell.gleicherTonSpieler2}`);
 
-        /* --- 9. Nichts ist unterwegs geflogen --------------------------- */
+        /* --- 9. "HOCH"-Visual bleibt im Grünstreifen --------------------- *
+         * Es darf weder über die äußere Seitenlinie ins Feld ragen noch die
+         * Bande berühren. Beide Grenzen laufen schräg: die Seitenlinie
+         * wandert nach unten nach rechts, die Bandenkante nach oben nach
+         * links. Geprüft werden deshalb Ober- UND Unterkante des Visuals.
+         * ---------------------------------------------------------------- */
+        const note = await b.werteAus(`(() => {
+            const K = window.KARAOKOVIC, R = K.renderer.constructor;
+            const r = K.renderer;
+            const cx = r.pitchRightX();
+            const m = r.pitchVisualMetrics('HOCH');
+            const oben = R.PITCH_NOTE_Y_HIGH - m.oben;
+            const unten = R.PITCH_NOTE_Y_HIGH + m.unten;
+            return {
+                links: +(cx - m.halbBreite).toFixed(1),
+                rechts: +(cx + m.halbBreite).toFixed(1),
+                oben: +oben.toFixed(1),
+                unten: +unten.toFixed(1),
+                hoehe: +(unten - oben).toFixed(1),
+                /* Seitenlinie an der Unterkante = ihre rechteste Stelle */
+                seitenlinie: +r.courtEdgeX(unten, 1).toFixed(1),
+                /* Bandenkante an der Oberkante = ihre linkeste Stelle */
+                bande: +R.apronRightAt(oben).toFixed(1),
+            };
+        })()`);
+        check('"HOCH" ragt nicht über die äußere Seitenlinie ins Feld',
+            note.links > note.seitenlinie,
+            `linke Kante ${note.links} vs. Seitenlinie ${note.seitenlinie}`);
+        check('"HOCH" berührt die Bande nicht',
+            note.rechts < note.bande,
+            `rechte Kante ${note.rechts} vs. Bande ${note.bande}`);
+        check('Zu beiden Seiten bleibt Luft',
+            (note.links - note.seitenlinie) >= 10 && (note.bande - note.rechts) >= 10,
+            `${(note.links - note.seitenlinie).toFixed(1)} px innen, `
+            + `${(note.bande - note.rechts).toFixed(1)} px außen`);
+
+        /* --- 10. Nichts ist unterwegs geflogen -------------------------- */
         check('Keine Exception und kein console.error während des Laufs',
             b.fehler.length === 0, b.fehler.join(' | ') || 'sauber');
 

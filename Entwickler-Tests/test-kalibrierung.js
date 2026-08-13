@@ -42,8 +42,8 @@ function pause(frames = 3) {
 
 const btnLow = el('btnLow');
 const btnHigh = el('btnHigh');
-const btnStart = el('btnStartGame');
 const anzeige = el('livePitch');
+const hinweis = el('calibHint');   // Rückmeldungen haben eine EIGENE Zeile
 
 /* --- Schritt 1: tiefer Ton, dann loslassen, dann klicken ------------------ */
 sing(120);
@@ -54,15 +54,39 @@ check('stablePitch hält den Ton fest', Math.round(audio.stablePitch) === 120,
 
 btnLow.click();
 check('Tiefer Ton wird trotz Pause gespeichert', Math.round(audio.stablePitch) === 120,
-    anzeige.innerText);
+    hinweis.innerText);
 check('"Hohen Ton speichern" ist freigeschaltet', btnHigh.disabled === false);
+
+/* Der gespeicherte Ton steht auf seinem Knopf, und der Knopf ist zu. Sonst
+   sieht er aus wie einer, der noch gedrückt werden will — und der zweite
+   Klick überschreibt den Ton mit dem, was gerade im Haltespeicher liegt. */
+check('Der gespeicherte tiefe Ton steht auf seinem Knopf',
+    /120 Hz/.test(btnLow.innerText), btnLow.innerText);
+check('Der Knopf für den tiefen Ton nimmt keine Klicks mehr an',
+    btnLow.disabled === true);
+
+/* --- Gegenprobe: Klick ohne Ton sagt, was fehlt --------------------------- */
+audio.heldPitchAt = Date.now() - 999999;   // Haltefenster abgelaufen
+audio.livePitch = 0;
+btnHigh.click();
+check('Klick ohne Ton erklärt sich', /Kein Ton erkannt/.test(hinweis.innerText),
+    hinweis.innerText);
+
+/* --- Gegenprobe: zu kleiner Stimmumfang wird abgelehnt -------------------- */
+sing(130);
+btnHigh.click();
+check('Zu enger Stimmumfang wird abgelehnt', /zu nah/.test(hinweis.innerText),
+    hinweis.innerText);
+check('Ein abgelehnter Ton lässt den Knopf offen', btnHigh.disabled === false);
 
 /* --- Schritt 2: hoher Ton über der alten 500-Hz-Grenze -------------------- */
 sing(560);
 pause();
 btnHigh.click();
 check('Hoher Ton (560 Hz) wird angenommen',
-    el('calibConfirm').style.display === 'block', anzeige.innerText);
+    el('calibConfirm').style.display === 'block', hinweis.innerText);
+check('Auch der hohe Ton steht danach auf seinem Knopf',
+    /Hz/.test(btnHigh.innerText) && btnHigh.disabled === true, btnHigh.innerText);
 /* Die Autokorrelation trifft nicht auf das Hertz genau (560 gesungen -> 558
    gemessen). Geprüft wird deshalb das Format, nicht der Wunschwert. */
 check('Der eingesungene Bereich wird zur Bestätigung angezeigt',
@@ -72,22 +96,12 @@ check('Der Umfang wird zusätzlich in Halbtönen und Tonnamen genannt',
     el('calibRangeDetail').innerText);
 
 el('btnRangeOk').click();
-check('"Range okay!" schaltet MATCH STARTEN frei', btnStart.style.display === 'block');
-
-/* --- Gegenprobe: Klick ohne Ton sagt jetzt, was fehlt --------------------- */
-audio.heldPitchAt = Date.now() - 999999;   // Haltefenster abgelaufen
-audio.livePitch = 0;
-btnHigh.click();
-check('Klick ohne Ton erklärt sich', /Kein Ton erkannt/.test(anzeige.innerText),
-    anzeige.innerText);
-
-/* --- Gegenprobe: zu kleiner Stimmumfang wird abgelehnt -------------------- */
-sing(130);
-btnHigh.click();
-check('Zu enger Stimmumfang wird abgelehnt', /zu nah/.test(anzeige.innerText),
-    anzeige.innerText);
+check('"Range okay!" führt zur Startauswahl',
+    el('startWahl').style.display === 'block');
 
 /* --- Vorfilter folgt der Kalibrierung ------------------------------------- */
+game.beginCalibration(game.PLAYER.ANDREA);   // Knöpfe wieder öffnen
+sing(120); btnLow.click();
 sing(560);
 btnHigh.click();
 audio.biquadFilter = { frequency: { value: FILTER_HZ }, Q: { value: 1 } };
@@ -96,7 +110,12 @@ const cutoff = audio.biquadFilter.frequency.value;
 check('Vorfilter lässt den höchsten Kalibrierton durch', cutoff > 560,
     `${Math.round(cutoff)} Hz`);
 
-/* Klassische Einstellung: 100–200 Hz muss den alten Bühnenwert behalten. */
+/* Klassische Einstellung: 100–200 Hz muss den alten Bühnenwert behalten.
+   Vorher neu beginnen: der Knopf für den hohen Ton ist nach einem
+   erfolgreichen Klick absichtlich zu. */
+game.beginCalibration(game.PLAYER.ANDREA);
+audio.heldPitch = 120; audio.heldPitchAt = Date.now(); audio.livePitch = 0;
+btnLow.click();
 audio.heldPitch = 180; audio.heldPitchAt = Date.now(); audio.livePitch = 0;
 btnHigh.click();
 audio.applyCalibratedFilter();
@@ -117,8 +136,10 @@ check('Neu einsingen blendet die Bestätigung aus',
 check('Neu einsingen setzt den Umfang auf die Vorgabe zurück',
     game.config.minFreq === 100 && game.config.maxFreq === 300,
     `${game.config.minFreq} – ${game.config.maxFreq} Hz`);
-check('Neu einsingen nimmt MATCH STARTEN wieder weg',
-    btnStart.style.display === 'none');
+check('Neu einsingen nimmt die Startauswahl wieder weg',
+    el('startWahl').style.display === 'none');
+check('Neu einsingen öffnet auch den Knopf für den tiefen Ton wieder',
+    btnLow.disabled === false && !/Hz/.test(btnLow.innerText), btnLow.innerText);
 
 /* --- Zweiter Spieler bekommt einen EIGENEN Umfang ------------------------- *
  * Beide auf einer gemeinsamen Skala wäre für den mit der kleineren Stimme

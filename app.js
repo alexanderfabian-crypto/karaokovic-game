@@ -169,9 +169,18 @@
          * sofort, ohne dass ein einzelner Ausreißer voll durchschlägt.
          */
         pitchSmoothFast: 0.5,
-        /* War 4.5 / 10.0 — deutlich spürbar zu schnell auf der Bühne. */
-        baseSpeed: 3.4,
-        maxSpeed: 7.2,
+        /**
+         * Zurück auf die Werte vor der Bremsung. 3.4 / 7.2 waren auf der
+         * Bühne absurd langsam — ein Ballwechsel dauerte im Median 15 s.
+         *
+         * Gefahrlos, weil die Gravitation NICHT mehr an der Geschwindigkeit
+         * hängt: sie wird pro Schlag aus der gewünschten Scheitelhöhe
+         * abgeleitet (siehe Physics.gravityForFlight). Zum Zeitpunkt der
+         * Bremsung war das noch anders — damals machte ein schnellerer Ball
+         * den Bogen flach, deshalb der Kommentar "zu schnell".
+         */
+        baseSpeed: 4.5,
+        maxSpeed: 10.0,
         /**
          * ENTFÄLLT als Bewegungsregler — siehe CONFIG.glideFrames.
          *
@@ -2847,8 +2856,21 @@
                Tribüne — das Grün endet dort bereits bei 1371. */
             const leftX = this.courtEdgeX(Renderer.PITCH_NOTE_Y_LOW, -1)
                 - Renderer.PITCH_NOTE_MARGIN;
-            const rightX = this.courtEdgeX(Renderer.PITCH_NOTE_Y_HIGH, 1)
-                + Renderer.PITCH_NOTE_MARGIN;
+
+            /* Rechts reicht ein fester Abstand NICHT. Das Visual ist hoch
+               (Notenkopf, Hals, Beschriftung), und der Grünstreifen rechts ist
+               oben deutlich schmaler als unten: bei y=193 endet er bei x=1261,
+               bei y=370 erst bei x=1437. Mit dem nominellen Abstand stand die
+               Note oben in der Tribüne.
+
+               Deshalb wird der Nennwert in einen Korridor geklemmt:
+                 - innen  die Seitenlinie auf Höhe der UNTERKANTE des Visuals
+                          (dort liegt sie am weitesten rechts),
+                 - außen  die Bandenkante auf Höhe der OBERKANTE
+                          (dort liegt sie am weitesten links).
+               Beides sind die jeweils engsten Stellen — passt es dort, passt
+               es überall dazwischen. */
+            const rightX = this.pitchRightX();
 
             /* Wie nah der gesungene Ton am jeweiligen Kalibrierpunkt liegt. */
             const hz = audio ? audio.stablePitch : 0;
@@ -2879,6 +2901,63 @@
         courtEdgeX(screenY, side) {
             const scale3D = (screenY - HORIZON_Y) / DEPTH_SPAN;
             return (VIRTUAL_WIDTH / 2) + side * (COURT_WIDTH / 2) * scale3D;
+        }
+
+        /**
+         * X-Position des rechten Tonhöhen-Visuals ("HOCH").
+         *
+         * Eigene Methode, damit die Entwickler-Tests dieselbe Rechnung prüfen
+         * können, die auch gezeichnet wird — eine nachgebaute Formel im Test
+         * würde eine Verschiebung im Renderer nicht bemerken.
+         *
+         * @returns {number} Virtuelle X-Koordinate der Notenmitte
+         */
+        pitchRightX() {
+            const mass = this.pitchVisualMetrics('HOCH');
+            const oben = Renderer.PITCH_NOTE_Y_HIGH - mass.oben;
+            const unten = Renderer.PITCH_NOTE_Y_HIGH + mass.unten;
+
+            /* Innen die Seitenlinie an der UNTERKANTE (dort am weitesten
+               rechts), außen die Bande an der OBERKANTE (dort am weitesten
+               links). Beides die jeweils engste Stelle. */
+            const innen = this.courtEdgeX(unten, 1) + mass.halbBreite
+                + Renderer.PITCH_APRON_SAFETY;
+            const aussen = Renderer.apronRightAt(oben) - mass.halbBreite
+                - Renderer.PITCH_APRON_SAFETY;
+            const nenn = this.courtEdgeX(Renderer.PITCH_NOTE_Y_HIGH, 1)
+                + Renderer.PITCH_NOTE_MARGIN;
+            return Math.max(innen, Math.min(aussen, nenn));
+        }
+
+        /**
+         * Ausdehnung eines Tonhöhen-Visuals in virtuellen Pixeln.
+         *
+         * Gemessen wird gegen den Ankerpunkt (`baseY` der Note), weil die
+         * Platzierung genau diesen Punkt setzt. Die Breite der Beschriftung
+         * kommt aus `measureText` statt aus einer Schätzung — sie hängt an der
+         * Schrift, und ob Impact geladen ist, entscheidet sich erst zur
+         * Laufzeit.
+         *
+         * @param   {string} text Beschriftung ("TIEF" / "HOCH")
+         * @returns {{oben:number, unten:number, halbBreite:number}}
+         */
+        pitchVisualMetrics(text) {
+            const ctx = this.ctx;
+            const gr = Renderer.PITCH_LABEL_SIZE;
+
+            ctx.save();
+            ctx.font = this.font(gr);
+            const textBreite = ctx.measureText(text).width;
+            ctx.restore();
+
+            const ry = Renderer.PITCH_NOTE_RADIUS * Renderer.PITCH_NOTE_HEAD_RATIO;
+            return {
+                /* Oberkante: Halslänge plus halber Notenkopf. */
+                oben: Renderer.PITCH_NOTE_STEM + ry,
+                /* Unterkante: Beschriftung, mittig auf ihrer Grundlinie. */
+                unten: Renderer.PITCH_LABEL_OFFSET + gr / 2,
+                halbBreite: Math.max(Renderer.PITCH_NOTE_RADIUS, textBreite / 2),
+            };
         }
 
         /**
@@ -4263,21 +4342,29 @@
      * damit gegenstandslos und entfallen.
      * ---------------------------------------------------------------------- */
 
-    /** X-Radius des Notenkopfes in virtuellen Pixeln. */
-    Renderer.PITCH_NOTE_RADIUS = 39;
+    /**
+     * X-Radius des Notenkopfes in virtuellen Pixeln.
+     *
+     * War 39, zusammen mit Hals 118 und Beschriftung 48 ergab das ein Visual
+     * von 243 px Höhe. So hoch passt es rechts NICHT zwischen Seitenlinie und
+     * Bande: der Grünstreifen ist dort oben nur rund 194 px breit, und die
+     * Note ragte oben in die Tribüne. Mit den jetzigen Maßen ist das Visual
+     * 177 px hoch und hat auf beiden Seiten Luft.
+     */
+    Renderer.PITCH_NOTE_RADIUS = 28;
     /**
      * Höhe des Notenkopfes als Anteil seiner Breite. Ein Notenkopf ist im
      * Notensatz breiter als hoch; 1.0 ergäbe einen Kreis.
      */
     Renderer.PITCH_NOTE_HEAD_RATIO = 0.78;
     /** Halslänge in virtuellen Pixeln. */
-    Renderer.PITCH_NOTE_STEM = 118;
+    Renderer.PITCH_NOTE_STEM = 85;
     /** Strichstärke des Notenhalses in virtuellen Pixeln. */
-    Renderer.PITCH_NOTE_STEM_WIDTH = 10;
+    Renderer.PITCH_NOTE_STEM_WIDTH = 8;
     /** Schriftgröße der Beschriftung ("TIEF" / "HOCH") in virtuellen Pixeln. */
-    Renderer.PITCH_LABEL_SIZE = 48;
+    Renderer.PITCH_LABEL_SIZE = 36;
     /** Abstand der Beschriftung unter der Notenmitte in virtuellen Pixeln. */
-    Renderer.PITCH_LABEL_OFFSET = 70;
+    Renderer.PITCH_LABEL_OFFSET = 52;
     /**
      * Position der Noten in BILDSCHIRMkoordinaten (Abstand von der Bildmitte
      * bzw. Höhe im Bild).
@@ -4296,6 +4383,33 @@
      * 140 setzt beide Noten in die Mitte ihres Grünstreifens.
      */
     Renderer.PITCH_NOTE_MARGIN = 140;
+
+    /**
+     * Rechte Kante des Grünstreifens (Beginn der Bande) in virtuellen Pixeln.
+     *
+     * Im Hintergrundbild Zeile für Zeile ausgemessen; zwischen y=150 und
+     * y=330 verläuft sie geradlinig:
+     *
+     *     y=150 -> x=1216      y=250 -> x=1320
+     *     y=190 -> x=1258      y=300 -> x=1372
+     *
+     * Das ergibt 1216 + 1.035·(y − 150), Abweichung unter 2 px.
+     *
+     * WARNUNG: Kommt ein anderes Hintergrundbild, gilt diese Gerade nicht mehr
+     * und muss neu eingemessen werden — genauso wie die Kamerakonstanten.
+     * Außerhalb von y = 150…330 ist sie nicht geprüft; dort knickt die
+     * Tribünengeometrie im Bild ab.
+     *
+     * @param   {number} y Virtuelle Bildschirm-Y-Koordinate
+     * @returns {number} Virtuelle X-Koordinate der Bandenkante
+     */
+    Renderer.apronRightAt = function (y) {
+        const geklemmt = Math.max(150, Math.min(330, y));
+        return 1216 + 1.035 * (geklemmt - 150);
+    };
+
+    /** Mindestabstand des Tonhöhen-Visuals zu Seitenlinie und Bande. */
+    Renderer.PITCH_APRON_SAFETY = 12;
     /**
      * Höhen der beiden Noten. Bewusst UNTERSCHIEDLICH:
      *
@@ -4779,6 +4893,8 @@
             this._loop = this.loop.bind(this);
             /** @type {HTMLElement|null} */
             this.livePitchDiv = document.getElementById('livePitch');
+            /** @type {HTMLElement|null} Eigene Zeile für Rückmeldungen. */
+            this.hintDiv = document.getElementById('calibHint');
         }
 
         /** Einmalige Initialisierung: Assets, Canvas, Hotkeys, UI. */
@@ -4872,6 +4988,11 @@
                     return;
                 }
                 this.setVoiceRange(this.calibPlayer, hz, null);
+                /* Der Knopf ist erledigt und sagt das auch. Ohne diese
+                   Rückmeldung sah er aus wie einer, der noch gedrückt werden
+                   will — und ein zweiter Klick überschrieb den Ton still mit
+                   dem, was gerade zufällig im Haltespeicher lag. */
+                Game.markDone(btnLow, `✓ Tiefer Ton: ${Math.round(hz)} Hz`);
                 btnHigh.disabled = false;
                 btnHigh.style.opacity = '1';
                 this.showCalibrationHint(`Tiefer Ton gespeichert: ${Math.round(hz)} Hz`, true);
@@ -4895,6 +5016,7 @@
                     return;
                 }
                 this.setVoiceRange(this.calibPlayer, null, hz);
+                Game.markDone(btnHigh, `✓ Hoher Ton: ${Math.round(hz)} Hz`);
                 this.showRangeConfirmation();
             });
 
@@ -4905,7 +5027,7 @@
                     return;
                 }
                 document.getElementById('calibConfirm').style.display = 'none';
-                btnStart.style.display = 'block';
+                document.getElementById('startWahl').style.display = 'block';
             });
 
             document.getElementById('btnRangeRedo').addEventListener('click', () => {
@@ -4913,35 +5035,58 @@
                 this.showCalibrationHint('Bereich verworfen — bitte neu einsingen.');
             });
 
-            /* --- Start ------------------------------------------------------ */
-            btnStart.addEventListener('click', () => {
-                this.calibrating = false;
-                /* Vorfilter erst jetzt auf den gemessenen Stimmumfang setzen —
-                   während der Kalibrierung musste er offen sein. Jeder Eingang
-                   bekommt den Filter SEINES Spielers: ein Bass und ein Sopran
-                   brauchen unterschiedliche Grenzfrequenzen. */
-                this.audio.applyCalibratedFilter(PLAYER.ANDREA);
-                if (CONFIG.mode === MODE.VERSUS) {
-                    this.audio2.applyCalibratedFilter(PLAYER.ALEX);
-                }
-                document.getElementById('onboarding').style.display = 'none';
-                this.canvas.style.display = 'block';
-                this.physics.haltAt();
-                this.physics.haltAlexAt();
-                this.audio.resetSmoothing();
-                this.audio2.resetSmoothing();
-                this.handleResize();
-                this.physics.prepareServe();
-                this.match.resetSilenceTimer();
-                this.running = true;
-                console.info(
-                    `[Kalibrierung] Spieler 1: ${CONFIG.minFreq.toFixed(1)}`
-                    + ` – ${CONFIG.maxFreq.toFixed(1)} Hz`
-                    + (CONFIG.mode === MODE.VERSUS
-                        ? ` | Spieler 2: ${CONFIG.minFreq2.toFixed(1)}`
-                          + ` – ${CONFIG.maxFreq2.toFixed(1)} Hz`
-                        : ''));
-            });
+            /* --- Start ------------------------------------------------------
+             * Zwei Wege ins Spiel. Das Einspielen zählt nichts und dient dem
+             * Warmwerden; das Match beginnt sofort bei 0:0. Der Regie-Trigger
+             * (Enter + Leertaste) bleibt daneben bestehen, um aus dem
+             * Einspielen ins Match zu wechseln.
+             * ---------------------------------------------------------------- */
+            document.getElementById('btnStartWarmup')
+                .addEventListener('click', () => this.enterGame(false));
+            btnStart.addEventListener('click', () => this.enterGame(true));
+        }
+
+        /**
+         * Onboarding verlassen und das Spiel starten.
+         * @param {boolean} sofortMatch true = direkt ins Match, false = Einspielen
+         */
+        enterGame(sofortMatch) {
+            this.calibrating = false;
+            /* Vorfilter erst jetzt auf den gemessenen Stimmumfang setzen —
+               während der Kalibrierung musste er offen sein. Jeder Eingang
+               bekommt den Filter SEINES Spielers: ein Bass und ein Sopran
+               brauchen unterschiedliche Grenzfrequenzen. */
+            this.audio.applyCalibratedFilter(PLAYER.ANDREA);
+            if (CONFIG.mode === MODE.VERSUS) {
+                this.audio2.applyCalibratedFilter(PLAYER.ALEX);
+            }
+            document.getElementById('onboarding').style.display = 'none';
+            this.canvas.style.display = 'block';
+
+            /* Reihenfolge: erst die Phase setzen, dann den Aufschlag aufbauen.
+               `startMatch()` setzt den Stand auf 0:0 und den Aufschlag auf
+               Andrea zurück — danach muss der Ballwechsel neu beginnen, sonst
+               steht der Ball noch beim vorigen Aufschläger. */
+            if (sofortMatch) this.match.startMatch();
+
+            this.physics.haltAt();
+            this.physics.haltAlexAt();
+            this.audio.resetSmoothing();
+            this.audio2.resetSmoothing();
+            this.handleResize();
+            this.physics.prepareServe();
+            this.match.setState(STATE.SILENCE_CHECK);
+            this.match.resetSilenceTimer();
+            this.running = true;
+
+            console.info(
+                `[Karaokovic] Start als ${sofortMatch ? 'MATCH' : 'EINSPIELEN'}`
+                + ` | Spieler 1: ${CONFIG.minFreq.toFixed(1)}`
+                + ` – ${CONFIG.maxFreq.toFixed(1)} Hz`
+                + (CONFIG.mode === MODE.VERSUS
+                    ? ` | Spieler 2: ${CONFIG.minFreq2.toFixed(1)}`
+                      + ` – ${CONFIG.maxFreq2.toFixed(1)} Hz`
+                    : ''));
         }
 
         /**
@@ -4959,13 +5104,12 @@
             this.setVoiceRange(player,
                 Renderer.ONBOARDING_DEFAULT_MIN, Renderer.ONBOARDING_DEFAULT_MAX);
 
-            const btnHigh = document.getElementById('btnHigh');
-            btnHigh.disabled = true;
-            btnHigh.style.opacity = '0.3';
+            Game.resetButton(document.getElementById('btnLow'), Game.LABEL_LOW, false);
+            Game.resetButton(document.getElementById('btnHigh'), Game.LABEL_HIGH, true);
 
             document.getElementById('calibSing').style.display = 'block';
             document.getElementById('calibConfirm').style.display = 'none';
-            document.getElementById('btnStartGame').style.display = 'none';
+            document.getElementById('startWahl').style.display = 'none';
 
             const wer = document.getElementById('calibWho');
             if (wer) {
@@ -5301,10 +5445,21 @@
          * @param {boolean} [ok=false] true = Erfolg (grün), false = Hinweis (rot)
          */
         showCalibrationHint(text, ok) {
-            if (!this.livePitchDiv) return;
-            this.livePitchDiv.innerText = text;
-            this.livePitchDiv.style.color = ok ? '#00ffcc' : '#ffcc00';
+            if (!this.hintDiv) return;
+            this.hintDiv.innerText = text;
+            /* Eigene Zeile statt der Hertz-Anzeige. Vorher überschrieb der
+               Hinweis den Messwert und lief bei längeren Sätzen aus dem auf
+               40 px fixierten Feld heraus, mitten in die Schrift darunter. */
+            this.hintDiv.className = ok ? 'ok' : '';
             this._hintUntil = Date.now() + Game.HINT_MS;
+        }
+
+        /** Abgelaufenen Hinweis wieder wegnehmen. */
+        expireCalibrationHint() {
+            if (!this.hintDiv || !this._hintUntil) return;
+            if (Date.now() < this._hintUntil) return;
+            this.hintDiv.innerText = '';
+            this._hintUntil = 0;
         }
 
         /**
@@ -5312,9 +5467,8 @@
          * @param {{freq:number, volume:number}} result
          */
         updateCalibrationReadout(result) {
+            this.expireCalibrationHint();
             if (!this.livePitchDiv) return;
-            if (Date.now() < this._hintUntil) return;   // Hinweis stehen lassen
-            this.livePitchDiv.style.color = '';
 
             /* Auch der gehaltene Ton wird angezeigt: die Sängerin sieht so,
                dass ihr Ton noch "im Speicher" liegt, während sie zum Knopf
@@ -5337,6 +5491,43 @@
 
     /** Anzeigedauer einer Kalibrierungs-Rückmeldung in Millisekunden. */
     Game.HINT_MS = 2500;
+
+    /** Beschriftungen der Kalibrierknöpfe im unbenutzten Zustand. */
+    Game.LABEL_LOW = 'Tiefen Ton (Links) speichern';
+    Game.LABEL_HIGH = 'Hohen Ton (Rechts) speichern';
+
+    /**
+     * Einen Kalibrierknopf als erledigt kennzeichnen.
+     *
+     * Er zeigt ab jetzt den gespeicherten Ton und nimmt keine Klicks mehr an.
+     * Beides gehört zusammen: ein Knopf, der noch klickbar aussieht, wird auch
+     * geklickt — und der zweite Klick hätte den Ton mit dem überschrieben, was
+     * gerade zufällig im Haltespeicher lag.
+     *
+     * @param {HTMLElement} btn
+     * @param {string}      text
+     */
+    Game.markDone = function (btn, text) {
+        if (!btn) return;
+        btn.innerText = text;
+        btn.disabled = true;
+        btn.classList.add('erledigt');
+        btn.style.opacity = '1';
+    };
+
+    /**
+     * Kalibrierknopf in den Ausgangszustand zurückversetzen.
+     * @param {HTMLElement} btn
+     * @param {string}      text     Ursprüngliche Beschriftung
+     * @param {boolean}     gesperrt true = noch nicht an der Reihe
+     */
+    Game.resetButton = function (btn, text, gesperrt) {
+        if (!btn) return;
+        btn.innerText = text;
+        btn.disabled = gesperrt;
+        btn.classList.remove('erledigt');
+        btn.style.opacity = gesperrt ? '0.3' : '1';
+    };
 
     /**
      * Mindestverhältnis zwischen hohem und tiefem Kalibrierton.
