@@ -1,7 +1,7 @@
 /* =============================================================================
  * XPERION ARCADE — "KARAOKOVIC" / VOICE TENNIS
- * Version : V40  (Onboarding-Feinschliff, Balltempo wie vor der Bremsung,
- *                 Platzbild ohne Fremdlogos)
+ * Version : V41  (Balltempo -20 %, staerkerer Gegner, Klaviatur nur noch
+ *                 als leuchtende Taste, Gamification-Wort aus)
  * Build   : Single-File, kein ES6-Import, kein Bundler, kein Server.
  *           Startet offline per file:// (index.html -> <script src="app.js">).
  * Ziel    : Live-Bühne, Chrome Fullscreen, LED-Wand, 60 FPS, Segmentlänge <= 7 min
@@ -170,17 +170,23 @@
          */
         pitchSmoothFast: 0.5,
         /**
-         * Zurück auf die Werte vor der Bremsung. 3.4 / 7.2 waren auf der
-         * Bühne absurd langsam — ein Ballwechsel dauerte im Median 15 s.
+         * Ballgeschwindigkeit in px/Frame.
          *
-         * Gefahrlos, weil die Gravitation NICHT mehr an der Geschwindigkeit
-         * hängt: sie wird pro Schlag aus der gewünschten Scheitelhöhe
-         * abgeleitet (siehe Physics.gravityForFlight). Zum Zeitpunkt der
-         * Bremsung war das noch anders — damals machte ein schnellerer Ball
-         * den Bogen flach, deshalb der Kommentar "zu schnell".
+         * Wegmarken: 4.5 / 10.0 ursprünglich, dann auf 3.4 / 7.2 gebremst
+         * (zu langsam, Ballwechsel im Median 15 s), zurück auf 4.5 / 10.0
+         * (zu schnell), jetzt 20 % darunter.
+         *
+         * Die Bogenhöhe hängt NICHT mehr an der Geschwindigkeit: sie wird pro
+         * Schlag aus der gewünschten Scheitelhöhe abgeleitet (siehe
+         * Physics.gravityForFlight). Diese beiden Werte lassen sich deshalb
+         * frei verstellen, ohne dass der Ball aus dem Bild fliegt.
+         *
+         * ACHTUNG SENDEPLATZ: langsamer heißt längere Ballwechsel. Zusammen
+         * mit `Physics.OPPONENT_MISS_CHANCE` bestimmt das, wie viele Punkte in
+         * sieben Minuten fallen — test-ballwechsel.js prüft die Untergrenze.
          */
-        baseSpeed: 4.5,
-        maxSpeed: 10.0,
+        baseSpeed: 3.6,
+        maxSpeed: 8.0,
         /**
          * ENTFÄLLT als Bewegungsregler — siehe CONFIG.glideFrames.
          *
@@ -329,7 +335,19 @@
          * zwingt (sonst läuft das Spiel doppelt so schnell).
          * Default false = bit-identisch zu V36.
          */
-        FIXED_TIMESTEP: false
+        FIXED_TIMESTEP: false,
+
+        /**
+         * true = das Gamification-Wort (BALL, NETZ, PUNKT, ...) wird gezeigt:
+         * senkrecht links neben dem Platz während der Ruhe-Phase und
+         * umherfliegend im Bumper zwischen den Punkten.
+         *
+         * Auf false gestellt, weil es die Aufmerksamkeit vom Tennis wegzieht.
+         * Die Mechanik dahinter (Wortliste, Weiterschalten, Undo-Historie)
+         * bleibt vollständig erhalten — das Wort wird nur nicht mehr
+         * gezeichnet. Zum Zurückholen genügt dieser Schalter.
+         */
+        SHOW_GAMIFICATION_WORD: false
     };
 
     /** Interne Auflösung, auf die alle Weltkoordinaten bezogen sind. */
@@ -2356,8 +2374,28 @@
     Physics.MISS_REACTION_MIN = 6;
     Physics.MISS_REACTION_MAX = 26;
 
-    /** Wahrscheinlichkeit, dass Alex einen Ball absichtlich verfehlt. */
-    Physics.OPPONENT_MISS_CHANCE = 0.24;
+    /**
+     * Wahrscheinlichkeit, dass Alex einen Ball absichtlich verfehlt.
+     *
+     * War 0.24 — damit war er zu leicht zu schlagen: fast jeder vierte Ball
+     * kam gar nicht zurück. Bei 0.15 bringt er sechs von sieben Bällen
+     * zurück, und der Ballwechsel endet häufiger daran, dass ANDREA ihn nicht
+     * mehr erreicht, statt an einem geschenkten Punkt.
+     *
+     * Zusammen mit `MAX_RALLY_SHOTS` der Regler für die Spiellänge. Gemessen
+     * (300 Ballwechsel je Kombination, perfekt spielende Andrea):
+     *
+     *   Fehlerquote / Deckel | Median | Schläge | Punkte in 7 min
+     *   0.24 / 5  (vorher)   | 10.6 s |   4.7   |  20
+     *   0.20 / 6             | 14.4 s |   6.4   |  17
+     *   0.15 / 6  (jetzt)    | 15.0 s |   6.7   |  17
+     *   0.10 / 8             | 22.8 s |  10.0   |  13
+     *
+     * Unter 0.13 wird der Ballwechsel spürbar zäh, ohne dass der Gegner
+     * merklich stärker wirkt. Die echte Zahl liegt über der gemessenen: im
+     * Test verfehlt Andrea nie, auf der Bühne schon.
+     */
+    Physics.OPPONENT_MISS_CHANCE = 0.15;
 
     /**
      * Höchstgeschwindigkeit des Gegners in px/Frame.
@@ -2378,10 +2416,17 @@
 
     /**
      * Nach so vielen Schlägen von Andrea verfehlt Alex garantiert. Bremse
-     * gegen endlose Ballwechsel — siehe rollOpponentMiss(). Bei ~2,4 s pro
-     * Schlag begrenzt 5 einen Ballwechsel auf maximal etwa 25 Sekunden.
+     * gegen endlose Ballwechsel — siehe rollOpponentMiss().
+     *
+     * Von 5 auf 6 angehoben, damit ein längerer Schlagabtausch überhaupt
+     * zustande kommen kann. Mit 5 endete jeder Ballwechsel spätestens beim
+     * fünften Schlag durch einen erzwungenen Fehler — bei einem Gegner, der
+     * jetzt sechs von sieben Bällen zurückbringt, wäre genau das die neue
+     * Obergrenze gewesen und der Ballwechsel hätte sich künstlich angefühlt.
+     * Höher als 6 verlängert vor allem die AUSREISSER (p90 von 26 s auf 33 s),
+     * ohne den Median zu bewegen.
      */
-    Physics.MAX_RALLY_SHOTS = 5;
+    Physics.MAX_RALLY_SHOTS = 6;
 
     /**
      * Sicherheitsabstand des Aufsprungpunktes zur Einzel-Seitenlinie in
@@ -3514,12 +3559,20 @@
          * ----------------------------------------------------------------- */
 
         /**
-         * Zwei Tastaturen: unten für Andrea, oben für Alex.
+         * Tonhöhen-Rückmeldung im Spiel: NUR die getroffene Taste.
          *
-         * Sie zeigen genau den kalibrierten Stimmumfang — eine Taste je
-         * Halbton von `minFreq` bis `maxFreq`, nicht mehr und nicht weniger.
-         * Damit ist auf einen Blick zu sehen, wie viel Luft nach oben und
-         * unten noch ist.
+         * Bis V40 stand hier eine vollständige Klaviatur über und unter dem
+         * Platz. Sie erklärte die Steuerung gut, rückte das Bild aber weit weg
+         * von einer Tennisübertragung — man sah zwei Instrumente und dazwischen
+         * ein Spielfeld. Jetzt leuchtet nur die Taste auf, die gerade gesungen
+         * wird; sie steht weiterhin exakt über der Feldposition, zu der dieser
+         * Ton die Figur schickt.
+         *
+         * Die volle Klaviatur bleibt im Onboarding — dort ist sie das
+         * Werkzeug, mit dem der Stimmumfang eingesungen und geprüft wird.
+         *
+         * Lage und Umfang kommen weiterhin aus dem kalibrierten Bereich, damit
+         * die leuchtende Taste an der richtigen Stelle sitzt.
          *
          * BEWUSST GLEICH BREITE TASTEN statt echter Klaviaturgeometrie. Auf
          * einem Klavier sind die weißen Tasten ungleich verteilt (zwischen E/F
@@ -3544,7 +3597,7 @@
             if (unten) {
                 this.drawKeyboardStrip(unten.x, near.y, unten.w,
                     Renderer.KEYS_HEIGHT_NEAR * scale,
-                    unten.minMidi, unten.maxMidi, liveMidi);
+                    unten.minMidi, unten.maxMidi, liveMidi, null, true);
             }
 
             /* Die obere Tastatur gehört im Versus-Modus Spieler 2 und zeigt
@@ -3559,7 +3612,7 @@
             if (oben) {
                 this.drawKeyboardStrip(oben.x, far.y, oben.w,
                     Renderer.KEYS_HEIGHT_FAR * scale, oben.minMidi, oben.maxMidi,
-                    versus ? Renderer.liveMidiOf(audio2) : liveMidi);
+                    versus ? Renderer.liveMidiOf(audio2) : liveMidi, null, true);
             }
         }
 
@@ -3652,8 +3705,10 @@
          * @param {number}        maxMidi  Höchste Taste
          * @param {number|null}   liveMidi Aktuell gesungener Ton, oder null
          * @param {number[]}      [marks]  MIDI-Noten, die markiert werden
+         * @param {boolean} [nurLeuchtende] true = NUR die getroffene Taste,
+         *        ohne Korpus, Filz und stumme Tasten (Ansicht im Spiel)
          */
-        drawKeyboardStrip(x, y, w, h, minMidi, maxMidi, liveMidi, marks) {
+        drawKeyboardStrip(x, y, w, h, minMidi, maxMidi, liveMidi, marks, nurLeuchtende) {
             const ctx = this.ctx;
             const count = maxMidi - minMidi + 1;
             if (count < 2 || w <= 0 || h <= 0) return;
@@ -3666,6 +3721,23 @@
             const keyH = h - pad * 2 - feltH;
 
             ctx.save();
+
+            /* --- Nur die leuchtende Taste -----------------------------------
+             * Im Spiel steht kein Instrument neben dem Platz. Sichtbar ist nur
+             * die Taste, die gerade getroffen wird — sie schwebt an ihrer
+             * Position über der Grundlinie und zeigt damit weiterhin, wohin
+             * der Ton die Figur schickt, ohne dass ein Klavier das Bild
+             * dominiert. Korpus, Filz und alle stummen Tasten entfallen.
+             * -------------------------------------------------------------- */
+            if (nurLeuchtende) {
+                if (lit !== null && lit >= minMidi && lit <= maxMidi) {
+                    const i = lit - minMidi;
+                    this.drawKey(x + i * keyW, keyTop, keyW, keyH,
+                        Renderer.isBlackKey(lit), true, false);
+                }
+                ctx.restore();
+                return;
+            }
 
             /* --- Korpus ---------------------------------------------------- */
             this.roundRectPath(x, y, w, h, Math.min(h * 0.16, 10));
@@ -3997,7 +4069,7 @@
          */
         drawPointBanner(match, scoreLine) {
             const ctx = this.ctx;
-            const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_MID_Y, this._p1);
+            const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, Renderer.BANNER_Y, this._p1);
 
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -4027,7 +4099,7 @@
          */
         drawWarmupBanner(match) {
             const ctx = this.ctx;
-            const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_MID_Y, this._p1);
+            const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, Renderer.BANNER_Y, this._p1);
 
             ctx.save();
             ctx.textAlign = 'center';
@@ -4069,15 +4141,17 @@
                 return;
             }
 
-            /* Harter Farbwechsel im festen 500-ms-Takt. Bezugsgröße ist
-               match.elapsed(), nicht die Framezahl — dadurch ist der Takt
-               unabhängig von der Bildwiederholrate der LED-Wand. */
-            const colorIndex =
-                Math.floor(match.elapsed() / Renderer.WORD_COLOR_MS) % RETRO_WORD_COLORS.length;
-            ctx.fillStyle = RETRO_WORD_COLORS[colorIndex];
-            ctx.font = this.font(120 * center.scale, 'italic bold');
-            const wordPos = this.viewport.toScreen(dvd.x, dvd.y, this._p2);
-            ctx.fillText(`"${match.currentWord()}"`, wordPos.x, wordPos.y);
+            if (FEATURES.SHOW_GAMIFICATION_WORD) {
+                /* Harter Farbwechsel im festen 500-ms-Takt. Bezugsgröße ist
+                   match.elapsed(), nicht die Framezahl — dadurch ist der Takt
+                   unabhängig von der Bildwiederholrate der LED-Wand. */
+                const colorIndex =
+                    Math.floor(match.elapsed() / Renderer.WORD_COLOR_MS) % RETRO_WORD_COLORS.length;
+                ctx.fillStyle = RETRO_WORD_COLORS[colorIndex];
+                ctx.font = this.font(120 * center.scale, 'italic bold');
+                const wordPos = this.viewport.toScreen(dvd.x, dvd.y, this._p2);
+                ctx.fillText(`"${match.currentWord()}"`, wordPos.x, wordPos.y);
+            }
 
             const scorePos = this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_TOP + 120, this._p2);
             ctx.fillStyle = 'rgba(255, 255, 0, 0.5)';
@@ -4105,7 +4179,7 @@
             const count = match.silenceCountdown();
             const legacyScale = FEATURES.LEGACY_OVERLAY_LAYOUT ? this.viewport.scale : 1;
 
-            this.drawVerticalText(
+            if (FEATURES.SHOW_GAMIFICATION_WORD) this.drawVerticalText(
                 match.currentWord(),
                 (COURT_LEFT / 2) * legacyScale,
                 (VIRTUAL_HEIGHT / 2) * legacyScale,
@@ -4765,6 +4839,20 @@
      * Verhältnis von Kontur zu Schriftgröße gleich — sonst wirkt die kleinere
      * Schrift schwerer als die große.
      * ---------------------------------------------------------------------- */
+    /**
+     * Bildschirm-Y der Netzlinie — Ankerhöhe der Banner zwischen den Punkten.
+     *
+     * WARUM NICHT `COURT_MID_Y`: das ist eine WELTkoordinate (500) und wurde
+     * hier als Bildschirmkoordinate benutzt. Auf dem Schirm liegt y=500 aber
+     * deutlich VOR dem Netz, mitten in Andreas Hälfte — genau dort, wo sie
+     * nach einem gewonnenen Punkt steht. Ihre Figur deckte den Text ab.
+     *
+     * Das Netz liegt bei scale3D = 1, also HORIZON_Y + DEPTH_SPAN = 377.8.
+     * Dort steht keine der beiden Figuren: Alex' Kopf endet bei rund 140,
+     * Andreas beginnt erst bei rund 500.
+     */
+    Renderer.BANNER_Y = HORIZON_Y + DEPTH_SPAN;
+
     Renderer.SERVE_PROMPT_TEXT = 'AUFSCHLAG!';
     Renderer.SERVE_PROMPT_SIZE = 96;
     /** Dauer eines Pulses in Millisekunden. */
@@ -4981,7 +5069,7 @@
             this.handleResize();
 
             this.bindOnboarding();
-            console.info('[Karaokovic] V40 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset.');
+            console.info('[Karaokovic] V41 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset.');
         }
 
         /** Canvasgröße nachziehen; im Ruhezustand den Aufschlag neu aufbauen. */
