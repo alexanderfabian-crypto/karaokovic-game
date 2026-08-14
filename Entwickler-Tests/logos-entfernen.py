@@ -59,6 +59,19 @@ LOECHER = [
     ('bande li 4',     225, 126,  282, 190, 'glyph', (132, 4)),
     ('bande li 5',     194, 208,  224, 239, 'glyph', (132, 4)),
     ('bande re 3',    1243, 129, 1339, 184, 'glyph', (132, 4)),
+
+    # Die IBM-Geschwindigkeitsanzeige an der Rueckwand wird als GANZES
+    # entfernt, nicht nur ihr Schriftzug: bliebe der Kasten stehen, saehe man
+    # eine leere Werbetafel — und eine Geschwindigkeitsanzeige, die die ganze
+    # Sendung ueber "126 MPH" zeigt, waere ohnehin sinnlos. Der Untergrund ist
+    # eine gleichmaessige blaue Wand, also 'rasen'.
+    ('ibm-tafel',      483,  80,  560, 147, 'klon',  (-135, 0)),
+
+    # "POLO" auf Schiedsrichterstuhl und Spielerbank. Beides weisse Schrift auf
+    # dunklen Flaechen — die Glyphenmaske trifft nur die Buchstaben, das Moebel
+    # selbst bleibt unangetastet.
+    ('polo-stuhl',     330, 321,  366, 338, 'glyph', (150, 3)),
+    ('polo-bank',      235, 440,  278, 458, 'glyph', (150, 3)),
 ]
 
 RICHTUNGEN = [(1, 0), (-1, 0), (0, 1), (0, -1),
@@ -126,13 +139,42 @@ def main():
         n = 0
         if art == 'klon':
             dx, dy = par
+
+            # Helligkeitsabgleich.
+            # Der Untergrund hat oft einen sanften Verlauf. Ein 1:1 kopierter
+            # Ausschnitt ist dann als Rechteck zu erkennen, auch wenn sein
+            # Inhalt passt. Deshalb wird die mittlere Farbe des Rahmens um das
+            # Loch mit der des Rahmens um die Quelle verglichen und die
+            # Differenz auf die Kopie addiert.
+            diff = [0.0, 0.0, 0.0]
+            zaehler = 0
+            for y in range(y0 - 6, y1 + 7):
+                for x in range(x0 - 6, x1 + 7):
+                    if x0 <= x <= x1 and y0 <= y <= y1:
+                        continue
+                    sx, sy = x + dx, y + dy
+                    if not (0 <= x < W and 0 <= y < H):
+                        continue
+                    if not (0 <= sx < W and 0 <= sy < H):
+                        continue
+                    if maske[y * W + x] or maske[sy * W + sx]:
+                        continue
+                    i, j = idx(x, y), idx(sx, sy)
+                    for k in range(3):
+                        diff[k] += orig[i+k] - orig[j+k]
+                    zaehler += 1
+            if zaehler:
+                diff = [v / zaehler for v in diff]
+
             for y in range(y0, y1 + 1):
                 for x in range(x0, x1 + 1):
                     i, j = idx(x, y), idx(x + dx, y + dy)
                     rand = min(x - x0, x1 - x, y - y0, y1 - y)
                     a = 1.0 if rand >= FEDER else (rand + 1) / (FEDER + 1)
                     for k in range(3):
-                        d[i+k] = int(round(orig[j+k] * a + orig[i+k] * (1 - a)))
+                        quelle = orig[j+k] + diff[k]
+                        wert = quelle * a + orig[i+k] * (1 - a)
+                        d[i+k] = max(0, min(255, int(round(wert))))
                     n += 1
         else:
             for (x, y) in punkte:

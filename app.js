@@ -2507,6 +2507,9 @@
             if (scene.match.state === STATE.SILENCE_CHECK) {
                 this.drawSilenceCheck(scene.match, scene);
             }
+            if (scene.match.state === STATE.SERVE_WAIT) {
+                this.drawServePrompt(scene);
+            }
 
             /* Ganz zuletzt, damit die Werte auch unter der Abdunkelung und
                unter dem Bumper lesbar bleiben — sie sind ein Kontrollmittel
@@ -3930,6 +3933,64 @@
         }
 
         /**
+         * Aufforderung im Zustand SERVE_WAIT: jetzt darf aufgeschlagen werden.
+         *
+         * REGRESSIONSSCHUTZ FÜR EINE BÜHNENMELDUNG. Bis V40 wurde in diesem
+         * Zustand NICHTS gezeichnet: der Countdown lief 3-2-1 und verschwand
+         * dann einfach. Wer einen Sekundenbruchteil zu früh einsetzte, setzte
+         * damit die Ruhe-Uhr zurück, der Countdown begann unbemerkt von vorn,
+         * und es sah aus, als reagiere der Aufschlag nicht.
+         *
+         * Der Unterschied ist jetzt sichtbar: Countdown = still sein,
+         * diese Aufforderung = singen.
+         *
+         * Sie pulsiert, damit sie sich vom stehenden Countdown unterscheidet,
+         * und weicht denselben Köpfen aus wie er.
+         *
+         * @param {Object} scene
+         */
+        drawServePrompt(scene) {
+            const ctx = this.ctx;
+            const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_MID_Y, this._p1);
+            const size = Renderer.SERVE_PROMPT_SIZE * p.scale;
+
+            /* Puls aus der verstrichenen Zeit im Zustand — kein eigener
+               Zähler, der bei einem Reset aus dem Tritt geraten könnte. */
+            const t = (scene.match.elapsed() % Renderer.SERVE_PROMPT_PULSE_MS)
+                / Renderer.SERVE_PROMPT_PULSE_MS;
+            const puls = 0.72 + 0.28 * Math.sin(t * Math.PI * 2);
+
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = this.font(size, 'normal', Renderer.GOTHIC_FONT);
+
+            const half = ctx.measureText(Renderer.SERVE_PROMPT_TEXT).width / 2;
+            const box = {
+                left: p.x - half, right: p.x + half,
+                top: p.y - size * 0.5, bottom: p.y + size * 0.5
+            };
+            const offset = this.dodgeHeads(box, [
+                this.headBox(scene.andreaX, scene.paddleAndrea.y),
+                this.headBox(scene.paddleAlex.x, scene.paddleAlex.y)
+            ], Renderer.COUNTDOWN_DODGE * p.scale);
+
+            /* EIGENER Stil, nicht der des Countdowns. Dessen schwarze Füllung
+               mit Schein funktioniert nur bei 400 px Höhe; bei 96 px auf dem
+               blauen Platz wäre sie kaum zu lesen. Gelb auf dunklem Rand ist
+               dieselbe Farbe wie die Punkte in der Bauchbinde und hebt sich
+               von Platz UND Rasen ab. */
+            ctx.globalAlpha = puls;
+            ctx.lineWidth = size * 0.16;
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.strokeText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
+            ctx.fillStyle = ACCENT_YELLOW;
+            ctx.fillText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
+            ctx.restore();
+        }
+
+        /**
          * Große Punktanzeige inkl. "X PUNKTET!".
          * @param {MatchState} match
          * @param {string}     scoreLine
@@ -4694,6 +4755,20 @@
 
     /** Schriftgröße des Countdowns in virtuellen Pixeln. */
     Renderer.COUNTDOWN_SIZE = 400;
+
+    /* -------------------------------------------------------------------------
+     * Aufforderung im Zustand SERVE_WAIT (siehe Renderer.drawServePrompt)
+     *
+     * Deutlich kleiner als der Countdown: der Countdown ist der Moment, in dem
+     * das Publikum auf den Platz schaut, die Aufforderung richtet sich an die
+     * Spielerin. Der Strichstärke-Faktor in drawServePrompt hält das
+     * Verhältnis von Kontur zu Schriftgröße gleich — sonst wirkt die kleinere
+     * Schrift schwerer als die große.
+     * ---------------------------------------------------------------------- */
+    Renderer.SERVE_PROMPT_TEXT = 'AUFSCHLAG!';
+    Renderer.SERVE_PROMPT_SIZE = 96;
+    /** Dauer eines Pulses in Millisekunden. */
+    Renderer.SERVE_PROMPT_PULSE_MS = 900;
     /**
      * Radius des Neon-Scheins in virtuellen Pixeln, VOR der Letterbox-
      * Skalierung. Wird in neonText() mit `scale` multipliziert, damit der

@@ -18,6 +18,7 @@ const TESTS = [
     ['test-regeln.js', 'Tennisregeln'],
     ['test-aufsprung.js', 'Aufsprungpunkte'],
     ['test-gegner.js', 'Verhalten des Gegners'],
+    ['test-aufschlag.js', 'Auslösen des Aufschlags'],
     ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz'],
     ['test-browser.js', 'Start im echten Browser (Chrome headless)']
 ];
