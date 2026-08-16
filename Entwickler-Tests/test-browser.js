@@ -24,14 +24,49 @@
 const { check, summary } = require('./dom-stub.js');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 
-const PORT = 9411;
-const SEITE = 'file://' + path.join(__dirname, '..', 'index.html');
-const PROFIL = path.join(os.tmpdir(), 'karaokovic-testprofil');
+/* Welche Seite geprüft wird, entscheidet das erste Argument.
+ *
+ *   node Entwickler-Tests/test-browser.js              -> index.html  (V41)
+ *   node Entwickler-Tests/test-browser.js arena.html   -> arena.html  (ARENA-1)
+ *
+ * Bis ARENA-1 stand hier fest index.html. Die Arena-Fassung hatte damit kein
+ * automatisches Netz — ausgerechnet die Fassung, an der weitergebaut wird. */
+const DATEI = process.argv[2] || 'index.html';
+const SEITE = 'file://' + path.join(__dirname, '..', DATEI);
+
+/* Port UND Profil pro Lauf eindeutig.
+ *
+ * Vorher stand hier der feste Port 9411 und ein fester Profilpfad. Beides ging
+ * schief, sobald ein früherer Lauf abgebrochen wurde und sein Chrome
+ * weiterlief: der neue Lauf fand den Debugport besetzt vor, `fetch` landete
+ * beim ALTEN Browser, und der Test steuerte eine Zombie-Seite, die nie
+ * antwortete — er hing dann ohne Zeitlimit. Auf dieser Maschine hatten sich so
+ * 17 Waisen angesammelt, die älteste über zwei Tage alt.
+ *
+ * Ein vom Betriebssystem vergebener freier Port kann per Definition nicht dem
+ * Browser eines anderen Laufs gehören. */
+const PROFIL = path.join(os.tmpdir(), `karaokovic-testprofil-${process.pid}`);
 
 const schlafe = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Einen freien TCP-Port vom Betriebssystem erfragen.
+ * @returns {Promise<number>}
+ */
+function freierPort() {
+    return new Promise((res, rej) => {
+        const srv = net.createServer();
+        srv.on('error', rej);
+        srv.listen(0, '127.0.0.1', () => {
+            const p = srv.address().port;
+            srv.close(() => res(p));
+        });
+    });
+}
 
 /** @returns {string|null} Pfad zu Chrome, oder null wenn keiner gefunden wurde. */
 function chromePfad() {
@@ -61,9 +96,10 @@ class Browser {
     }
 
     async start(exe) {
+        const port = await freierPort();
         this.prozess = spawn(exe, [
             '--headless=new',
-            `--remote-debugging-port=${PORT}`,
+            `--remote-debugging-port=${port}`,
             '--window-size=1600,900',
             /* Synthetisches Mikrofon, Berechtigung automatisch erteilt —
                sonst bleibt das Onboarding in Schritt 1 stehen. */
@@ -79,7 +115,7 @@ class Browser {
         let ziele = null;
         for (let i = 0; i < 80; i++) {
             try {
-                const res = await fetch(`http://127.0.0.1:${PORT}/json/list`);
+                const res = await fetch(`http://127.0.0.1:${port}/json/list`);
                 ziele = await res.json();
                 if (ziele.some((z) => z.type === 'page')) break;
             } catch (_) { /* Debugport noch nicht offen */ }
@@ -89,8 +125,15 @@ class Browser {
             throw new Error('Chrome-Debugport nicht erreichbar');
         }
 
+        /* Zeitlimit auch hier: ohne das wartet der Test unbegrenzt, wenn der
+           Browser den Aufbau annimmt und dann verstummt. Genau so entstand der
+           Hänger, der die Suite blockierte. */
         this.ws = new WebSocket(ziele.find((z) => z.type === 'page').webSocketDebuggerUrl);
-        await new Promise((res, rej) => { this.ws.onopen = res; this.ws.onerror = rej; });
+        await new Promise((res, rej) => {
+            const uhr = setTimeout(() => rej(new Error('WebSocket zum Browser kam nicht zustande')), 15000);
+            this.ws.onopen = () => { clearTimeout(uhr); res(); };
+            this.ws.onerror = (e) => { clearTimeout(uhr); rej(new Error(`WebSocket-Fehler: ${e.message || e.type}`)); };
+        });
         this.ws.onmessage = (e) => this._empfang(JSON.parse(e.data));
 
         await this.sende('Runtime.enable');
@@ -131,9 +174,27 @@ class Browser {
         return r.result.value;
     }
 
+    /**
+     * Browser beenden und das Profil wegräumen.
+     *
+     * `kill()` schickt nur SIGTERM, und das nimmt Chrome nicht zuverlässig an —
+     * genau daran sind die Waisen entstanden. Der Nachschlag mit SIGKILL folgt
+     * deshalb sofort und nicht nach einer Schonfrist: ein Timer würde nicht
+     * mehr feuern, wenn Node vorher aussteigt, und ein Testprofil hat nichts zu
+     * sichern.
+     *
+     * Muss mehrfach aufrufbar sein — der Aufruf kommt auch aus den
+     * Signalhandlern.
+     */
     stopp() {
         try { this.ws && this.ws.close(); } catch (_) { /* egal */ }
-        try { this.prozess && this.prozess.kill(); } catch (_) { /* egal */ }
+        const p = this.prozess;
+        this.prozess = null;
+        if (p) {
+            try { p.kill(); } catch (_) { /* egal */ }
+            try { p.kill('SIGKILL'); } catch (_) { /* egal */ }
+        }
+        try { fs.rmSync(PROFIL, { recursive: true, force: true }); } catch (_) { /* egal */ }
     }
 }
 
@@ -154,7 +215,23 @@ class Browser {
         return;
     }
 
+    console.log(`Geprüfte Seite: ${DATEI}`);
+
     const b = new Browser();
+
+    /* Aufräumen auch dann, wenn der Test NICHT normal endet.
+     *
+     * Das `finally` unten greift nur beim geordneten Durchlauf. Wird der Lauf
+     * abgebrochen — Strg+C, Zeitlimit eines Runners, `kill` von außen — lief
+     * es nie, und der Browser blieb stehen. Auf Port und Profil wartete er
+     * dann auf den nächsten Lauf und brachte ihn zum Hängen. */
+    let beendet = false;
+    const aufraeumen = () => { if (!beendet) { beendet = true; b.stopp(); } };
+    process.on('exit', aufraeumen);
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+        process.on(signal, () => { aufraeumen(); process.exit(130); });
+    }
+
     try {
         await b.start(exe);
         await schlafe(3000);   // Bilder von Platte laden lassen
@@ -271,6 +348,21 @@ class Browser {
 
             schritte.modusZuerst = sichtbar('btnModeArcade') && !sichtbar('btnMic');
             document.getElementById('btnModeArcade').click();
+
+            /* ARENA-1 schiebt zwischen Modus und Mikrofon die Platzwahl ein.
+               Ob es den Schritt gibt, entscheidet die geprüfte SEITE — deshalb
+               wird er hier erkannt und nicht vorausgesetzt. So prüft dieselbe
+               Testdatei beide Fassungen, statt zu einer Kopie zu zerfallen. */
+            const platzKnopf = document.getElementById('btnPlatzSand');
+            schritte.hatPlatzwahl = !!platzKnopf;
+            if (platzKnopf) {
+                schritte.platzVorMikrofon = sichtbar('btnPlatzSand') && !sichtbar('btnMic');
+                platzKnopf.click();
+                schritte.platzName = K.platz ? String(K.platz.name) : '';
+                schritte.platzFolge = Array.isArray(K.platzFolge)
+                    ? K.platzFolge.join(' -> ') : '';
+            }
+
             schritte.dannMikrofon = sichtbar('btnMic');
 
             document.getElementById('btnMic').click();
@@ -327,7 +419,15 @@ class Browser {
                      medianMs: +t[Math.floor(t.length / 2)].toFixed(2) };
         })()`);
         check('Die Moduswahl steht vor dem Mikrofon', einspielen.modusZuerst);
-        check('Nach der Moduswahl kommt der Mikrofon-Check', einspielen.dannMikrofon);
+        if (einspielen.hatPlatzwahl) {
+            check('Die Platzwahl steht zwischen Modus und Mikrofon',
+                einspielen.platzVorMikrofon);
+            check('Der gewählte Belag ist gesetzt und eröffnet die Satzfolge',
+                /Sand/i.test(einspielen.platzName)
+                && einspielen.platzFolge.startsWith('SAND'),
+                `Platz "${einspielen.platzName}", Folge ${einspielen.platzFolge}`);
+        }
+        check('Vor dem Einsingen steht der Mikrofon-Check', einspielen.dannMikrofon);
         check('Nach der Mikrofonfreigabe kommt das Einsingen', einspielen.dannEinsingen);
         check('Nach dem hohen Ton wird der Bereich zur Bestätigung gezeigt',
             einspielen.bestaetigungKommt, einspielen.bereichText);
@@ -474,7 +574,7 @@ class Browser {
     } catch (err) {
         check('Browsertest läuft ohne Abbruch durch', false, err.message);
     } finally {
-        b.stopp();
+        aufraeumen();
     }
 
     summary();

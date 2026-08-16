@@ -20,14 +20,18 @@ Arena-Fassung. `git status` auf diese drei Dateien muss leer bleiben.
 
 ### Nachweislich korrekt
 
-**Node-Suite, 7 Dateien, alle grün** (`node Entwickler-Tests/alle-tests.js`):
-Tonhöhenerkennung, Onboarding/Kalibrierung, Tennisregeln, Aufsprungpunkte,
-Gegnerverhalten, Aufschlag-Auslösung, Ballwechseldauer.
+**Node-Suite, 9 Dateien / 10 Läufe, 126 Zusicherungen, alle grün**
+(`node Entwickler-Tests/alle-tests.js`, Dauer ~1 min): Tonhöhenerkennung,
+Onboarding/Kalibrierung, Tennisregeln, Aufsprungpunkte, Gegnerverhalten,
+Aufschlag-Auslösung, **Duell-Aufschlag (Arena)**, Ballwechseldauer,
+Browserstart **für beide Fassungen**.
 
-**Im echten Chrome (headless, CDP) geprüft:**
+**Im echten Chrome (headless, CDP) geprüft — jetzt automatisch, nicht mehr per
+Einmalskript:**
 
 - Alle drei Plätze rendern fehlerfrei, 11/11 Assets, keine Seitenexception.
-- Onboarding läuft bis `phase = WARMUP` durch.
+- Onboarding läuft bis `phase = WARMUP` durch, inklusive des Arena-eigenen
+  Schritts Platzwahl (Sand gewählt → Folge `SAND -> HART -> RASEN`).
 - Physikgrenzen als Overlay über die aufgemalten Linien gelegt: Doppel- und
   Einzelfeld liegen auf allen drei Plätzen auf den Linien.
 - Satzfolge geprüft: Sand gewählt → Satz 1 Sand, nach Satz 1 Hartplatz, nach
@@ -41,9 +45,6 @@ Gegnerverhalten, Aufschlag-Auslösung, Ballwechseldauer.
   einkanalig. Geprüft ist der Signalweg mit synthetischem Zweikanal-Stream
   (200 Hz links, 400 Hz rechts, sauber getrennt) und die Spiellogik über
   direkt gesetzte Tonhöhen. Nie mit Hardware.
-- **`test-browser.js` läuft gegen `index.html`, nicht gegen `arena.html`.**
-  Die Arena-Fassung ist damit NICHT im automatischen Netz. Alle Arena-Prüfungen
-  dieser Sitzung waren Einmalskripte.
 - **Nie auf der Bühnenmaschine gelaufen.** Alle Bildraten sind headless
   gemessen (Software-Rendering, kein Vsync).
 
@@ -128,24 +129,55 @@ von ~7 % Amplitude. Dauerhaftes Raumgeräusch über 0.020 blockiert vollständig
 
 ## 3. Nächster Schritt
 
-### Zuerst, weil es ein bekannter Fehler ist
+### Erledigt seit dem letzten Protokoll
 
-**`triggerServe()` liest im Duell den falschen Eingang.**
-`app-arena.js:1889` nimmt immer `this.audio` und Andreas Stimmumfang, um den
-Zielpunkt des Aufschlags zu bestimmen. Schlägt Spieler 2 auf, fliegt sein Ball
-dorthin, wo *Andreas* letzter Ton hinzeigte. Im Arcade-Modus folgenlos, im
-Duell ein sichtbarer Fehler. Fix: `serverAudio()` benutzen und den passenden
-`PLAYER` an `freqToQuantizedX()` durchreichen — beides existiert bereits.
+**Der Duell-Aufschlag ist repariert** (`app-arena.js`, `triggerServe()`). Der
+Fehler hatte *zwei* Hälften, nicht eine:
+
+1. **Falscher Eingang** — fest `this.audio` statt des Eingangs des
+   Aufschlägers. Das war der bekannte Teil.
+2. **Falscher Stimmumfang** — `freqToQuantizedX()` wurde ohne Spieler-Parameter
+   gerufen, rechnete also immer mit Andreas Kalibrierung. Auch mit richtigem
+   Eingang wäre Alex' Ball schief geflogen.
+
+**Die Falle dabei, bitte nicht erneut hineinlaufen:** der Umfang gehört zur
+STIMME, nicht zum Aufschläger. Ein Fix über `match.server` sieht richtig aus,
+bricht aber den Arcade-Modus — dort schlägt die KI auf, `serverAudio()` liefert
+Andreas Mikrofon (die KI hat keine Stimme), und mit `match.server` würde ihr Ton
+durch Alex' Kalibrierung gerechnet, die im Arcade-Modus nie eingesungen wird.
+Der Umfang wird deshalb aus dem *gewählten Eingang* abgeleitet. Genau dieser
+Zwischenfehler ist bei der Reparatur passiert und nur aufgefallen, weil der
+Arcade-Fall mit im Test steht.
+
+Abgesichert durch `Entwickler-Tests/test-duell-aufschlag.js`. Gegen den alten
+Stand laufen genau die zwei Duell-Prüfungen rot, Andrea und Arcade bleiben grün.
+
+**Zwei Lücken im Prüfstand, die das letzte Protokoll nicht kannte:**
+
+- `dom-stub.js` lud fest `require('../app.js')`. Die „7 Dateien grün" haben
+  `app-arena.js` **nie angefasst** — nicht nur der Browsertest zeigte auf die
+  alte Fassung, die gesamte Node-Suite tat es. `loadGame(datei)` nimmt jetzt
+  einen Dateinamen, Vorgabe unverändert `app.js`.
+- `test-browser.js` benutzte den festen Debugport 9411 und räumte bei Abbruch
+  nicht auf. Ein abgebrochener Lauf ließ Chrome stehen, der nächste Lauf
+  verband sich per IPv4 mit dieser Waise statt mit dem eigenen Browser und hing
+  dann ohne Zeitlimit. Auf der Entwicklungsmaschine hatten sich 17 Waisen
+  angesammelt, die älteste über zwei Tage alt. Jetzt: freier Port vom
+  Betriebssystem, eindeutiges Profil je Lauf, Zeitlimit auf den
+  WebSocket-Aufbau, SIGKILL-Nachschlag und Signalhandler.
+
+`test-browser.js` nimmt die zu prüfende Seite jetzt als Argument
+(`node Entwickler-Tests/test-browser.js arena.html`) und läuft in der Suite
+zweimal — einmal je Fassung. Den Arena-eigenen Schritt Platzwahl erkennt die
+Datei selbst, statt in eine Kopie zu zerfallen.
 
 ### Danach
 
-1. **`test-browser.js` auf `arena.html` umstellen** (oder ein zweites
-   Testfile). Die Arena-Fassung hat aktuell kein automatisches Netz.
-2. **Auf der Bühnenmaschine starten.** 60 Hz zwingend einstellen —
+1. **Auf der Bühnenmaschine starten.** 60 Hz zwingend einstellen —
    `FEATURES.FIXED_TIMESTEP` steht auf `false`, die Physik zählt Frames.
    Background-Throttling in Chrome aus. Über `http://localhost` starten, nicht
    `file://`: sonst fragt Chrome bei jedem Reload neu nach dem Mikrofon.
-3. **Zwei echte Mikrofone testen** (Dante Virtual Soundcard, zwei Cleanfeeds).
+2. **Zwei echte Mikrofone testen** (Dante Virtual Soundcard, zwei Cleanfeeds).
    Prüfen: liegt Spieler 1 links, Spieler 2 rechts?
 
 ### Offen, vom Auftraggeber noch nicht beauftragt

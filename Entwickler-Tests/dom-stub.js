@@ -99,11 +99,18 @@ if (typeof globalThis.performance === 'undefined') {
 }
 
 /**
- * app.js laden und die Spielinstanz zurückgeben.
+ * Spielcode laden und die Spielinstanz zurückgeben.
+ *
+ * Seit ARENA-1 gibt es zwei Fassungen nebeneinander: app.js (V41, eingefroren)
+ * und app-arena.js (drei Plätze, hier wird weitergebaut). Ohne Argument wird
+ * weiterhin app.js geladen — alle bestehenden Tests bleiben damit unverändert,
+ * neue Tests für die Arena-Fassung geben die Datei ausdrücklich an.
+ *
+ * @param   {string} [datei] Pfad relativ zu diesem Verzeichnis.
  * @returns {Object} window.KARAOKOVIC
  */
-function loadGame() {
-    require('../app.js');
+function loadGame(datei = '../app.js') {
+    require(require('path').join(__dirname, datei));
     return global.window.KARAOKOVIC;
 }
 

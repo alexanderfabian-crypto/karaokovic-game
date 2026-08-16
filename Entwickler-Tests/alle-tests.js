@@ -3,8 +3,10 @@
  *
  *   node Entwickler-Tests/alle-tests.js
  *
- * Jeder Test läuft in einem eigenen Node-Prozess, weil jeder app.js frisch
- * lädt und dabei globale Browser-Attrappen setzt.
+ * Jeder Test läuft in einem eigenen Node-Prozess, weil jeder den Spielcode
+ * frisch lädt und dabei globale Browser-Attrappen setzt. Welche Fassung das
+ * ist, entscheidet der einzelne Test über loadGame() — die Arena-Tests laden
+ * app-arena.js, alle übrigen weiterhin app.js.
  * ========================================================================== */
 
 'use strict';
@@ -19,15 +21,20 @@ const TESTS = [
     ['test-aufsprung.js', 'Aufsprungpunkte'],
     ['test-gegner.js', 'Verhalten des Gegners'],
     ['test-aufschlag.js', 'Auslösen des Aufschlags'],
+    ['test-duell-aufschlag.js', 'Aufschlag im Duell (Arena-Fassung)'],
     ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz'],
-    ['test-browser.js', 'Start im echten Browser (Chrome headless)']
+    /* Der Browsertest läuft ZWEIMAL — einmal je Fassung. Bis ARENA-1 prüfte er
+       nur index.html; die Fassung, an der gebaut wird, hatte damit kein Netz. */
+    ['test-browser.js', 'Start im echten Browser: V41 (index.html)', 'index.html'],
+    ['test-browser.js', 'Start im echten Browser: ARENA-1 (arena.html)', 'arena.html']
 ];
 
 let fehlgeschlagen = 0;
 
-for (const [datei, titel] of TESTS) {
+for (const [datei, titel, ...argumente] of TESTS) {
     console.log(`\n${'='.repeat(70)}\n  ${titel}  (${datei})\n${'='.repeat(70)}`);
-    const res = spawnSync(process.execPath, [path.join(__dirname, datei)], { stdio: 'inherit' });
+    const res = spawnSync(process.execPath,
+        [path.join(__dirname, datei), ...argumente], { stdio: 'inherit' });
     if (res.status !== 0) fehlgeschlagen++;
 }
 

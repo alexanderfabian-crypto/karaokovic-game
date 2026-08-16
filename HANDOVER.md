@@ -1,4 +1,21 @@
-# Karaokovic — Übergabeprotokoll
+# Karaokovic — Übergabeprotokoll (HISTORIE, Stand V37)
+
+> **Diese Datei ist überholt und wird nicht mehr gepflegt.**
+>
+> Der gültige Stand steht in **[HANDOVER-ARENA.md](HANDOVER-ARENA.md)**.
+>
+> Aufgehoben als Historie, weil sie die Begründungen zu V37 festhält — die
+> Herleitung der Tonhöhenglättung, der Aufschlagschwellen und der
+> Gegnerlogik gilt unverändert und steht nirgends sonst so ausführlich.
+>
+> Überholt sind dagegen alle Aussagen zu **Dateistand, Prüfstand und
+> Werkzeugen**. Insbesondere gilt nicht mehr:
+>
+> - „Kein Git-Repo" — das Projekt ist seit V41 versioniert.
+> - „Nichts davon ist im Browser verifiziert" — es gibt seit V38 einen
+>   automatischen Browsertest, seit ARENA-1 für beide Fassungen.
+> - `app.js` ist nicht mehr die Arbeitsdatei, sondern die eingefrorene
+>   Fassung V41. Weitergebaut wird in `app-arena.js`.
 
 Stand: 13.08.2026. Datei: `app.js` (Single-File, kein Bundler, startet offline per
 `file://` über `index.html`). Kein Git-Repo — es gibt keine Historie und kein

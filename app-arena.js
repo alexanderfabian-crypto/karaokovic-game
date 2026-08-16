@@ -1886,8 +1886,31 @@
                Tonhöhe abzuleiten ist richtig, sie zu koppeln nicht: der Ball
                soll dorthin fliegen, wohin gesungen wurde, die Aufschlägerin
                aber stehen bleiben. */
-            let tx = (this.audio.smoothedPitch !== -1)
-                ? this.freqToQuantizedX(this.audio.smoothedPitch)
+            /* Gelesen wird der Eingang DES AUFSCHLÄGERS, nicht fest Spieler 1.
+               Solange Alex eine KI war, gab es nur eine Stimme im Raum und die
+               Unterscheidung war folgenlos. Im Duell schlug Alex dagegen mit
+               Andreas letztem Ton auf: sein Ball flog dorthin, wohin SIE zuletzt
+               gesungen hatte. Dieselbe Fallunterscheidung wie beim Auslösen des
+               Aufschlags — dort steht sie seit jeher in serverAudio().
+
+               Der Stimmumfang muss mitwandern: die Abbildung Ton -> Feldposition
+               ist je Spieler kalibriert. Ohne den zweiten Parameter wäre Alex'
+               Tonhöhe durch Andreas Umfang gerechnet worden — der Ball wäre
+               selbst bei richtigem Eingang schief geflogen.
+
+               Maßgeblich ist dabei der EINGANG, nicht der Aufschläger. Der
+               Unterschied zählt nur im Arcade-Modus, dort aber sofort: schlägt
+               die KI auf, liefert serverAudio() Andreas Mikrofon, weil die KI
+               keine Stimme hat. Mit `match.server` als Umfang wäre ihr Ton dann
+               durch Alex' Kalibrierung gerechnet worden — die im Arcade-Modus
+               nie eingesungen wird und auf ihren Vorgabewerten steht. Deshalb
+               wird der Umfang aus dem gewählten Eingang abgeleitet und nicht aus
+               der Bedingung in serverAudio() nachgebaut: so können die beiden
+               gar nicht erst auseinanderlaufen. */
+            const aufschlagTon = this.serverAudio();
+            const tonUmfang = (aufschlagTon === this.audio2) ? PLAYER.ALEX : PLAYER.ANDREA;
+            let tx = (aufschlagTon.smoothedPitch !== -1)
+                ? this.freqToQuantizedX(aufschlagTon.smoothedPitch, tonUmfang)
                 : (VIRTUAL_WIDTH / 2);
 
             /* Der Aufschlag selbst muss im Feld landen -> hier wird geklemmt. */
@@ -5197,7 +5220,7 @@
             this.handleResize();
 
             this.bindOnboarding();
-            console.info('[Karaokovic] SAND-1 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset.');
+            console.info('[Karaokovic] ARENA-1 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset.');
         }
 
         /** Canvasgröße nachziehen; im Ruhezustand den Aufschlag neu aufbauen. */
