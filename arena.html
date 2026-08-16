@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <title>Karaokovic — Sandplatz</title>
+    <title>Karaokovic — Arena</title>
     <style>
         body { background-color: #050508; color: #fff; font-family: 'Courier New', monospace; text-align: center; margin: 0; padding: 0; overflow: hidden; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; position: relative; }
         h1 { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; font-size: 1.5rem; margin: 10px 0; }
@@ -72,14 +72,30 @@
             </p>
         </div>
 
+        <!-- Schritt 2: Platz. Bestimmt den Belag fuer Satz 1; die weiteren
+             Saetze laufen auf den jeweils anderen. -->
+        <div id="stepPlatz" class="step">
+            <h3>SCHRITT 2: PLATZ</h3>
+            <p>Worauf wird Satz 1 gespielt?</p>
+            <div class="modusZeile">
+                <button id="btnPlatzHart" class="cyan">Hartplatz</button>
+                <button id="btnPlatzSand" class="cyan">Sandplatz</button>
+                <button id="btnPlatzRasen" class="cyan">Rasen</button>
+            </div>
+            <p class="hinweis">
+                Satz 2 und ein etwaiger Satz 3 laufen auf den beiden anderen
+                Belaegen — jeder Platz wird genau einmal gespielt.
+            </p>
+        </div>
+
         <div id="step1" class="step">
-            <h3>SCHRITT 2: MIKROFON-CHECK</h3>
+            <h3>SCHRITT 3: MIKROFON-CHECK</h3>
             <p>Willkommen im Backstage. Lass uns das System hochfahren.</p>
             <button id="btnMic">Mikrofon aktivieren</button>
         </div>
 
         <div id="step2" class="step">
-            <h3>SCHRITT 3: STIMM-PROFILER</h3>
+            <h3>SCHRITT 4: STIMM-PROFILER</h3>
             <p id="calibWho" class="wer"></p>
             <div id="livePitch">-- Hz</div>
             <div id="calibHint"></div>
@@ -120,6 +136,6 @@
     <canvas id="gameCanvas"></canvas>
 
     <!-- Cache Buster V5 -->
-    <script src="./app-sand.js?v=sand_1"></script>
+    <script src="./app-arena.js?v=arena_1"></script>
 </body>
 </html>

@@ -1,15 +1,22 @@
 /* =============================================================================
  * XPERION ARCADE — "KARAOKOVIC" / VOICE TENNIS
- * Version : SAND-1  (eigenstaendige Fassung auf dem Sandplatz)
+ * Version : ARENA-1  (drei Plaetze: Hartplatz, Sandplatz, Rasenplatz)
  *
- * ABLEGER von app.js (V41). Der Hartplatz-Stand bleibt unberuehrt — beide
- * Fassungen laufen nebeneinander, sand.html laedt diese hier.
+ * ABLEGER von app.js (V41). Der urspruengliche Stand bleibt unberuehrt — beide
+ * Fassungen laufen nebeneinander, arena.html laedt diese hier.
  *
- * Geaendert ist AUSSCHLIESSLICH die Anpassung an das neue Platzbild:
- *   - die fuenf Kamerakonstanten, neu an Platz_Sand.png eingemessen
- *   - COURT_CENTER_X, weil das Feld im Bild nicht bildmittig steht
- *   - ein Weltmassstab, weil der Platz das Bild enger fuellt
- * Spiellogik, Regeln, Audio, Onboarding und Figuren sind unveraendert.
+ * DER UNTERSCHIED ZUR VORLAGE: Welt und Bild sind getrennt.
+ *
+ * In app.js fallen Weltmass und Bildschirmmass am Netz zusammen — COURT_WIDTH
+ * ist beides zugleich. Das geht, solange es genau ein Platzbild gibt. Bei drei
+ * Bildern, die den Platz unterschiedlich gross zeigen, waere die Folge, dass
+ * mit dem Platz auch die Weltgroesse wechselt und damit Ballgeschwindigkeit,
+ * Schlaegerbreite und Laufwege.
+ *
+ * Deshalb: die WELT ist fest (COURT_WIDTH = 679 wie immer), und jeder Platz
+ * bringt seine eigene KAMERA mit (Horizont, Spanne, Tiefenstaerke, Bildmitte,
+ * Massstab). Gespielt wird auf allen dreien identisch; nur die Ansicht
+ * wechselt. Siehe PLAETZE und setzePlatz().
  * Build   : Single-File, kein ES6-Import, kein Bundler, kein Server.
  *           Startet offline per file:// (index.html -> <script src="app.js">).
  * Ziel    : Live-Bühne, Chrome Fullscreen, LED-Wand, 60 FPS, Segmentlänge <= 7 min
@@ -193,8 +200,8 @@
          * mit `Physics.OPPONENT_MISS_CHANCE` bestimmt das, wie viele Punkte in
          * sieben Minuten fallen — test-ballwechsel.js prüft die Untergrenze.
          */
-        baseSpeed: 3.6 * 1.5921,
-        maxSpeed: 8.0 * 1.5921,
+        baseSpeed: 3.6,
+        maxSpeed: 8.0,
         /**
          * ENTFÄLLT als Bewegungsregler — siehe CONFIG.glideFrames.
          *
@@ -267,7 +274,7 @@
          * Mondbälle, weil die Steighöhe mit dem Quadrat der Flugzeit wuchs.
          * `gravity` oben dient nur noch als Startwert vor dem ersten Schlag.
          */
-        arcHeight: 105 * 1.5921,
+        arcHeight: 105,
 
         /* ---------------------------------------------------------------------
          * Tonhöhen-Fenster der Erkennung.
@@ -363,42 +370,65 @@
     const VIRTUAL_HEIGHT = 900;
 
     /* -------------------------------------------------------------------------
-     * WELTMASSSTAB
+     * DIE DREI PLAETZE
      *
-     * Platz_Sand.png ist enger kadriert: der Platz füllt das Bild deutlich mehr
-     * aus als auf dem Hartplatz. Am Netz misst er 1081 statt 679 virtuelle
-     * Pixel — Faktor 1.5921.
+     * Jeder Eintrag ist eine KAMERA auf dieselbe Welt, kein eigenes Spielfeld:
      *
-     * Weil in dieser Engine Welt- und Bildschirmmaße am Netz zusammenfallen
-     * (dort ist scale3D = 1), wächst damit die gesamte Welt. Alle LÄNGEN müssen
-     * denselben Faktor bekommen: Ballgeschwindigkeit, Schlägerbreite,
-     * Ballradius, Laufgeschwindigkeit des Gegners, Bogenhöhe, Figurengröße.
-     * Sonst kröche der Ball über einen Platz, der anderthalbmal so groß ist.
+     *   horizont   Bildschirm-Y des Fluchtpunkts
+     *   spanne     Bildschirm-Y-Abstand Fluchtpunkt -> Netz
+     *   tiefe      Staerke der perspektivischen Stauchung (DEPTH_STRENGTH)
+     *   mitteX     Bildschirm-X der Feldmitte (nur der Hartplatz ist bildmittig)
+     *   skala      Bildschirmbreite des Feldes am Netz, geteilt durch die
+     *              WELTbreite 679. Der Sandplatz fuellt sein Bild enger, sein
+     *              Feld ist am Netz 1081 px breit -> 1.59.
+     *   figur      Zusaetzlicher Faktor auf die Figurengroesse. Reine Optik:
+     *              auf dem Sandplatz sind Leute ins Bild gemalt, gegen die
+     *              unsere Figuren sonst zu gross wirken.
      *
-     * Dimensionslose Werte bleiben unberührt: `glideFrames` und
-     * `pitchSmooth` zählen Frames bzw. Anteile, keine Pixel.
+     * Alle Werte sind Zeile fuer Zeile aus dem jeweiligen Bild gemessen —
+     * Grundlinien und Seitenlinien, nicht geschaetzt.
      *
-     * Weil es eine reine Ähnlichkeitsabbildung ist, spielt sich die Fassung
-     * exakt wie der Hartplatz — nur größer im Bild.
+     * WARNUNG: Wird ein Bild ausgetauscht, muss sein Eintrag neu eingemessen
+     * werden. Die Messskripte liegen in Entwickler-Tests/.
      * ---------------------------------------------------------------------- */
-    const WELT = 1.5921;
-    /** Länge aus der Hartplatz-Fassung auf den Sandplatz umrechnen. */
-    const skaliert = (px) => Math.round(px * WELT * 100) / 100;
+    const PLAETZE = {
+        HART: {
+            name: 'Hartplatz', bild: 'court_hart',
+            horizont: -281.5, spanne: 659.3, tiefe: 0.3292,
+            mitteX: 800, skala: 1.0, figur: 1.0,
+            notenTief: 620, notenHoch: 300, tastenNah: 828, tastenFern: 10,
+            randRechts: (y) => 1216 + 1.035 * (Math.max(150, Math.min(330, y)) - 150),
+            randLinks: () => 8,
+        },
+        SAND: {
+            name: 'Sandplatz', bild: 'court_sand',
+            horizont: -308.1, spanne: 820.1, tiefe: 0.2752,
+            mitteX: 830.75, skala: 1.5921, figur: 0.80,
+            notenTief: 660, notenHoch: 330, tastenNah: 832, tastenFern: 22,
+            randRechts: (y) => (y <= 200 ? 1385
+                : y >= 280 ? 1596 : 1385 + (y - 200) * (1596 - 1385) / 80),
+            randLinks: (y) => (y >= 560 ? 8 : 8 + (560 - y) * 0.6),
+        },
+        RASEN: {
+            name: 'Rasenplatz', bild: 'court_rasen',
+            horizont: -319.1, spanne: 783.1, tiefe: 0.2888,
+            mitteX: 831.2, skala: 1.4433, figur: 1.0,
+            /* Die hohe Note steht hier deutlich tiefer als auf den anderen
+               Plaetzen: der Schiedsrichterstuhl belegt rechts die Hoehe
+               y = 202..499, und genau dort haette sie sonst gestanden. */
+            notenTief: 620, notenHoch: 560, tastenNah: 800, tastenFern: 20,
+            randRechts: (y) => (y <= 240 ? 1495
+                : y >= 420 ? 1596 : 1495 + (y - 240) * (1596 - 1495) / 180),
+            randLinks: (y) => (y <= 240 ? 162
+                : y >= 420 ? 8 : 162 - (y - 240) * (162 - 8) / 180),
+        },
+    };
 
-    /**
-     * Zusätzlicher Faktor NUR für die Spielfiguren.
-     *
-     * Der Weltmaßstab allein macht sie proportional zum größeren Platz — und
-     * damit deutlich größer als die Leute, die in dieses Bild gemalt sind.
-     * Gemessen an der Spielerin an der vorderen Grundlinie: sie ist 285
-     * Bildpixel hoch (Scheitel 725, Fuß 1010), also 237 virtuelle Pixel.
-     * Unsere Figur kam an derselben Tiefe auf 297 — Faktor 1.25 zu groß.
-     *
-     * Bewusst getrennt vom Weltmaßstab: die Figurengröße ist reine Optik und
-     * hat keinen Einfluss auf Trefferzonen oder Laufwege. Die spannen über
-     * PADDLE, und das bleibt am Weltmaßstab.
-     */
-    const FIGUR = 0.80;
+    /** Reihenfolge fuer die Auswahl und den Wechsel zwischen den Saetzen. */
+    const PLATZ_NAMEN = ['HART', 'SAND', 'RASEN'];
+
+    /** @type {Object} Aktuell gezeichneter Platz. Gesetzt von setzePlatz(). */
+    let PLATZ = PLAETZE.HART;
 
     /* -------------------------------------------------------------------------
      * KAMERAMODELL — echte Bodenebenen-Perspektive
@@ -436,7 +466,7 @@
      * ACHTUNG: einzige Quelle der Tiefenwirkung. Physics.BASELINE_SCALE3D ist
      * daraus ABGELEITET, nicht abgeschrieben.
      */
-    const DEPTH_STRENGTH = 0.2752;
+
 
     /**
      * Bildschirm-y des Fluchtpunkts in virtuellen Pixeln.
@@ -444,7 +474,7 @@
      * Liegt über dem Bildrand (negativ) — die Kamera sieht steil genug nach
      * unten, dass der Horizont außerhalb des Bildes bleibt.
      */
-    const HORIZON_Y = -308.1;
+
 
     /**
      * Abstand der Netzlinie vom Fluchtpunkt in virtuellen Pixeln.
@@ -457,7 +487,7 @@
      * konnte das nicht leisten: er staucht die hintere Hälfte zu schwach,
      * weshalb das hintere Aufschlagfeld tiefer wirkte als das vordere.
      */
-    const DEPTH_SPAN = 820.1;
+
 
     /**
      * Untergrenze des Nenners `1 - dy·k`.
@@ -493,7 +523,7 @@
      * Formate haben — ein reines Skalieren über die Bildhöhe lässt
      * Querformat-Crops gigantisch werden.
      */
-    const HEAD_BOX = { width: skaliert(72) * FIGUR, height: skaliert(76) * FIGUR };
+    const HEAD_BOX = { width: 72, height: 76 };   // von setzePlatz angepasst
 
     /**
      * Höhe der Schulterlinie, als Anteil der Körperhöhe über dem Boden.
@@ -523,8 +553,8 @@
      * Änderung würde die eingespielten Werte für baseSpeed, maxSpeed und
      * arcHeight verstellen, ohne am Bild etwas zu ändern.
      * ---------------------------------------------------------------------- */
-    const COURT_WIDTH = 1081;
-    const COURT_HEIGHT = 1051;
+    const COURT_WIDTH = 679;
+    const COURT_HEIGHT = 660;
     /**
      * X-Mitte des Feldes im Bild.
      *
@@ -533,9 +563,7 @@
      * rechts (gemessen: 830.75). Ohne diesen Wert läge die gesamte Physik
      * um 31 px versetzt zu den aufgemalten Linien.
      */
-    const COURT_CENTER_X = 830.75;
-
-    const COURT_LEFT = COURT_CENTER_X - COURT_WIDTH / 2;
+    const COURT_LEFT = (VIRTUAL_WIDTH - COURT_WIDTH) / 2;
     const COURT_RIGHT = COURT_LEFT + COURT_WIDTH;
     const COURT_TOP = (VIRTUAL_HEIGHT - COURT_HEIGHT) / 2 + 50;
     const COURT_BOTTOM = COURT_TOP + COURT_HEIGHT;
@@ -550,13 +578,10 @@
      * Einzellinie, und ein Ball konnte auf der Linie aufspringen und trotzdem
      * als "aus" gewertet werden.
      */
-    const ALLEY_WIDTH = 135;
+    const ALLEY_WIDTH = 85;
 
     /** Maße des (unsichtbaren) Schlägerbereichs beider Spieler. */
-    const PADDLE = {
-        width: skaliert(150), height: skaliert(30),
-        hitPadding: skaliert(25), screenMargin: skaliert(20)
-    };
+    const PADDLE = { width: 150, height: 30, hitPadding: 25, screenMargin: 20 };
 
     /** Dauer der Zustände in Millisekunden. GESCHÜTZT. */
     const TIMING = {
@@ -753,25 +778,28 @@
          * @returns {ScreenPoint}
          */
         project(x, y, z, out) {
-            const cx = COURT_CENTER_X;
+            const cx = PLATZ.mitteX;
             const dy = (y - COURT_MID_Y) / (COURT_HEIGHT / 2);
 
             /* Perspektivische Division. Der Nenner ist der Kameraabstand in
                normierten Einheiten; sein Kehrwert ist die Vergrößerung.
                Die Klemmung verhindert den Vorzeichenwechsel hinter der
                vorderen Grundlinie — siehe DEPTH_MIN_DENOM. */
-            const denom = Math.max(DEPTH_MIN_DENOM, 1.0 - dy * DEPTH_STRENGTH);
+            const denom = Math.max(DEPTH_MIN_DENOM, 1.0 - dy * PLATZ.tiefe);
             const scale3D = 1 / denom;
 
             /* Quer und längs folgen DEMSELBEN Faktor — das ist der Kern einer
                Bodenebenen-Perspektive und der Grund, warum beide Aufschlag-
                felder jetzt von selbst korrekt gestaucht erscheinen. */
-            const px = cx + (x - cx) * scale3D;
-            let py = HORIZON_Y + DEPTH_SPAN * scale3D;
-            py -= (z || 0) * scale3D;
+            /* Weltkoordinaten sind um VIRTUAL_WIDTH/2 zentriert, das Bild um
+               PLATZ.mitteX — deshalb wird um die WELTmitte gedreht und an der
+               BILDmitte abgesetzt. PLATZ.skala bringt Weltmass auf Bildmass. */
+            const px = cx + (x - VIRTUAL_WIDTH / 2) * scale3D * PLATZ.skala;
+            let py = PLATZ.horizont + PLATZ.spanne * scale3D;
+            py -= (z || 0) * scale3D * PLATZ.skala;
 
             const t = this.viewport.toScreen(px, py, out || this._a);
-            t.scale3D = scale3D * t.scale;
+            t.scale3D = scale3D * t.scale * PLATZ.skala;
             return t;
         }
 
@@ -825,7 +853,9 @@
                    Hintergrund, Platzfläche und Publikum werden nicht mehr
                    gezeichnet, sondern kommen aus diesem Bild.
                    Siehe Renderer.hasCourtBackdrop(). */
-                court_surface: 'Platz_Sand.png',
+                court_hart: 'Vorgabe_Platz.png',
+                court_sand: 'Platz_Sand.png',
+                court_rasen: 'Platz_Rasen.png',
                 court_lines: '',    // ersetzt draw3DLine-Feldlinien (optional)
                 crowd: '',          // ersetzt die gezeichnete Tribüne
                 net: '',            // ersetzt das gezeichnete Netz
@@ -1465,7 +1495,7 @@
         constructor() {
             this.x = 0; this.y = 0; this.z = 0;
             this.vx = 0; this.vy = 0; this.vz = 0;
-            this.radius = skaliert(12);
+            this.radius = 12;
             /** @type {number} Aufsprünge seit dem letzten Schlag. */
             this.bounces = 0;
             /** @type {string} Wer zuletzt geschlagen hat (PLAYER.*). */
@@ -2324,7 +2354,7 @@
      * Andreas Bewegungsgrenzen still falsch werden lässt. Der Wechsel von der
      * linearen auf die projektive Formel hat sich hier von selbst mitgezogen.
      */
-    Physics.BASELINE_SCALE3D = 1 / (1 - DEPTH_STRENGTH);
+    Physics.baselineScale3D = () => 1 / (1 - PLATZ.tiefe);
 
     /* -------------------------------------------------------------------------
      * Bewegungsgrenzen BEIDER Spieler (Weltkoordinaten).
@@ -2415,7 +2445,7 @@
      * Gravitation — dadurch skaliert sie automatisch mit, wenn `CONFIG.gravity`
      * verstellt wird. 24 · g entspricht rund 12 px Absprunghöhe.
      */
-    Physics.BOUNCE_MIN_APEX_VZ = skaliert(24);
+    Physics.BOUNCE_MIN_APEX_VZ = 24;
 
     /**
      * Spanne, um die Alex bei einem absichtlichen Fehler danebentippt.
@@ -2426,8 +2456,8 @@
      * Fehlgriff aussieht. Der konkrete Wert wird pro Fehler ausgewürfelt —
      * ein fester Abstand (früher 210) wirkte auf der Bühne wie Absicht.
      */
-    Physics.MISS_MARGIN_MIN = skaliert(135);
-    Physics.MISS_MARGIN_MAX = skaliert(320);
+    Physics.MISS_MARGIN_MIN = 135;
+    Physics.MISS_MARGIN_MAX = 320;
 
     /** Reaktionsverzögerung des Gegners beim Fehlgriff, in Frames (60 = 1 s). */
     Physics.MISS_REACTION_MIN = 6;
@@ -2471,7 +2501,7 @@
      * so schnell wie Alex. Wirkt er auf der Bühne zu stark, ist das hier der
      * Regler.
      */
-    Physics.OPPONENT_SPEED = skaliert(11);
+    Physics.OPPONENT_SPEED = 11;
 
     /**
      * Nach so vielen Schlägen von Andrea verfehlt Alex garantiert. Bremse
@@ -2492,7 +2522,7 @@
      * virtuellen Pixeln. Größer = der Ball landet konservativer im Feld,
      * kleiner = spitzere Winkel und schwerere Bälle für den Gegner.
      */
-    Physics.SIDELINE_SAFETY = skaliert(45);
+    Physics.SIDELINE_SAFETY = 45;
 
     /**
      * Wie tief im gegnerischen Feld der Ball aufspringt, als Anteil der
@@ -2747,7 +2777,7 @@
          * @returns {boolean}
          */
         hasCourtBackdrop() {
-            return this.assets.isReady('court_surface');
+            return this.assets.isReady(PLATZ.bild);
         }
 
         /**
@@ -2811,7 +2841,7 @@
 
                 const tl = this.viewport.toScreen(0, 0, this._p1);
                 ctx.drawImage(
-                    this.assets.get('court_surface'),
+                    this.assets.get(PLATZ.bild),
                     tl.x, tl.y,
                     VIRTUAL_WIDTH * tl.scale, VIRTUAL_HEIGHT * tl.scale
                 );
@@ -3005,8 +3035,8 @@
          * @returns {number} Virtuelle X-Koordinate
          */
         courtEdgeX(screenY, side) {
-            const scale3D = (screenY - HORIZON_Y) / DEPTH_SPAN;
-            return COURT_CENTER_X + side * (COURT_WIDTH / 2) * scale3D;
+            const scale3D = (screenY - PLATZ.horizont) / PLATZ.spanne;
+            return PLATZ.mitteX + side * (COURT_WIDTH / 2) * scale3D * PLATZ.skala;
         }
 
         /**
@@ -3441,17 +3471,17 @@
             ctx.translate(p.x, p.y);
             ctx.scale(s, s);
 
-            /* --- Bodenschatten ------------------------------------------------
-             * Sitzt EXAKT auf der physikalischen Position (lokal y = 0), also
-             * dort, wo die Hitbox steht. Vorher lag er bei y = +8 und damit
-             * acht Pixel UNTER den Füßen — der erste Teil des Schwebens.
-             * Bewusst vor dem animY-Versatz: der Schatten bleibt am Boden,
-             * auch wenn die Figur beim Punktverlust einsackt.
-             * ---------------------------------------------------------------- */
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-            ctx.beginPath();
-            ctx.ellipse(0, 0, 34, 9, 0, 0, Math.PI * 2);
-            ctx.fill();
+            /* --- Bodenschatten: ENTFÄLLT ---------------------------------------
+             * Hier lag eine schwarze Ellipse unter den Füßen. Auf dem
+             * gezeichneten Platz sass sie richtig, auf einem fotografierten
+             * bzw. gemalten Platz nicht: dort hat jede Figur im Bild ihren
+             * eigenen, weichen und gerichteten Schatten, und ein harter
+             * schwarzer Fleck darunter verrät die aufgesetzte Figur sofort.
+             *
+             * Die Ellipse markierte zugleich die physikalische Position
+             * (lokal y = 0). Diese Aufgabe übernimmt sie nicht mehr — wer die
+             * Hitbox sehen will, nimmt das Overlay aus den Entwickler-Tests.
+             * ------------------------------------------------------------------ */
 
             ctx.translate(0, animY);
 
@@ -4527,7 +4557,7 @@
      * Einheitliche Körperhöhe beider Spielerfiguren in virtuellen Pixeln.
      * Gemeint ist die SICHTBARE Höhe, nicht die Bildhöhe — siehe BODY_PADDING.
      */
-    Renderer.BODY_HEIGHT = skaliert(118) * FIGUR;
+    Renderer.BODY_HEIGHT = 118;
 
     /**
      * Transparenter Rand der Körper-Sprites, als Anteil der Bildhöhe.
@@ -4622,31 +4652,16 @@
      * @param   {number} y Virtuelle Bildschirm-Y-Koordinate
      * @returns {number} Virtuelle X-Koordinate der Bandenkante
      */
-    Renderer.apronRightAt = function (y) {
-        /* Zeile fuer Zeile am Sandbild gemessen (virtuelle Koordinaten):
-             y = 190 -> 1383      y = 250 -> 1555
-             y = 220 -> 1423      ab y = 280 der Bildrand
-           Der Streifen oeffnet sich nach unten schnell; darum steht die hohe
-           Note tiefer als auf dem Hartplatz. */
-        if (y <= 200) return 1385;
-        if (y >= 280) return 1596;
-        return 1385 + (y - 200) * (1596 - 1385) / 80;
-    };
+    Renderer.apronRightAt = (y) => PLATZ.randRechts(y);
 
     /**
-     * Linke Kante des Sandstreifens.
-     *
-     * Anders als rechts reicht er unterhalb von y = 560 bis an den Bildrand;
-     * darueber schieben sich Schiedsrichterstuhl und Taschen herein.
+     * Linke Kante der bespielbaren Flaeche. Wie apronRightAt platzabhaengig.
      * @param   {number} y
      * @returns {number}
      */
-    Renderer.apronLeftAt = function (y) {
-        if (y >= 560) return 8;
-        return 8 + (560 - y) * 0.6;
-    };
+    Renderer.apronLeftAt = (y) => PLATZ.randLinks(y);
 
-    /** Mindestabstand des Tonhöhen-Visuals zu Seitenlinie und Bande. */
+        /** Mindestabstand des Tonhöhen-Visuals zu Seitenlinie und Bande. */
     Renderer.PITCH_APRON_SAFETY = 12;
     /**
      * Höhen der beiden Noten. Bewusst UNTERSCHIEDLICH:
@@ -4960,7 +4975,7 @@
      * Dort steht keine der beiden Figuren: Alex' Kopf endet bei rund 140,
      * Andreas beginnt erst bei rund 500.
      */
-    Renderer.BANNER_Y = HORIZON_Y + DEPTH_SPAN;
+    Renderer.BANNER_Y = PLAETZE.HART.horizont + PLAETZE.HART.spanne;
 
     Renderer.SERVE_PROMPT_TEXT = 'AUFSCHLAG!';
     Renderer.SERVE_PROMPT_SIZE = 96;
@@ -5134,6 +5149,10 @@
             this.calibrating = false;
             /** @type {string} Wer singt gerade ein (Wert aus PLAYER). */
             this.calibPlayer = PLAYER.ANDREA;
+            /** @type {string[]} Belaege in der Reihenfolge der Saetze. */
+            this.platzFolge = PLATZ_NAMEN.slice();
+            /** @type {number} Wie viele Saetze bereits entschieden sind. */
+            this._gespielteSaetze = 0;
 
             /** Wiederverwendetes Szenen-Objekt für den Renderer. */
             this._scene = {
@@ -5209,7 +5228,7 @@
             const waehleModus = (modus) => {
                 CONFIG.mode = modus;
                 document.getElementById('step0').classList.remove('active');
-                document.getElementById('step1').classList.add('active');
+                document.getElementById('stepPlatz').classList.add('active');
                 console.info(`[Karaokovic] Modus: ${modus}`);
             };
             document.getElementById('btnModeArcade')
@@ -5217,7 +5236,31 @@
             document.getElementById('btnModeVersus')
                 .addEventListener('click', () => waehleModus(MODE.VERSUS));
 
-            /* --- Schritt 2: Mikrofon --------------------------------------- */
+            /* --- Schritt 2: Platz ------------------------------------------
+             * Die Wahl legt die REIHENFOLGE fuer das ganze Match fest: der
+             * gewaehlte Belag ist Satz 1, danach die beiden anderen in fester
+             * Reihenfolge. Fest und nicht zufaellig, damit die Regie weiss,
+             * was als naechstes kommt.
+             * ---------------------------------------------------------------- */
+            const waehlePlatz = (schluessel) => {
+                this.platzFolge = [schluessel,
+                    ...PLATZ_NAMEN.filter((k) => k !== schluessel)];
+                this._gespielteSaetze = 0;
+                setzePlatz(schluessel);
+                this.handleResize();
+                document.getElementById('stepPlatz').classList.remove('active');
+                document.getElementById('step1').classList.add('active');
+                console.info('[Karaokovic] Platzfolge: '
+                    + this.platzFolge.map((k) => PLAETZE[k].name).join(' -> '));
+            };
+            document.getElementById('btnPlatzHart')
+                .addEventListener('click', () => waehlePlatz('HART'));
+            document.getElementById('btnPlatzSand')
+                .addEventListener('click', () => waehlePlatz('SAND'));
+            document.getElementById('btnPlatzRasen')
+                .addEventListener('click', () => waehlePlatz('RASEN'));
+
+            /* --- Schritt 3: Mikrofon --------------------------------------- */
             document.getElementById('btnMic').addEventListener('click', async () => {
                 try {
                     if (CONFIG.mode === MODE.VERSUS) {
@@ -5706,6 +5749,28 @@
             this.physics.clampCurrentX();
 
             this.physics.update();
+
+            this.pruefePlatzwechsel();
+        }
+
+        /**
+         * Nach jedem entschiedenen Satz auf den naechsten Belag wechseln.
+         *
+         * Vergleicht die Zahl der entschiedenen Saetze mit dem zuletzt
+         * gesehenen Stand. Bewusst ein Vergleich und keine Zaehlung: dann
+         * greift auch das Undo des Operators (Alt+Shift+U), das einen Satz
+         * zurueckdrehen kann — der Platz geht dann mit zurueck.
+         */
+        pruefePlatzwechsel() {
+            const gespielt = this.match.sets.andrea + this.match.sets.alex;
+            if (gespielt === this._gespielteSaetze) return;
+            this._gespielteSaetze = gespielt;
+
+            const naechster = this.platzFolge[
+                Math.min(gespielt, this.platzFolge.length - 1)];
+            if (naechster === undefined) return;
+            setzePlatz(naechster);
+            this.handleResize();
         }
 
         /**
@@ -5808,6 +5873,35 @@
      */
     Game.MIN_CALIBRATION_RATIO = 1.25;
 
+    /**
+     * Platz wechseln.
+     *
+     * Setzt die Kamera und alles, was an ihr haengt: die Ankerhoehe der Banner,
+     * die Positionen von Noten und Klaviatur, die Figurengroesse. Die WELT
+     * bleibt unangetastet — Ballgeschwindigkeit, Schlaeger und Laufgrenzen
+     * gelten auf allen drei Plaetzen gleich.
+     *
+     * @param {string} schluessel Wert aus PLATZ_NAMEN
+     */
+    function setzePlatz(schluessel) {
+        PLATZ = PLAETZE[schluessel] || PLAETZE.HART;
+
+        /* Netzhoehe auf dem Schirm — Anker der Banner zwischen den Punkten. */
+        Renderer.BANNER_Y = PLATZ.horizont + PLATZ.spanne;
+
+        Renderer.PITCH_NOTE_Y_LOW = PLATZ.notenTief;
+        Renderer.PITCH_NOTE_Y_HIGH = PLATZ.notenHoch;
+        Renderer.KEYS_Y_NEAR = PLATZ.tastenNah;
+        Renderer.KEYS_Y_FAR = PLATZ.tastenFern;
+
+        /* Figurengroesse: reine Optik, deshalb hier und nicht in der Welt. */
+        Renderer.BODY_HEIGHT = 118 * PLATZ.figur;
+        HEAD_BOX.width = 72 * PLATZ.figur;
+        HEAD_BOX.height = 76 * PLATZ.figur;
+
+        console.info(`[Karaokovic] Platz: ${PLATZ.name}`);
+    }
+
     /* =========================================================================
      * BOOTSTRAP
      * ====================================================================== */
@@ -5834,6 +5928,11 @@
         left: COURT_LEFT, right: COURT_RIGHT,
         top: COURT_TOP, bottom: COURT_BOTTOM,
         midY: COURT_MID_Y, alley: ALLEY_WIDTH,
-        centerX: COURT_CENTER_X,
     };
+
+    /* Platzwechsel und Kamera fuer die Diagnose auf der Buehne. */
+    game.PLAETZE = PLAETZE;
+    game.PLATZ_NAMEN = PLATZ_NAMEN;
+    game.setzePlatz = setzePlatz;
+    Object.defineProperty(game, 'platz', { get: () => PLATZ });
 })();

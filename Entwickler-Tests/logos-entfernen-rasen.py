@@ -1,8 +1,8 @@
-"""Fremdlogos und die eingebackene Punkteanzeige aus dem Sandplatz entfernen.
+"""Fremdlogos aus dem Rasenplatz entfernen.
 
-    python3 Entwickler-Tests/logos-entfernen-sand.py
+    python3 Entwickler-Tests/logos-entfernen-rasen.py
 
-Liest Platz_Sand_ORIGINAL.png und schreibt Platz_Sand.png. Immer aus dem
+Liest Platz_Rasen_ORIGINAL.png und schreibt Platz_Rasen.png. Immer aus dem
 Original, nie aus dem bereits bearbeiteten Bild.
 
 Schwesterskript zu logos-entfernen.py (Hartplatz), mit denselben zwei
@@ -30,78 +30,20 @@ Fremdwerbung.
 import struct, os, subprocess, tempfile
 
 PROJEKT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE = tempfile.mkdtemp(prefix="karaokovic-sand-")
-QUELLE = os.path.join(PROJEKT, "Platz_Sand_ORIGINAL.png")
-ZIEL = os.path.join(PROJEKT, "Platz_Sand.png")
+BASE = tempfile.mkdtemp(prefix="karaokovic-rasen-")
+QUELLE = os.path.join(PROJEKT, "Platz_Rasen_ORIGINAL.png")
+ZIEL = os.path.join(PROJEKT, "Platz_Rasen.png")
 TMP_IN = os.path.join(BASE, "in.bmp")
 TMP_OUT = os.path.join(BASE, "out.bmp")
 
-# --- Feldgeometrie, aus dem Bild gemessen (Bildkoordinaten 1920x1080) ------
-#
-# ACHTUNG: Die aufgemalte Seitenlinie ist NICHT exakt gerade. Gegen die
-# Ausgleichsgerade des Spiels (753.24 - 0.659*y) weicht sie nach unten hin
-# zunehmend nach rechts ab:
-#
-#     y = 900 -> +5.4 px      y = 930 -> +8.1 px
-#     y = 915 -> +5.7 px      y = 945 -> +11.5 px
-#
-# Und die Feldecke selbst ist im Original ueberhaupt nicht zu sehen — die
-# Punkteanzeige deckt genau sie ab. Rekonstruiert wird deshalb nicht nach der
-# Spiel-Geraden, sondern als Fortsetzung der GEMALTEN Linie: lokale Steigung
-# aus den letzten vier messbaren Zeilen. Nur so schliesst das Stueck sichtbar
-# an den Rest der Linie an.
-GRUNDLINIE_Y = 988.0
-_STUETZ_Y, _STUETZ_X, _STEIGUNG = 945.0, 142.0, -0.5222
-
-
-def seitenlinie_links(y):
-    return _STUETZ_X + _STEIGUNG * (y - _STUETZ_Y)
-
-
-ECKE_X = seitenlinie_links(GRUNDLINIE_Y)          # ~119.5
 
 # name, x0, y0, x1, y1, Verfahren, Parameter
+#
+# Das Rasenbild ist 1600x900 — genau der virtuelle Raum des Spiels, also sind
+# Bild- und Spielkoordinaten hier dasselbe.
 LOECHER = [
-    ('perrier klein',   138, 394,  208, 430, 'glyph', (150, 4)),
-    ('perrier gross',   128, 454,  250, 588, 'glyph', (150, 4)),
-    ('bank links',       54, 514,  116, 606, 'glyph', (140, 4)),
-    ('haier',          1706, 532, 1818, 580, 'glyph', (150, 4)),
-    ('lacoste links',   956, 292, 1022, 324, 'glyph', (150, 3)),
-    ('lacoste rechts', 1288, 288, 1352, 326, 'glyph', (150, 3)),
-
-    # Von OBEN klonen, nicht von links: 150 px links steht ein Balljunge, der
-    # dadurch ein zweites Mal im Bild stand.
-    ('rolex tafel',    1662, 198, 1820, 300, 'klon',  (0, -125)),
-    ('uhr links',        78,  90,  140, 156, 'klon',  (145, 0)),
-    ('roland garros',  1840,  80, 1920, 172, 'klon',  (-160, 0)),
-
-    # Box bewusst BREITER als die Tafel (bis x = 156 statt 134): sonst bliebe
-    # das obere Stueck der gemalten Seitenlinie stehen, waehrend darunter schon
-    # die rekonstruierte laeuft — beides zusammen ergab eine doppelte Linie.
-    ('punkteanzeige',     0, 884,  156, 1050, 'ecke', (210, 0)),
-
-    # Die beiden gemalten Spielerinnen. Auf dem Platz stehen nur noch unsere
-    # eigenen Figuren.
-    #
-    # NICHT als Rechteck fuellen: die hintere steht vor der Bande, die untere
-    # Haelfte ihres Rechtecks waere Sand, die obere blaues Banner — ein
-    # flaechiges Fuellen wuerde die Kante dazwischen verwaschen. Maskiert wird
-    # deshalb nur ihre Silhouette. Was zur Silhouette gehoert, ergibt sich aus
-    # dem Vergleich mit dem Zeilenmedian der Umgebung: der Untergrund ist in
-    # jeder Zeile fuer sich einheitlich (Banner oder Sand), die Figur weicht
-    # davon deutlich ab.
-    # Box umfasst BEWUSST auch die gruene Kiste rechts neben ihr, und gefuellt
-    # wird ausschliesslich von RECHTS. Links von ihr steht ein Buchstabe der
-    # Bande, rechts die Kiste — beide wurden von jedem Verfahren, das den
-    # naechsten Nachbarn nimmt, quer ueber die Luecke gezogen. Rechts der Kiste
-    # ist glattes Banner und glatter Sand, das traegt sauber herueber.
-    # Preis: die Kiste ist mit weg und der Buchstabe endet acht Pixel frueher.
-    ('spielerin hinten',  616, 202,  702,  396, 'figur', (30, 3, 'rechts')),
-    # Vorn per Klon: 140 px waagerecht zu interpolieren wuerde die Sandtextur
-    # zu einem glatten Streifen ziehen. Der Versatz +200 liegt auf freiem Sand,
-    # und weil er rein waagerecht ist, treffen Aufschlag- und Grundlinie von
-    # selbst auf ihre richtige Hoehe.
-    ('spielerin vorn',   1024, 712, 1172, 1020, 'klon',  (200, 0)),
+    ('emirates',  326, 152,  418, 186, 'glyph', (150, 4)),
+    ('barclays',  1286, 398, 1374, 458, 'glyph', (150, 4)),
 ]
 
 RICHTUNGEN = [(1, 0), (-1, 0), (0, 1), (0, -1),
