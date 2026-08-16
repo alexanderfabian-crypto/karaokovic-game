@@ -187,6 +187,46 @@ Datei selbst, statt in eine Kopie zu zerfallen.
 - **WIMBLEDON-Schriftzug** unten rechts im Rasenbild steht noch.
 - Die kleine **Uhr auf der Rückwand** im Sandbild steht noch.
 
+### Die Seite im Netz
+
+Ausgeliefert wird der Ordner `docs/` über GitHub Pages (Einstellung: Branch
+`main`, Ordner `/docs`). **Der Ordner wird nicht von Hand gepflegt**, sondern
+gebaut:
+
+    node Entwickler-Tests/webseite-bauen.js
+
+Danach `docs/` mit committen und pushen — was gepusht ist, ist im Netz.
+
+| Adresse | Fassung |
+|---|---|
+| `/` bzw. `/index.html` | **ARENA-1** (drei Plätze) — die Startseite |
+| `/arena.html` | dieselbe Fassung unter ihrem eigenen Namen |
+| `/v41.html` | V41 (nur Hartplatz), zum Vergleich |
+
+Zwei Dinge, die dabei bewusst so sind:
+
+- Die Startseite ist eine **Kopie** von `arena.html`. Pages liefert unter `/`
+  immer `index.html` aus, und `index.html` ist im Projekt die eingefrorene
+  Fassung V41, an der nicht gebaut wird. Deshalb kopieren statt umbenennen.
+- Es kommt nur ins Netz, was das Spiel lädt. Die Übergabeprotokolle, die
+  Entwickler-Tests, die Retusche-Skripte, die `*_ORIGINAL.png` und
+  `Benni_Kopf.png` bleiben draußen. Die Bilderliste liest das Skript aus dem
+  Spielcode — eine getippte Liste wäre nach dem ersten neuen Bild falsch, und
+  der Fehler fiele erst dem Tester auf.
+
+**Belegt** (Browsertest gegen den laufenden HTTP-Server, nicht gegen `file://`):
+Startseite 34/34 Prüfungen grün mit 11/11 Bildern, `/v41.html` grün mit 9/9.
+Der Unterschied ist nicht kosmetisch — unter `https://` haengt die
+Mikrofonfreigabe am sicheren Kontext, unter `file://` gelten andere Regeln.
+`test-browser.js` nimmt dafür auch eine vollständige URL als Argument:
+
+    node Entwickler-Tests/test-browser.js http://127.0.0.1:8000/index.html
+
+**Was der Tester braucht:** Chrome, ein Mikrofon, und die Bereitschaft, die
+Mikrofonfreigabe zu erteilen. Ohne Freigabe bleibt das Onboarding in Schritt 3
+stehen. Für belastbare Aussagen zur Bildrate gilt weiter: nur auf einem Rechner
+mit 60 Hz.
+
 ### Bedienung
 
 `arena.html` in Chrome. Schritt 1 Modus → Schritt 2 Platz → Schritt 3 Mikrofon

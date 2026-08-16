@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Karaokovic — Arena</title>
+    <style>
+        body { background-color: #050508; color: #fff; font-family: 'Courier New', monospace; text-align: center; margin: 0; padding: 0; overflow: hidden; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; position: relative; }
+        h1 { color: #00ffcc; text-shadow: 0 0 10px #00ffcc; font-size: 1.5rem; margin: 10px 0; }
+
+        #gameCanvas { background-color: #05050a; width: 100vw; height: 100vh; display: block; position: fixed; top: 0; left: 0; }
+
+        #onboarding { background: #111122; border: 2px solid #00ffcc; border-radius: 10px; padding: 30px; width: 600px; position: relative; z-index: 10; box-shadow: 0 0 30px rgba(0, 255, 204, 0.2); }
+        .step { display: none; }
+        .step.active { display: block; }
+
+        button { background: #ff007f; color: white; border: none; padding: 15px 40px; font-size: 1.2rem; cursor: pointer; border-radius: 5px; font-weight: bold; text-transform: uppercase; box-shadow: 0 0 15px rgba(255, 0, 127, 0.6); transition: 0.2s; margin-top: 15px; }
+        button:hover { background: #ff3399; transform: scale(1.05); }
+        button.cyan { background: #00ffcc; color: #000; box-shadow: 0 0 15px rgba(0, 255, 204, 0.6); }
+        button.cyan:hover { background: #33ffdd; }
+
+        #livePitch { font-size: 2rem; color: #ff007f; margin: 20px 0 4px; font-weight: bold; height: 40px; line-height: 40px; white-space: nowrap; overflow: hidden; }
+        #debug { font-size: 1rem; color: #888; padding: 10px; background: #000; }
+
+        /* Rückmeldungen bekommen eine EIGENE Zeile. Vorher schrieben sie in
+           #livePitch, das auf 40 px Höhe fixiert ist — ein langer Satz brach
+           dort um und lief in die Schrift darunter. */
+        #calibHint { min-height: 22px; font-size: 0.95rem; line-height: 22px; margin: 0 0 10px; color: #ffcc00; }
+        #calibHint.ok { color: #00ffcc; }
+
+        /* Wer gerade dran ist — im Duell die einzige Stelle, an der das steht. */
+        .wer { color: #00ffcc; font-size: 1.1rem; letter-spacing: 0.08em; margin: 0 0 6px; }
+        .hinweis { color: #7a7a90; font-size: 0.85rem; line-height: 1.45; margin-top: 18px; }
+        .rangeWert { font-size: 1.35rem; color: #00ffcc; font-weight: bold; margin: 6px 0 2px; }
+        .rangeDetail { color: #aaa; font-size: 0.9rem; margin: 0 0 4px; }
+
+        /* Zwei gleich große Knöpfe nebeneinander, mit Abstand dazwischen.
+           `flex: 1 1 0` statt `1 1 auto`: sonst bestimmt die Textlänge die
+           Breite und "Range okay!" wäre halb so breit wie sein Nachbar. */
+        .knopfPaar { display: flex; gap: 24px; justify-content: center; align-items: stretch; margin-top: 18px; }
+        .knopfPaar button { flex: 1 1 0; min-width: 0; margin-top: 0; padding: 16px 12px; font-size: 1rem; line-height: 1.25; }
+
+        .modusZeile { display: flex; gap: 24px; justify-content: center; align-items: stretch; }
+        .modusZeile button { flex: 1 1 0; min-width: 0; padding: 18px 12px; font-size: 1.05rem; }
+
+        /* Ein gespeicherter Kalibrierton: der Knopf ist erledigt und sagt das
+           auch. Ohne diese Rückmeldung sah er aus wie ein Knopf, der noch
+           gedrückt werden will — und ein zweiter Klick überschrieb den Ton. */
+        button.erledigt, button.erledigt:hover {
+            background: #14332e; color: #00ffcc; box-shadow: none;
+            cursor: default; transform: none; border: 1px solid #00ffcc;
+        }
+    </style>
+</head>
+<body>
+    <div id="onboarding">
+        <h1>🎤 KARAOKOVIC 🎾</h1>
+
+        <!-- Schritt 1: Spielmodus. Muss VOR dem Mikrofon kommen — im Duell
+             wird der Eingang zweikanalig geöffnet, das lässt sich nachträglich
+             nicht mehr umstellen. -->
+        <div id="step0" class="step active">
+            <h3>SCHRITT 1: SPIELMODUS</h3>
+            <p>Wie wird gespielt?</p>
+            <div class="modusZeile">
+                <button id="btnModeArcade" class="cyan">Arcade<br><small>allein gegen Alex</small></button>
+                <button id="btnModeVersus">Duell<br><small>zwei Spieler, zwei Mikros</small></button>
+            </div>
+            <p class="hinweis">
+                Im Duell steuert Spieler 1 die untere und Spieler 2 die obere Figur.
+                Nötig ist ein zweikanaliger Eingang: Spieler 1 auf dem linken,
+                Spieler 2 auf dem rechten Kanal.
+            </p>
+        </div>
+
+        <!-- Schritt 2: Platz. Bestimmt den Belag fuer Satz 1; die weiteren
+             Saetze laufen auf den jeweils anderen. -->
+        <div id="stepPlatz" class="step">
+            <h3>SCHRITT 2: PLATZ</h3>
+            <p>Worauf wird Satz 1 gespielt?</p>
+            <div class="modusZeile">
+                <button id="btnPlatzHart" class="cyan">Hartplatz</button>
+                <button id="btnPlatzSand" class="cyan">Sandplatz</button>
+                <button id="btnPlatzRasen" class="cyan">Rasen</button>
+            </div>
+            <p class="hinweis">
+                Satz 2 und ein etwaiger Satz 3 laufen auf den beiden anderen
+                Belaegen — jeder Platz wird genau einmal gespielt.
+            </p>
+        </div>
+
+        <div id="step1" class="step">
+            <h3>SCHRITT 3: MIKROFON-CHECK</h3>
+            <p>Willkommen im Backstage. Lass uns das System hochfahren.</p>
+            <button id="btnMic">Mikrofon aktivieren</button>
+        </div>
+
+        <div id="step2" class="step">
+            <h3>SCHRITT 4: STIMM-PROFILER</h3>
+            <p id="calibWho" class="wer"></p>
+            <div id="livePitch">-- Hz</div>
+            <div id="calibHint"></div>
+
+            <!-- Phase A: einsingen -->
+            <div id="calibSing">
+                <p style="color: #aaa;">1. Singe einen gemütlichen <b>TIEFEN</b> Ton und klicke:</p>
+                <button id="btnLow" class="cyan">Tiefen Ton (Links) speichern</button>
+
+                <p style="color: #aaa; margin-top: 20px;">2. Singe einen gemütlichen <b>HOHEN</b> Ton und klicke:</p>
+                <button id="btnHigh" class="cyan" disabled style="opacity: 0.3;">Hohen Ton (Rechts) speichern</button>
+            </div>
+
+            <!-- Phase B: passt der Bereich? Die Klaviatur oben und unten im
+                 Bild zeigt ihn währenddessen an. -->
+            <div id="calibConfirm" style="display: none;">
+                <p id="calibRange" class="rangeWert"></p>
+                <p id="calibRangeDetail" class="rangeDetail"></p>
+                <p style="color: #aaa;">Passt dieser Bereich? Die Klaviatur zeigt ihn an.</p>
+                <div class="knopfPaar">
+                    <button id="btnRangeOk" class="cyan">Range okay!</button>
+                    <button id="btnRangeRedo">Range nochmal einsingen</button>
+                </div>
+            </div>
+
+            <!-- Phase C: womit wird begonnen? Das Einspielen zählt keine
+                 Punkte; das Match beginnt sofort bei 0:0. -->
+            <div id="startWahl" style="display: none;">
+                <p style="color: #aaa; margin-top: 22px;">Womit soll begonnen werden?</p>
+                <div class="knopfPaar">
+                    <button id="btnStartWarmup" class="cyan">Einspielen starten<br><small>ohne Zählung</small></button>
+                    <button id="btnStartGame">Match starten<br><small>zählt ab 0:0</small></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Cache Buster V5 -->
+    <script src="./app-arena.js?v=arena_1"></script>
+</body>
+</html>

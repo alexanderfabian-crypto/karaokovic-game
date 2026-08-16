@@ -36,7 +36,13 @@ const path = require('path');
  * Bis ARENA-1 stand hier fest index.html. Die Arena-Fassung hatte damit kein
  * automatisches Netz — ausgerechnet die Fassung, an der weitergebaut wird. */
 const DATEI = process.argv[2] || 'index.html';
-const SEITE = 'file://' + path.join(__dirname, '..', DATEI);
+/* Auch eine vollstaendige URL ist erlaubt. Gebraucht wird das, um die
+   AUSGELIEFERTE Fassung zu pruefen: unter `file://` gelten andere Regeln als
+   unter `http(s)://` — Mikrofonfreigabe haengt am sicheren Kontext, und der
+   Browser cacht anders. Wer online stellt, sollte vorher genau das messen. */
+const SEITE = /^https?:\/\//.test(DATEI)
+    ? DATEI
+    : 'file://' + path.join(__dirname, '..', DATEI);
 
 /* Port UND Profil pro Lauf eindeutig.
  *
