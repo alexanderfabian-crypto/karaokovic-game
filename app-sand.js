@@ -385,6 +385,21 @@
     /** Länge aus der Hartplatz-Fassung auf den Sandplatz umrechnen. */
     const skaliert = (px) => Math.round(px * WELT * 100) / 100;
 
+    /**
+     * Zusätzlicher Faktor NUR für die Spielfiguren.
+     *
+     * Der Weltmaßstab allein macht sie proportional zum größeren Platz — und
+     * damit deutlich größer als die Leute, die in dieses Bild gemalt sind.
+     * Gemessen an der Spielerin an der vorderen Grundlinie: sie ist 285
+     * Bildpixel hoch (Scheitel 725, Fuß 1010), also 237 virtuelle Pixel.
+     * Unsere Figur kam an derselben Tiefe auf 297 — Faktor 1.25 zu groß.
+     *
+     * Bewusst getrennt vom Weltmaßstab: die Figurengröße ist reine Optik und
+     * hat keinen Einfluss auf Trefferzonen oder Laufwege. Die spannen über
+     * PADDLE, und das bleibt am Weltmaßstab.
+     */
+    const FIGUR = 0.80;
+
     /* -------------------------------------------------------------------------
      * KAMERAMODELL — echte Bodenebenen-Perspektive
      *
@@ -478,7 +493,7 @@
      * Formate haben — ein reines Skalieren über die Bildhöhe lässt
      * Querformat-Crops gigantisch werden.
      */
-    const HEAD_BOX = { width: 72 * 1.5921, height: 76 * 1.5921 };
+    const HEAD_BOX = { width: skaliert(72) * FIGUR, height: skaliert(76) * FIGUR };
 
     /**
      * Höhe der Schulterlinie, als Anteil der Körperhöhe über dem Boden.
@@ -2946,8 +2961,7 @@
                bei y=300) und unten breit (x 1264 bei y=620). Die hohe Note
                stand mit festem Abstand bei x=1420 und damit mitten auf der
                Tribüne — das Grün endet dort bereits bei 1371. */
-            const leftX = this.courtEdgeX(Renderer.PITCH_NOTE_Y_LOW, -1)
-                - Renderer.PITCH_NOTE_MARGIN;
+            const leftX = this.pitchLeftX();
 
             /* Rechts reicht ein fester Abstand NICHT. Das Visual ist hoch
                (Notenkopf, Hals, Beschriftung), und der Grünstreifen rechts ist
@@ -3004,6 +3018,32 @@
          *
          * @returns {number} Virtuelle X-Koordinate der Notenmitte
          */
+        /**
+         * X-Position des linken Tonhöhen-Visuals ("TIEF").
+         *
+         * Auf dem Hartplatz genügte ein fester Abstand zur Seitenlinie — links
+         * war Platz bis zum Bildrand. Hier ist der Platz knapp, weil das Feld
+         * das Bild weiter ausfüllt, also wird auch diese Seite in den
+         * gemessenen Korridor geklemmt.
+         *
+         * @returns {number} Virtuelle X-Koordinate der Notenmitte
+         */
+        pitchLeftX() {
+            const mass = this.pitchVisualMetrics('TIEF');
+            const oben = Renderer.PITCH_NOTE_Y_LOW - mass.oben;
+            const unten = Renderer.PITCH_NOTE_Y_LOW + mass.unten;
+
+            /* Innen die Seitenlinie an der UNTERKANTE (dort am weitesten
+               links), außen die Sandkante an der OBERKANTE. */
+            const innen = this.courtEdgeX(unten, -1) - mass.halbBreite
+                - Renderer.PITCH_APRON_SAFETY;
+            const aussen = Renderer.apronLeftAt(oben) + mass.halbBreite
+                + Renderer.PITCH_APRON_SAFETY;
+            const nenn = this.courtEdgeX(Renderer.PITCH_NOTE_Y_LOW, -1)
+                - Renderer.PITCH_NOTE_MARGIN;
+            return Math.min(innen, Math.max(aussen, nenn));
+        }
+
         pitchRightX() {
             const mass = this.pitchVisualMetrics('HOCH');
             const oben = Renderer.PITCH_NOTE_Y_HIGH - mass.oben;
@@ -4487,7 +4527,7 @@
      * Einheitliche Körperhöhe beider Spielerfiguren in virtuellen Pixeln.
      * Gemeint ist die SICHTBARE Höhe, nicht die Bildhöhe — siehe BODY_PADDING.
      */
-    Renderer.BODY_HEIGHT = skaliert(118);
+    Renderer.BODY_HEIGHT = skaliert(118) * FIGUR;
 
     /**
      * Transparenter Rand der Körper-Sprites, als Anteil der Bildhöhe.
@@ -4583,8 +4623,27 @@
      * @returns {number} Virtuelle X-Koordinate der Bandenkante
      */
     Renderer.apronRightAt = function (y) {
-        const geklemmt = Math.max(150, Math.min(330, y));
-        return 1216 + 1.035 * (geklemmt - 150);
+        /* Zeile fuer Zeile am Sandbild gemessen (virtuelle Koordinaten):
+             y = 190 -> 1383      y = 250 -> 1555
+             y = 220 -> 1423      ab y = 280 der Bildrand
+           Der Streifen oeffnet sich nach unten schnell; darum steht die hohe
+           Note tiefer als auf dem Hartplatz. */
+        if (y <= 200) return 1385;
+        if (y >= 280) return 1596;
+        return 1385 + (y - 200) * (1596 - 1385) / 80;
+    };
+
+    /**
+     * Linke Kante des Sandstreifens.
+     *
+     * Anders als rechts reicht er unterhalb von y = 560 bis an den Bildrand;
+     * darueber schieben sich Schiedsrichterstuhl und Taschen herein.
+     * @param   {number} y
+     * @returns {number}
+     */
+    Renderer.apronLeftAt = function (y) {
+        if (y >= 560) return 8;
+        return 8 + (560 - y) * 0.6;
     };
 
     /** Mindestabstand des Tonhöhen-Visuals zu Seitenlinie und Bande. */
@@ -4600,8 +4659,11 @@
      * Damit trägt die Anordnung selbst die Aussage: vorne tief, hinten hoch.
      * Die Tiefe des Platzes und die Tonhöhe erzählen dasselbe.
      */
-    Renderer.PITCH_NOTE_Y_LOW = 620;
-    Renderer.PITCH_NOTE_Y_HIGH = 300;
+    Renderer.PITCH_NOTE_Y_LOW = 660;
+    /* 330 statt 380: bei 380 reichte die Beschriftung hinunter bis auf die
+       grüne Kiste, die rechts auf dem Sand steht (virtuell y 442..500). Der
+       Korridor beruecksichtigt nur die Sandkante, nicht was darauf steht. */
+    Renderer.PITCH_NOTE_Y_HIGH = 330;
     /** Farbe der Markierung — dieselbe Anmutung wie die Feldlinien. */
     Renderer.PITCH_NOTE_COLOR = 'rgba(255, 255, 255, 0.4)';
     /** Farbe und Schein, wenn der zugehörige Kalibrierton getroffen ist. */
@@ -4668,9 +4730,12 @@
      *                    Feld darunter beginnt bei 214. Zwischen Kopf und
      *                    Grundlinie ist kein Platz, also darüber.
      */
-    Renderer.KEYS_Y_NEAR = 828;
+    /* 832 statt 858: bei 858 ragte der Streifen (Hoehe 54) ueber die
+       Bildunterkante hinaus und wurde angeschnitten. 832 liegt knapp unter der
+       vorderen Grundlinie (823) und bleibt vollstaendig im Bild. */
+    Renderer.KEYS_Y_NEAR = 832;
     Renderer.KEYS_HEIGHT_NEAR = 54;
-    Renderer.KEYS_Y_FAR = 10;
+    Renderer.KEYS_Y_FAR = 22;
     Renderer.KEYS_HEIGHT_FAR = 38;
 
     /**
