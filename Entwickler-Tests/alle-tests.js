@@ -22,7 +22,12 @@ const TESTS = [
     ['test-gegner.js', 'Verhalten des Gegners'],
     ['test-aufschlag.js', 'Auslösen des Aufschlags'],
     ['test-duell-aufschlag.js', 'Aufschlag im Duell (Arena-Fassung)'],
-    ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz'],
+    ['test-ruhige-figur.js', 'Figur steht still bei gehaltenem Ton (Arena)'],
+    ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz: V41'],
+    /* Das Balltempo weicht seit ARENA-3 zwischen den Fassungen ab. Die
+       Sendeplatz-Rechnung muss deshalb fuer beide gelten, nicht nur fuer die
+       eingefrorene. */
+    ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz: ARENA', '../app-arena.js'],
     /* Der Browsertest läuft ZWEIMAL — einmal je Fassung. Bis ARENA-1 prüfte er
        nur index.html; die Fassung, an der gebaut wird, hatte damit kein Netz. */
     ['test-browser.js', 'Start im echten Browser: V41 (index.html)', 'index.html'],

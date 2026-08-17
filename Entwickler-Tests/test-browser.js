@@ -718,8 +718,16 @@ class Browser {
             K.platz.schiedsrichter = st;       // und zurueck
             await frame();
 
-            const andere = K.PLATZ_NAMEN.filter(k => k !== 'HART')
-                .map(k => k + '=' + (K.PLAETZE[k].schiedsrichter ? 'besetzt' : 'leer'))
+            /* Alle drei Plaetze muessen besetzt sein — Benni ist derselbe
+               Schiedsrichter durchs ganze Match. Die Schulter-Andeutung gibt
+               es dagegen NUR dort, wo der Stuhl im Bild leer ist; auf den
+               anderen beiden sitzt bereits ein gemalter Koerper. */
+            const andere = K.PLATZ_NAMEN
+                .map(k => {
+                    const s = K.PLAETZE[k].schiedsrichter;
+                    return k + '=' + (!s ? 'leer'
+                        : (s.schultern ? 'besetzt+Schulter' : 'besetzt'));
+                })
                 .join(' ');
 
             /* Platz zuruecksetzen, damit spaetere Pruefungen unberuehrt sind. */
@@ -732,8 +740,9 @@ class Browser {
             check('Und dort wird tatsächlich etwas gezeichnet',
                 schiri.mit !== schiri.ohne,
                 `mit Besetzung RGB ${schiri.mit}, ohne RGB ${schiri.ohne}`);
-            check('Auf Sand und Rasen sitzt niemand zusätzlich (Stuhl schon besetzt)',
-                schiri.andere === 'SAND=leer RASEN=leer', schiri.andere);
+            check('Benni sitzt auf allen drei Plätzen',
+                schiri.andere === 'HART=besetzt+Schulter SAND=besetzt RASEN=besetzt',
+                schiri.andere);
         }
 
         /* --- 10. Nichts ist unterwegs geflogen -------------------------- */

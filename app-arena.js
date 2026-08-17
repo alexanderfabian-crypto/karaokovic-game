@@ -200,8 +200,17 @@
          * mit `Physics.OPPONENT_MISS_CHANCE` bestimmt das, wie viele Punkte in
          * sieben Minuten fallen — test-ballwechsel.js prüft die Untergrenze.
          */
-        baseSpeed: 3.6,
-        maxSpeed: 8.0,
+        /* V41 nahm 20 % heraus (4.5/10.0 -> 3.6/8.0). Auf der Probe war das zu
+           zaeh, deshalb jetzt wieder auf den Wert davor. Damit ist die Kette
+           vollstaendig: 4.5/10.0 -> 3.4/7.2 (zu langsam) -> 4.5/10.0 (zu
+           schnell) -> 3.6/8.0 (zu langsam) -> 4.3/9.5.
+           Bewusst knapp UNTER dem alten Wert, der als zu schnell galt.
+
+           WIRKUNG AUF DEN SENDEPLATZ: schneller heisst kuerzere Ballwechsel und
+           damit mehr Punkte in sieben Minuten. test-ballwechsel.js prueft die
+           Untergrenze der Ballwechseldauer — laeuft der weiter gruen, passt es. */
+        baseSpeed: 4.3,
+        maxSpeed: 9.5,
         /**
          * ENTFÄLLT als Bewegungsregler — siehe CONFIG.glideFrames.
          *
@@ -410,7 +419,10 @@
                darunter gezeichnet wuerde, laege VOR dem Pult statt dahinter.
                `kopfHoehe` war zuerst 36 — damit war der Kopf so breit wie das
                ganze Pult. 28 passt zur Entfernung. */
-            schiedsrichter: { x: 345, schulterY: 240, kopfHoehe: 28 },
+            schiedsrichter: { x: 345, schulterY: 240, kopfHoehe: 28,
+                /* Leerer Stuhl: hier fehlt ein Koerper, also wird eine
+                   Schulter angedeutet. */
+                schultern: true },
         },
         SAND: {
             name: 'Sandplatz', bild: 'court_sand',
@@ -420,8 +432,15 @@
             randRechts: (y) => (y <= 200 ? 1385
                 : y >= 280 ? 1596 : 1385 + (y - 200) * (1596 - 1385) / 80),
             randLinks: (y) => (y >= 560 ? 8 : 8 + (560 - y) * 0.6),
-            /* Stuhl links ist im Bild bereits besetzt. */
-            schiedsrichter: null,
+            /* Stuhl links, im Bild bereits besetzt: Benni bekommt nur den
+               KOPF ueber den gemalten gelegt, der Koerper bleibt der des
+               Bildes. Deshalb `schultern: false` — eine zusaetzliche
+               Schulter waere ein Buckel auf einer vorhandenen Jacke.
+               Eingemessen im gerenderten Bild (der Sandplatz ist als
+               einziger 1920x1080 und wird skaliert, die Datei taugt hier
+               also nicht zum Messen): Kopf x = 128..158, y = 205..247. */
+            schiedsrichter: { x: 146, schulterY: 252, kopfHoehe: 46,
+                schultern: false },
         },
         RASEN: {
             name: 'Rasenplatz', bild: 'court_rasen',
@@ -435,8 +454,11 @@
                 : y >= 420 ? 1596 : 1495 + (y - 240) * (1596 - 1495) / 180),
             randLinks: (y) => (y <= 240 ? 162
                 : y >= 420 ? 8 : 162 - (y - 240) * (162 - 8) / 180),
-            /* Stuhl rechts (y = 202..499) ist im Bild bereits besetzt. */
-            schiedsrichter: null,
+            /* Stuhl RECHTS (y = 202..499), im Bild bereits besetzt — wie
+               auf Sand nur der Kopf, keine Schulter.
+               Eingemessen: Kopf x = 1322..1350, y = 200..245. */
+            schiedsrichter: { x: 1336, schulterY: 247, kopfHoehe: 44,
+                schultern: false },
         },
     };
 
@@ -634,7 +656,29 @@
      * und zweimal kalibriert. Nachträglich umschalten geht deshalb nicht ohne
      * Neuladen — die Signalkette steht dann bereits.
      */
-    const MODE = { ARCADE: 'ARCADE', VERSUS: 'VERSUS' };
+    const MODE = {
+        /** Allein gegen die KI. Eine Stimme, ein Kanal. */
+        ARCADE: 'ARCADE',
+        /**
+         * 1:1 auf der Bühne (Xperion). Zwei Sänger an EINEM Rechner, ein
+         * zweikanaliger Eingang — Spieler 1 links, Spieler 2 rechts.
+         * Heisst im Code weiter VERSUS: der Wert steckt an rund zwanzig
+         * Stellen in der Signalkette und in den Tests. Umbenennen waere reine
+         * Beschriftungskosmetik mit echtem Bruchrisiko.
+         */
+        VERSUS: 'VERSUS',
+        /**
+         * RESERVIERT — 1:1 über das Netz. Noch nicht spielbar.
+         *
+         * Der Wert steht hier, damit die drei Betriebsarten im Code so
+         * getrennt sind wie im Onboarding. Er wird derzeit NIRGENDS gesetzt:
+         * es gibt keinen Netzwerkcode, und ein Fernduell braucht mehr als eine
+         * Verbindung — einen vermittelnden Server (die ausgelieferte Seite ist
+         * statisch), EINEN rechnenden Rechner statt zwei (die Physik zaehlt
+         * Frames und liefe sonst auseinander) und einen Umgang mit Latenz.
+         */
+        ONLINE: 'ONLINE',
+    };
 
     /**
      * Spielabschnitt — Einspielen oder Match. @enum {string}
@@ -1767,13 +1811,14 @@
 
         /** Ball und Spieler für den nächsten Aufschlag vorbereiten. */
         prepareServe() {
-            this.haltAt();
+            /* Anhalten OHNE zu versetzen — siehe haltWoSieSind(). Frueher
+               stand hier haltAt(), das beide Figuren in die Bildmitte warf;
+               sichtbar wurde der Sprung mitten im Bumper. */
+            this.haltWoSieSind();
             /* Mit zurücksetzen, sonst spannt die Trefferzone im ersten Frame
-               nach dem Sprung in die Feldmitte über das halbe Feld. */
-            this.prevCurrentX = VIRTUAL_WIDTH / 2;
-            /* Auch die obere Figur mit Geschwindigkeit auf null — im Duell
-               trägt sie sonst ihren Schwung in den nächsten Aufschlag. */
-            this.haltAlexAt();
+               über die Strecke zwischen altem und neuem Ort. Da nicht mehr
+               versetzt wird, ist das jetzt schlicht die aktuelle Position. */
+            this.prevCurrentX = this.currentX;
             this.audio.resetSmoothing();
             if (this.audio2) this.audio2.resetSmoothing();
 
@@ -1842,6 +1887,30 @@
             this.paddleAlex.x = px;
             this.alexTargetX = px;
             this.alexVelocityX = 0;
+        }
+
+        /**
+         * Beide Figuren dort anhalten, wo sie GERADE stehen.
+         *
+         * Der Unterschied zu `haltAt()` ohne Argument ist der ganze Punkt:
+         * jenes versetzt in die Bildmitte, dieses versetzt gar nicht.
+         *
+         * Bühnenbefund: "In der Ansicht Punkt gewonnen/verloren springt der
+         * Spieler schon auf die Position, die er später beim Aufschlag haben
+         * wird." Genau so war es — gemessen sprangen beide Figuren 600 ms nach
+         * dem Punktbanner von ihren Positionen (1139 und 500) auf 800, also
+         * mitten in den Bumper hinein. Ausgeloest wurde das von prepareServe(),
+         * und danach hielten SILENCE_CHECK und SERVE_WAIT sie Frame fuer Frame
+         * auf der Mitte fest.
+         *
+         * Jetzt bleibt die Figur stehen, wo der Ballwechsel sie hinterlassen
+         * hat, und schlaegt von dort auf. Das ist auch in sich stimmiger: in
+         * diesem Spiel bestimmt die Stimme die Position, und niemand hat
+         * gesungen.
+         */
+        haltWoSieSind() {
+            this.haltAt(this.currentX);
+            this.haltAlexAt(this.paddleAlex.x);
         }
 
         /**
@@ -2495,6 +2564,59 @@
         return player === PLAYER.ALEX
             ? { min: CONFIG.minFreq2, max: CONFIG.maxFreq2 }
             : { min: CONFIG.minFreq, max: CONFIG.maxFreq };
+    };
+
+    /**
+     * Totzone der Zielposition, in HALBTÖNEN.
+     *
+     * Bewusst musikalisch bemessen und nicht in Pixeln: derselbe Wert soll für
+     * einen weiten und einen engen Stimmumfang dieselbe Wirkung haben. In
+     * Pixeln festgeschrieben wäre die Zone bei kleinem Umfang viel zu grob.
+     *
+     * 0.35 Halbtöne ist gut ein Drittel Tonschritt — deutlich mehr als das
+     * natürliche Zittern einer gehaltenen Note, deutlich weniger als der
+     * kleinste Schritt, den jemand absichtlich singt.
+     */
+    Physics.ZIEL_TOTZONE_HALBTOENE = 0.35;
+
+    /**
+     * Wie viele Pixel die Totzone beim aktuellen Umfang breit ist.
+     * @param   {string} [player] Wert aus PLAYER
+     * @returns {number} Breite in virtuellen Pixeln
+     */
+    Physics.zielTotzone = function (player) {
+        const r = Physics.voiceRange(player);
+        const halbtoene = 12 * Math.log2(r.max / r.min);
+        if (!(halbtoene > 0)) return 0;
+        return (COURT_WIDTH / halbtoene) * Physics.ZIEL_TOTZONE_HALBTOENE;
+    };
+
+    /**
+     * Neues Ziel nur übernehmen, wenn es sich WIRKLICH bewegt hat.
+     *
+     * Der Grund ist ein Bühnenbefund: die Figur "schwamm". Kein Fehler in der
+     * Dämpfung — die ist kritisch gedämpft und schwingt nicht über —, sondern
+     * im Ziel. Eine gehaltene Note ist nie exakt konstant; jedes Vibrato
+     * verschiebt die errechnete Position um ein paar Pixel, und die Figur
+     * folgte gehorsam jedem davon. Sie kam damit nie zur Ruhe, sondern pendelte
+     * dauernd um die errechnete Tonmitte. Das liest sich als Unsicherheit.
+     *
+     * Mit der Totzone bleibt sie stehen, wo sie angehalten ist, und setzt sich
+     * erst in Bewegung, wenn ein anderer Ton gemeint ist. Der Sprung beim
+     * Verlassen der Zone ist unkritisch: die Dämpfung glättet ihn ohnehin.
+     *
+     * NICHT in freqToQuantizedX() eingebaut: die Funktion ist als geschützt
+     * markiert (Overdrive) und wird auch dort gebraucht, wo der Rohwert zählt —
+     * etwa beim Aufschlag, der dem Ton exakt folgen soll.
+     *
+     * @param   {number} neu     Frisch errechnete Zielposition
+     * @param   {number} bisher  Bisher gültige Zielposition
+     * @param   {string} [player] Wert aus PLAYER
+     * @returns {number} Zu verwendende Zielposition
+     */
+    Physics.ruhigesZiel = function (neu, bisher, player) {
+        if (!Number.isFinite(bisher)) return neu;
+        return Math.abs(neu - bisher) < Physics.zielTotzone(player) ? bisher : neu;
     };
 
     /**
@@ -3326,13 +3448,15 @@
                Sie müssen breiter sein als der Kopf und dürfen nicht vollständig
                hinter ihm liegen — sonst schwebt der Kopf über dem Pult. Deshalb
                sitzt das Kinn um `KOPF_UEBERLAPP` höher als die Schulterlinie. */
-            const schulterBreite = w * 1.7;
-            const schulterHoehe = 8 * p.scale;
-            ctx.fillStyle = Renderer.UMPIRE_JACKET;
-            ctx.beginPath();
-            ctx.ellipse(p.x, p.y, schulterBreite / 2, schulterHoehe,
-                0, Math.PI, Math.PI * 2);
-            ctx.fill();
+            if (stuhl.schultern) {
+                const schulterBreite = w * 1.7;
+                const schulterHoehe = 8 * p.scale;
+                ctx.fillStyle = Renderer.UMPIRE_JACKET;
+                ctx.beginPath();
+                ctx.ellipse(p.x, p.y, schulterBreite / 2, schulterHoehe,
+                    0, Math.PI, Math.PI * 2);
+                ctx.fill();
+            }
 
             ctx.drawImage(img, p.x - w / 2,
                 p.y - Renderer.UMPIRE_KOPF_UEBERLAPP * p.scale - h, w, h);
@@ -5496,9 +5620,15 @@
             const btnHigh = document.getElementById('btnHigh');
             const btnStart = document.getElementById('btnStartGame');
 
-            /* --- Schritt 1: Modus ------------------------------------------ */
+            /* --- Schritt 1: Modus ------------------------------------------
+             * Drei Betriebsarten, ausdrücklich getrennt: allein gegen die KI,
+             * 1:1 über das Netz, 1:1 auf der Bühne. Nur zwei davon gibt es —
+             * siehe MODE.ONLINE.
+             * ---------------------------------------------------------------- */
+            const modusHinweis = document.getElementById('modusHinweis');
             const waehleModus = (modus) => {
                 CONFIG.mode = modus;
+                if (modusHinweis) modusHinweis.innerText = '';
                 document.getElementById('step0').classList.remove('active');
                 document.getElementById('stepPlatz').classList.add('active');
                 console.info(`[Karaokovic] Modus: ${modus}`);
@@ -5507,6 +5637,24 @@
                 .addEventListener('click', () => waehleModus(MODE.ARCADE));
             document.getElementById('btnModeVersus')
                 .addEventListener('click', () => waehleModus(MODE.VERSUS));
+
+            /* Der Online-Modus bleibt bewusst ANKLICKBAR, obwohl er nicht geht.
+               Ein toter Knopf laesst den Bediener zweifeln, ob er kaputt ist
+               oder ob er selbst etwas falsch macht; so bekommt er eine Antwort.
+               Der Zustand wird dabei NICHT veraendert — CONFIG.mode bleibt
+               stehen, das Onboarding bleibt in Schritt 1. */
+            const btnOnline = document.getElementById('btnModeOnline');
+            if (btnOnline) {
+                btnOnline.addEventListener('click', () => {
+                    if (modusHinweis) {
+                        modusHinweis.innerText = 'Online 1:1 ist noch nicht '
+                            + 'verfügbar. Für zwei Spieler bitte „1:1 Bühne“ '
+                            + 'wählen — beide an einem Rechner.';
+                    }
+                    console.warn('[Karaokovic] Modus ONLINE ist reserviert, '
+                        + 'aber nicht implementiert (kein Netzwerkcode).');
+                });
+            }
 
             /* --- Schritt 2: Platz ------------------------------------------
              * Die Wahl legt die REIHENFOLGE fuer das ganze Match fest: der
@@ -5889,8 +6037,8 @@
             switch (match.state) {
                 /* --- GESCHÜTZT: 3 Sekunden absolute Ruhe ---------------------- */
                 case STATE.SILENCE_CHECK:
-                    this.physics.haltAt();
-                    this.physics.haltAlexAt();
+                    /* Stehen bleiben, nicht in die Mitte springen. */
+                    this.physics.haltWoSieSind();
                     /* Im Duell muss es an BEIDEN Mikrofonen still sein — sonst
                        hält der eine Spieler die Ruhe und der andere redet sie
                        kaputt, ohne dass man sähe, woran es liegt. */
@@ -5902,8 +6050,7 @@
                     break;
 
                 case STATE.SERVE_WAIT:
-                    this.physics.haltAt();
-                    this.physics.haltAlexAt();
+                    this.physics.haltWoSieSind();
                     break;
 
                 case STATE.PLAYING: {
@@ -5966,8 +6113,13 @@
                     /* --- untere Figur (Spieler 1) ---------------------------- */
                     if (!untenGesperrt) {
                         if (this.audio.smoothedPitch !== -1) {
-                            this.physics.targetX = this.physics.freqToQuantizedX(
-                                this.audio.smoothedPitch, PLAYER.ANDREA);
+                            /* Totzone davor — siehe Physics.ruhigesZiel().
+                               Ohne sie folgt die Figur jedem Zittern einer
+                               gehaltenen Note und kommt nie zur Ruhe. */
+                            this.physics.targetX = Physics.ruhigesZiel(
+                                this.physics.freqToQuantizedX(
+                                    this.audio.smoothedPitch, PLAYER.ANDREA),
+                                this.physics.targetX, PLAYER.ANDREA);
                         }
                         /* Gedämpft statt linear interpoliert — siehe glideToTarget().
                            Wichtig: die Figur gleitet auch dann weiter, wenn gerade
@@ -5985,8 +6137,13 @@
                      * Modi dieselbe.
                      * -------------------------------------------------------- */
                     if (versus && !obenGesperrt && this.audio2.smoothedPitch !== -1) {
-                        this.physics.alexTargetX = this.physics.freqToQuantizedX(
-                            this.audio2.smoothedPitch, PLAYER.ALEX);
+                        /* Dieselbe Totzone wie unten. Zwei unterschiedlich
+                           ruhige Figuren wuerden sich beim Zuschauen sofort
+                           verraten — und der Vergleich waere unfair. */
+                        this.physics.alexTargetX = Physics.ruhigesZiel(
+                            this.physics.freqToQuantizedX(
+                                this.audio2.smoothedPitch, PLAYER.ALEX),
+                            this.physics.alexTargetX, PLAYER.ALEX);
                     }
                     break;
                 }
@@ -6215,6 +6372,10 @@
     game.config = CONFIG;
     game.PLAYER = PLAYER;
     game.MODE = MODE;
+    /* Zeitkonstanten fuer die Diagnose und fuer test-ballwechsel.js:
+       die Pause zwischen zwei Ballwechseln haengt daran, und sie soll
+       gelesen und nicht geraten werden. */
+    game.TIMING = TIMING;
 
     /* Feldgrenzen in Weltkoordinaten — damit sich die Physikgrenzen zur
        Kontrolle ueber das Platzbild legen lassen, ohne im Renderer zu

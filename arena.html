@@ -49,6 +49,20 @@
             background: #14332e; color: #00ffcc; box-shadow: none;
             cursor: default; transform: none; border: 1px solid #00ffcc;
         }
+
+        /* Ein Modus, den es noch nicht gibt. Er steht sichtbar da — die drei
+           Betriebsarten sollen unterscheidbar sein — sieht aber unmissver-
+           ständlich nicht nach "hier drücken" aus. Ausgegraut STATT versteckt,
+           damit niemand ihn sucht; anklickbar bleibt er trotzdem, sonst bleibt
+           die Erklärung aus, warum er nicht geht. */
+        button.gesperrt, button.gesperrt:hover {
+            background: #23232e; color: #6f6f80; box-shadow: none;
+            transform: none; border: 1px dashed #4a4a5c; cursor: not-allowed;
+        }
+
+        /* Rückmeldung im Modusschritt. Bleibt leer, bis es etwas zu sagen gibt. */
+        .warnung:empty { display: none; }
+        .warnung { color: #ffcc00; }
     </style>
 </head>
 <body>
@@ -62,13 +76,15 @@
             <h3>SCHRITT 1: SPIELMODUS</h3>
             <p>Wie wird gespielt?</p>
             <div class="modusZeile">
-                <button id="btnModeArcade" class="cyan">Arcade<br><small>allein gegen Alex</small></button>
-                <button id="btnModeVersus">Duell<br><small>zwei Spieler, zwei Mikros</small></button>
+                <button id="btnModeArcade" class="cyan">Arcade<br><small>gegen Alex</small></button>
+                <button id="btnModeOnline" class="gesperrt">Online 1:1<br><small>in Vorbereitung</small></button>
+                <button id="btnModeVersus">1:1 Bühne<br><small>Xperion, zwei Mikros</small></button>
             </div>
+            <p id="modusHinweis" class="hinweis warnung"></p>
             <p class="hinweis">
-                Im Duell steuert Spieler 1 die untere und Spieler 2 die obere Figur.
-                Nötig ist ein zweikanaliger Eingang: Spieler 1 auf dem linken,
-                Spieler 2 auf dem rechten Kanal.
+                Auf der Bühne steuert Spieler 1 die untere und Spieler 2 die obere
+                Figur. Nötig ist ein zweikanaliger Eingang an EINEM Rechner:
+                Spieler 1 auf dem linken, Spieler 2 auf dem rechten Kanal.
             </p>
         </div>
 

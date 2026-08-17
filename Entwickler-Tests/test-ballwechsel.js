@@ -11,8 +11,12 @@
 'use strict';
 
 const { loadGame, check, summary } = require('./dom-stub.js');
-const game = loadGame();
+const DATEI = process.argv[2] || '../app.js';
+const game = loadGame(DATEI);
 const { physics, match, ball, audio } = game;
+
+console.log(`Geprüfte Fassung: ${DATEI}   `
+    + `(baseSpeed ${game.config.baseSpeed}, maxSpeed ${game.config.maxSpeed})`);
 
 /**
  * Einen kompletten Ballwechsel simulieren.
@@ -60,9 +64,16 @@ console.log(`Dauer  90. Perzentil:  ${pct(secs, 0.9).toFixed(1)} s`);
 console.log(`Dauer  laengster:      ${secs[secs.length - 1].toFixed(1)} s`);
 console.log(`Schlaege im Schnitt:   ${avg(ended.map(r => r.shots)).toFixed(1)}`);
 
-const perPoint = avg(secs) + 9;   // 9 s Pause: POINT_MS + TRANSITION_MS + Ruhe
+/* Pause zwischen zwei Ballwechseln: Punktanzeige + Bumper + Ruhe vor dem
+   Aufschlag. NICHT fest 9 s hinschreiben — die Ruhe wurde in der Arena-Fassung
+   von 3 s auf 2 s verkuerzt, und mit einer geratenen Konstante haette diese
+   Rechnung ab da still danebengelegen. Wo TIMING nicht auslesbar ist (V41
+   exportiert es nicht), bleibt es beim bisherigen Wert. */
+const T = game.TIMING;
+const pauseS = T ? (T.POINT_MS + T.TRANSITION_MS + T.SILENCE_MS) / 1000 : 9;
+const perPoint = avg(secs) + pauseS;
 const punkte = Math.floor(420 / perPoint);
-console.log(`\nZeit pro Punkt inkl. 9 s Pausen: ${perPoint.toFixed(1)} s`);
+console.log(`\nZeit pro Punkt inkl. ${pauseS.toFixed(0)} s Pausen: ${perPoint.toFixed(1)} s`);
 console.log(`Punkte in 7 Minuten:             ${punkte}   (Bedarf: >=12)\n`);
 
 check('Kein endloser Ballwechsel', ended.length === runs.length,

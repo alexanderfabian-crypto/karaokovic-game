@@ -96,7 +96,49 @@ LOECHER = [
     # naechsten Nachbarn nimmt, quer ueber die Luecke gezogen. Rechts der Kiste
     # ist glattes Banner und glatter Sand, das traegt sauber herueber.
     # Preis: die Kiste ist mit weg und der Buchstabe endet acht Pixel frueher.
-    ('spielerin hinten',  616, 202,  702,  396, 'figur', (30, 3, 'rechts')),
+    # Frueher EIN Kasten mit 'figur' und Fuellen von rechts. Das Ergebnis war
+    # kein Loch, sondern eine SCHLIERE: flache Farbbaender quer durch den
+    # Schriftzug, hart abgeschnitten. Der Grund steht schon im Kopf dieser
+    # Datei — der Zeilenmedian trifft hier Buchstaben statt Untergrund, weil
+    # hinter der Figur nicht eine Flaeche liegt, sondern die Luecke zwischen
+    # "A" und "R" UND der linke Stamm des "R".
+    #
+    # Deshalb jetzt vier Kaesten, jeder mit dem, was dort wirklich hingehoert.
+    # Eingemessen im Bild: das "A" endet bei x = 615, der Stamm des "R"
+    # beginnt bei x = 648, die Unterkante der Buchstaben liegt bei y = 292.
+    # Die Schrift ist NICHT kursiv — am "I" (x = 1428..1470) nachgeprueft,
+    # dessen linke Kante ueber die ganze Hoehe bei x = 1428 steht. Deshalb
+    # traegt ein rein waagerechter Klon die Kanten korrekt herueber.
+    # Blau NUR aus der Luecke zwischen "I" und "C" (x = 1478..1494). Der erste
+    # Versuch holte es bei x = 1585 — dort steht ein Balljunge im roten Trikot,
+    # und der stand danach als roter Streifen im Schriftzug. Die Luecke ist
+    # schmaler als das Loch, deshalb zweimal nebeneinander gesetzt; waagerecht
+    # ist das Banner gleichmaessig, nur der Verlauf von oben nach unten zaehlt,
+    # und der stimmt, weil die Quelle auf derselben Zeile liegt.
+    # Untere Kante bis 297 statt 293: die weiche Naht wuerde sonst genau auf der
+    # Grenze das ORIGINAL zurueckmischen — und dort steht die Figur. Der Kasten
+    # darunter ueberschreibt die vier Zeilen ohnehin wieder.
+    ('banner blau',       614, 194,  646,  297, 'spalte', (393,)),
+    # Der Stamm kommt vom "I": gleicher senkrechter Balken, gleiche Hoehe,
+    # gleicher Farbverlauf — und weil die Quelle auf DERSELBEN Zeile liegt,
+    # stimmt der Verlauf von oben nach unten ohne Nacharbeit.
+    # Der Stamm endet bei x = 681 und NICHT bei 684: bei 684 haette der Klon
+    # die rechte Kontur des "I" (x = 1462) mitgenommen und einen dunklen Balken
+    # mitten in das "R" gesetzt.
+    # Stamm und Gold kommen aus dem "I" (x = 1429..1478, gemessen: links davon
+    # ist Blau bis 1428, rechts ab 1479). Quelle endet bei 1463 und damit weit
+    # vor der rechten Kontur — die haette sonst einen dunklen Balken mitten in
+    # das "R" gesetzt.
+    ('R stamm',           647, 194,  681,  297, 'klon',  (782, 0)),
+    # Beginnt bei 674 und damit ACHT Pixel INNERHALB des Stamm-Kastens. Ohne
+    # diese Ueberlappung trafen zwei weiche Naehte aufeinander, und genau dort
+    # mischte sich die Figur zurueck: ein hellgruener Fleck mitten im "R"
+    # (gemessen x = 677..684, y = 245..268). Weil dieser Kasten NACH dem Stamm
+    # laeuft, blendet seine eigene Naht gegen bereits sauberes Gold.
+    ('R gold',            674, 194,  701,  297, 'klon',  (766, 0)),
+    # Unterhalb der Buchstaben: Bandenkante und Sand, waagerecht geklont —
+    # so trifft die Kante von selbst auf ihre richtige Hoehe.
+    ('bande und sand',    614, 294,  702,  396, 'klon',  (200, 0)),
     # Vorn per Klon: 140 px waagerecht zu interpolieren wuerde die Sandtextur
     # zu einem glatten Streifen ziehen. Der Versatz +200 liegt auf freiem Sand,
     # und weil er rein waagerecht ist, treffen Aufschlag- und Grundlinie von
@@ -174,7 +216,7 @@ def main():
                 maske[p[1] * W + p[0]] = 1
             aufgaben.append((name, x0, y0, x1, y1, art, par, punkte))
             continue
-        if art in ('klon', 'ecke'):
+        if art in ('klon', 'ecke', 'spalte'):
             for y in range(y0, y1 + 1):
                 for x in range(x0, x1 + 1):
                     maske[y * W + x] = 1
@@ -235,6 +277,36 @@ def main():
                 rand = min(abstaende) if abstaende else FEDER
                 a = 1.0 if rand >= FEDER else (rand + 1) / (FEDER + 1)
                 setze(x, y, idx(x + dx, y + dy), korr, a)
+                n += 1
+        return n
+
+    def spalte(x0, y0, x1, y1, xq):
+        """Zeilenweise EINE Farbe, gezogen aus einer sauberen Spalte.
+
+        Fuer waagerecht gleichmaessige Flaechen mit senkrechtem Verlauf — das
+        blaue Banner ist genau das. Der Klon scheitert hier an einer schlichten
+        Tatsache: die breiteste durchgehend blaue Spalte im ganzen Banner ist
+        14 px breit (gemessen ueber y = 194..293, bei x = 387..400 und
+        1415..1428). Ein 33 px breites Loch laesst sich daraus nur kacheln, und
+        jede Kachel bekommt ihren eigenen Helligkeitsabgleich — das Ergebnis
+        waren sichtbare senkrechte Baender.
+
+        Zeilenweise gezogen gibt es weder Kachelfuge noch Bandenbildung, und
+        der Verlauf von oben nach unten stimmt exakt, weil jede Zeile ihre
+        eigene Farbe behaelt.
+        """
+        n = 0
+        for y in range(y0, y1 + 1):
+            q = idx(xq, y)
+            for x in range(x0, x1 + 1):
+                abstaende = []
+                if x0 > 0: abstaende.append(x - x0)
+                if x1 < W - 1: abstaende.append(x1 - x)
+                if y0 > 0: abstaende.append(y - y0)
+                if y1 < H - 1: abstaende.append(y1 - y)
+                rand = min(abstaende) if abstaende else FEDER
+                a = 1.0 if rand >= FEDER else (rand + 1) / (FEDER + 1)
+                setze(x, y, q, (0, 0, 0), a)
                 n += 1
         return n
 
@@ -361,6 +433,8 @@ def main():
             n = glyph(punkte)
         elif art == 'klon':
             n = klon(x0, y0, x1, y1, par[0], par[1])
+        elif art == 'spalte':
+            n = spalte(x0, y0, x1, y1, par[0])
         else:
             n = ecke(x0, y0, x1, y1, par[0])
         print(f"  {name:16s} {art:6s} {n:6d} Pixel")
