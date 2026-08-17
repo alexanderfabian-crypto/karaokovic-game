@@ -1,0 +1,84 @@
+# =============================================================================
+# Die Webseite ausliefern.
+#
+# Warum es diese Datei gibt: GitHub Pages kennt zwei Wege, und sie schliessen
+# einander aus.
+#
+#   1. "Deploy from a branch" — GitHub baut selbst, ohne Datei im Projekt.
+#   2. "GitHub Actions"       — es wird ausgeliefert, was DIESE Datei sagt.
+#
+# Steht die Einstellung auf Weg 2, laeuft der eingebaute Bau von Weg 1 zwar
+# weiter an, sein Schritt "Deploy to GitHub Pages" scheitert aber jedes Mal.
+# Genau das ist hier passiert: der erste Push ging durch, danach schlugen zwei
+# Auslieferungen hintereinander im Deploy-Schritt fehl, waehrend der Bauschritt
+# sauber lief. Die Live-Seite blieb auf dem ersten Stand stehen.
+#
+# Mit dieser Datei haengt die Auslieferung nicht mehr an einem Auswahlfeld,
+# das jemand versehentlich umstellt.
+#
+# WICHTIG: ausgeliefert wird der Ordner `docs/`, und der wird NICHT von Hand
+# gepflegt, sondern gebaut:
+#
+#     node Entwickler-Tests/webseite-bauen.js
+#
+# Wer app-arena.js aendert und docs/ vergisst, pusht eine Seite, die den alten
+# Stand zeigt — der Schritt "Gegenprobe" unten faengt genau das ab.
+# =============================================================================
+
+name: Webseite ausliefern
+
+on:
+  push:
+    branches: [main]
+  # Von Hand ausloesbar, ohne dafuer einen leeren Commit erfinden zu muessen.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Zwei Auslieferungen gleichzeitig wuerden sich gegenseitig ueberholen.
+# `cancel-in-progress: false`, damit ein laufender Push fertig wird.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  ausliefern:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Gegenprobe: docs/ neu bauen und mit dem eingecheckten Stand
+      # vergleichen. Weichen sie ab, wurde docs/ nicht mitgebaut — dann bricht
+      # die Auslieferung ab, statt stillschweigend Veraltetes ins Netz zu
+      # stellen. Das ist die teuerste Sorte Fehler: die Seite ist erreichbar,
+      # zeigt aber den falschen Stand, und niemand sucht danach.
+      - name: Gegenprobe — ist docs/ auf dem Stand des Spielcodes?
+        run: |
+          node Entwickler-Tests/webseite-bauen.js
+          if ! git diff --quiet -- docs; then
+            echo "FEHLER: docs/ weicht vom Spielcode ab."
+            echo "Bitte 'node Entwickler-Tests/webseite-bauen.js' laufen lassen"
+            echo "und das Ergebnis mit committen. Abweichende Dateien:"
+            git diff --name-only -- docs
+            exit 1
+          fi
+          echo "docs/ ist auf dem Stand des Spielcodes."
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
