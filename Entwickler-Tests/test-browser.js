@@ -240,7 +240,14 @@ class Browser {
 
     try {
         await b.start(exe);
-        await schlafe(3000);   // Bilder von Platte laden lassen
+
+        /* Auf das Spiel warten, nicht auf die Uhr. Von Platte ist das Skript
+           sofort da; ueber das Netz sind es 274 KB, die erst ankommen muessen. */
+        for (let i = 0; i < 80; i++) {
+            const da = await b.werteAus('typeof window.KARAOKOVIC');
+            if (da === 'object') break;
+            await schlafe(250);
+        }
 
         /* --- 1. Kommt das Spiel überhaupt hoch? ------------------------- */
         const boot = await b.werteAus(`({
@@ -250,18 +257,41 @@ class Browser {
         check('Spiel bootet und meldet sich an window.KARAOKOVIC',
             boot.typ === 'object' && boot.canvas);
 
-        /* --- 2. Assets ------------------------------------------------- */
-        const assets = await b.werteAus(`(() => {
-            const K = window.KARAOKOVIC;
-            const alle = Object.keys(K.assets.images);
-            return { fehlend: K.assets.failed,
-                     geladen: alle.filter(k => K.assets.isReady(k)).length,
-                     gesamt: alle.length };
-        })()`);
+        /* --- 2. Assets --------------------------------------------------- *
+         * WARTEN statt eine feste Frist raten. Vorher standen hier 3 Sekunden
+         * pauschal — das reicht von Platte immer und ueber das Netz nicht:
+         * gegen die Live-Adresse meldete der Test 9 von 11 Bildern, obwohl
+         * `assets.failed` leer war und nichts fehlschlug. Er pruefte also
+         * nicht das Laden, sondern ob die geratene Frist zufaellig passt.
+         *
+         * Jetzt wird bis zu ASSET_FRIST_MS gewartet und die tatsaechlich
+         * benoetigte Zeit ausgegeben — sie ist die eigentlich interessante
+         * Zahl, wenn jemand die Seite aus der Ferne aufruft.
+         * ------------------------------------------------------------------ */
+        const ASSET_FRIST_MS = 30000;
+        const gestartet = Date.now();
+        let assets = null;
+        while (Date.now() - gestartet < ASSET_FRIST_MS) {
+            assets = await b.werteAus(`(() => {
+                const K = window.KARAOKOVIC;
+                const alle = Object.keys(K.assets.images);
+                return { fehlend: K.assets.failed,
+                         geladen: alle.filter(k => K.assets.isReady(k)).length,
+                         offen: alle.filter(k => !K.assets.isReady(k)).join(', '),
+                         gesamt: alle.length };
+            })()`);
+            /* Ein fehlgeschlagenes Bild kommt nicht mehr — sofort abbrechen,
+               statt die volle Frist abzusitzen. */
+            if (assets.geladen === assets.gesamt || assets.fehlend.length) break;
+            await schlafe(250);
+        }
+        const ladeSekunden = ((Date.now() - gestartet) / 1000).toFixed(1);
+
         check('Kein Asset ist fehlgeschlagen', assets.fehlend.length === 0,
             assets.fehlend.join(', ') || 'assets.failed ist leer');
         check('Alle Bilder sind geladen', assets.geladen === assets.gesamt,
-            `${assets.geladen}/${assets.gesamt}`);
+            `${assets.geladen}/${assets.gesamt} nach ${ladeSekunden} s`
+            + (assets.offen ? ` — offen: ${assets.offen}` : ''));
 
         /* --- 3. Hintergrundbild schaltet den Zeichenpfad um ------------- */
         const backdrop = await b.werteAus(
