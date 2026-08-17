@@ -405,6 +405,18 @@ class Browser {
             document.getElementById('btnRangeOk').click();
             schritte.startWahlFrei = sichtbar('btnStartWarmup') && sichtbar('btnStartGame');
 
+            /* Steht die Frage "Einspielen oder Match?", ist der Bereich bereits
+               festgeklopft. Die mitlaufende Hz-/Pegelanzeige hat hier nichts
+               mehr zu suchen — sie lenkt ab und sieht aus, als wäre noch etwas
+               einzusingen.
+
+               Nur die Arena-Fassung blendet sie aus; V41 ist eingefroren und
+               kennt die Steuerung nicht. Deshalb wird die Fähigkeit abgefragt
+               und nicht vorausgesetzt — sonst färbt eine Arena-Neuerung den
+               V41-Lauf rot. */
+            schritte.kannMessanzeige = typeof K.zeigeMessanzeige === 'function';
+            schritte.messanzeigeWeg = !sichtbar('livePitch');
+
             /* Einspielen starten -> Phase WARMUP, keine Zählung. */
             document.getElementById('btnStartWarmup').click();
             await new Promise(r => setTimeout(r, 1200));
@@ -449,11 +461,76 @@ class Browser {
             einspielen.hinweisUeberlagertNicht && einspielen.hinweisEinzeilig);
         check('"Range okay!" führt zur Auswahl Einspielen / Match',
             einspielen.startWahlFrei);
+        if (einspielen.kannMessanzeige) {
+            check('Im Startschritt ist die Hz-/Pegelanzeige verschwunden',
+                einspielen.messanzeigeWeg === true,
+                einspielen.messanzeigeWeg ? 'ausgeblendet' : 'steht noch da');
+        }
         check('"Einspielen starten" landet in der Phase WARMUP',
             einspielen.phase === 'WARMUP', `phase = ${einspielen.phase}`);
         check('Onboarding ist danach ausgeblendet', einspielen.onboarding === 'none');
         check('Bildrate im Einspielen bleibt unter 20 ms pro Frame',
             einspielen.medianMs < 20, `${einspielen.medianMs} ms Median`);
+
+        /* --- 6b. Ruhephase: Countdown und Ball wirklich zeichnen ---------- *
+         * Die federnde Ziffer und der aufgefrischte Ball (Verlauf, Naht,
+         * Glanzpunkt) laufen über Zeichenpfade, die in den Frames davor NIE
+         * betreten werden: der Countdown nur im Zustand SILENCE_CHECK, der
+         * Ballkörper nur mit Flughöhe. Ein Fehler dort — ein falsch gesetzter
+         * Farbverlauf genügt — fiele sonst erst auf der Bühne auf. Deshalb
+         * werden beide hier ausdrücklich gezeichnet; ob dabei etwas geflogen
+         * ist, prüft Abschnitt 10 mit.
+         * ---------------------------------------------------------------- */
+        const ruhe = await b.werteAus(`(async () => {
+            const K = window.KARAOKOVIC, R = K.renderer.constructor;
+            /* V41 kennt weder die federnde Ziffer noch den aufgefrischten Ball.
+               Fähigkeit abfragen statt voraussetzen — siehe oben. */
+            if (typeof R.countdownBounce !== 'function') return { arena: false };
+            const vorher = String(K.match.state);
+            K.match.state = 'SILENCE_CHECK';
+            K.match.resetSilenceTimer();
+            const start = K.match.silenceCountdown();
+            K.physics.ball.z = 60;          // Ball in die Luft
+            K.physics.ball.isSmash = false;
+
+            await new Promise(fertig => {
+                let n = 0;
+                const takt = () => { if (++n < 40) requestAnimationFrame(takt); else fertig(); };
+                requestAnimationFrame(takt);
+            });
+
+            /* Der Bounce wird an festen Zeitpunkten geprüft, nicht an
+               gemessenen Frames: die Ruhe-Uhr kann vom Testmikrofon jederzeit
+               zurückgesetzt werden, und der Test soll an Raumgeräusch nicht
+               scheitern. */
+            let spitze = 0;
+            for (let ms = 0; ms <= R.COUNTDOWN_BOUNCE_MS; ms += 5) {
+                spitze = Math.max(spitze, R.countdownBounce(ms));
+            }
+            K.match.state = vorher;
+            return {
+                arena: true,
+                start,
+                radius: K.physics.ball.radius,
+                groesse: R.COUNTDOWN_SIZE,
+                anfang: R.countdownBounce(0),
+                ende: R.countdownBounce(99999),
+                spitze: +spitze.toFixed(3),
+            };
+        })()`);
+        if (ruhe.arena) {
+            check('Countdown beginnt bei 2 statt bei 3',
+                ruhe.start === 2, `zeigt ${ruhe.start}`);
+            check('Die Ziffer ist 30 % kleiner',
+                ruhe.groesse === 280, `${ruhe.groesse} statt 400`);
+            check('Die Ziffer springt aus dem Nichts und steht am Ende still',
+                Math.abs(ruhe.anfang) < 1e-9 && Math.abs(ruhe.ende - 1) < 1e-9,
+                `${ruhe.anfang} -> ${ruhe.ende}`);
+            check('Und schießt dabei übertrieben über ihre Endgröße hinaus',
+                ruhe.spitze > 1.2, `Spitze ${ruhe.spitze}`);
+            check('Der Ball ist 10 % kleiner',
+                Math.abs(ruhe.radius - 10.8) < 1e-9, `${ruhe.radius} statt 12`);
+        }
 
         /* --- 7. Klaviatur folgt dem Stimmumfang -------------------------- *
          * Die Randtasten kommen AUSSERHALB dazu. Verteilte man dieselbe

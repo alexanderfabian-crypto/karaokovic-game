@@ -585,7 +585,12 @@
 
     /** Dauer der Zustände in Millisekunden. GESCHÜTZT. */
     const TIMING = {
-        SILENCE_MS: 3000,   // absolute Ruhe vor dem Aufschlag
+        /* War 3000. Der Countdown lief 3-2-1 und das dauerte im Studio zu
+           lange: die Anspannung fällt ab, bevor aufgeschlagen wird. Zwei
+           Sekunden reichen dem Publikum, um ruhig zu werden — und genau so
+           lange muss es dafür auch ruhig BLEIBEN, denn dieselbe Zahl ist die
+           Bedingung der Ruhepruefung, nicht nur die Laenge einer Animation. */
+        SILENCE_MS: 2000,   // absolute Ruhe vor dem Aufschlag
         POINT_MS: 3000,     // Jubel-/Punkteanzeige
         TRANSITION_MS: 3000 // Karaokovic-Bumper + DVD-Wort
     };
@@ -1368,6 +1373,23 @@
             return Math.max(1, Math.ceil(left / 1000));
         }
 
+        /**
+         * Wie lange die gerade angezeigte Ziffer schon steht, in Millisekunden.
+         *
+         * Grundlage des Bounce: die Animation muss bei JEDEM Ziffernwechsel neu
+         * anlaufen, nicht einmal beim Eintritt in die Ruhephase. Gerechnet wird
+         * deshalb aus der Restzeit und nicht aus einem eigenen Zeitstempel —
+         * ein zweiter Zeitstempel könnte gegenüber der Restzeit verrutschen,
+         * und die Ziffer würde mitten in der Bewegung umspringen.
+         *
+         * @returns {number} 0 im Moment des Wechsels, danach bis knapp 1000.
+         */
+        silenceDigitAge() {
+            const left = TIMING.SILENCE_MS - (Date.now() - this.silenceTimerStart);
+            const rest = ((left % 1000) + 1000) % 1000;
+            return (1000 - rest) % 1000;
+        }
+
         /** Aktuellen Stand für Undo sichern. */
         pushHistory() {
             this.history.push({
@@ -1495,7 +1517,14 @@
         constructor() {
             this.x = 0; this.y = 0; this.z = 0;
             this.vx = 0; this.vy = 0; this.vz = 0;
-            this.radius = 12;
+            /* War 12 (−10 %). Eine WELTgröße, kein Zeichenwert: dieselbe Zahl
+               bestimmt Trefferzone, Bandenabprall und die Ballablage beim
+               Aufschlag. Deshalb hier ändern und nicht im Renderer — ein
+               kleiner gezeichneter Ball mit unveränderter Trefferzone wäre
+               genau die stille Unstimmigkeit, die später niemand mehr findet.
+               Wirkung aufs Spiel: 1,2 px, gegenüber PADDLE.hitPadding
+               vernachlässigbar. */
+            this.radius = 10.8;
             /** @type {number} Aufsprünge seit dem letzten Schlag. */
             this.bounces = 0;
             /** @type {string} Wer zuletzt geschlagen hat (PLAYER.*). */
@@ -3398,13 +3427,79 @@
                 this.blitWorldSprite('ball', air, ball.radius * 2, true);
                 return;
             }
-            ctx.fillStyle = ball.isSmash ? '#ff3300' : ACCENT_YELLOW;
+            /* --- Filzball statt Farbpunkt --------------------------------------
+             * Vorher: eine Kreisfläche in Volltongelb mit schwarzer Kontur. Auf
+             * dem hellen Rasen- und dem Sandbild verlor der Ball dadurch die
+             * Form — es fehlte jede Rundung.
+             *
+             * Vier Lagen, in dieser Reihenfolge: Körper mit Lichtverlauf,
+             * Naht, dunkle Kante, Glanzpunkt. Alles relativ zu `r` gerechnet,
+             * damit es in der Bildtiefe mitskaliert; der Ball ist am Netz nur
+             * halb so groß wie an der Grundlinie.
+             *
+             * Bewusst sparsam: das Ding ist rund 20 px breit und wird 60-mal
+             * pro Sekunde gezeichnet. Mehr Details sieht ohnehin niemand, sie
+             * kosten aber Bildrate — und die Bildrate zählt hier Frames.
+             * ------------------------------------------------------------------ */
+            const r = ball.radius * air.scale3D;
+            ctx.save();
+
+            /* Licht von oben links, wie bei den Figuren. */
+            const koerper = ctx.createRadialGradient(
+                air.x - r * 0.35, air.y - r * 0.4, r * 0.1,
+                air.x, air.y, r
+            );
+            if (ball.isSmash) {
+                koerper.addColorStop(0, '#ffd9a8');
+                koerper.addColorStop(0.55, '#ff5a1f');
+                koerper.addColorStop(1, '#8c1d00');
+            } else {
+                koerper.addColorStop(0, '#f7ffb0');
+                koerper.addColorStop(0.55, '#dced2a');
+                koerper.addColorStop(1, '#8ba300');
+            }
+            ctx.fillStyle = koerper;
             ctx.beginPath();
-            ctx.arc(air.x, air.y, ball.radius * air.scale3D, 0, Math.PI * 2);
+            ctx.arc(air.x, air.y, r, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = 2 * air.scale3D;
+
+            /* Die zwei Nähte, BESCHNITTEN auf die Ballfläche.
+               Das Beschneiden ist nicht Kosmetik, sondern der Kern: die Bögen
+               sind absichtlich größer als der Ball und werden an seinem Rand
+               abgeschnitten. Genau dadurch laufen sie oben und unten sauber in
+               die Silhouette hinein, statt als zwei Klammern daneben zu stehen.
+               Ohne den Beschnitt ragten sie über den Rand hinaus, und die
+               dunkle Kante schnitt sie zu grauen Kappen. */
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(air.x, air.y, r, 0, Math.PI * 2);
+            ctx.clip();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+            ctx.lineWidth = Math.max(1, r * 0.16);
+            ctx.beginPath();
+            ctx.ellipse(air.x - r * 1.0, air.y, r * 0.8, r * 1.0, 0, 0, Math.PI * 2);
             ctx.stroke();
+            ctx.beginPath();
+            ctx.ellipse(air.x + r * 1.0, air.y, r * 0.8, r * 1.0, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+
+            /* Dunkle Kante ZULETZT über die Nähte — so endet die Naht am Rand
+               unter der Kante und nicht davor. */
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.lineWidth = Math.max(1, r * 0.12);
+            ctx.beginPath();
+            ctx.arc(air.x, air.y, r * 0.95, 0, Math.PI * 2);
+            ctx.stroke();
+
+            /* Glanzpunkt zuletzt, damit ihn nichts überdeckt. */
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.beginPath();
+            ctx.ellipse(air.x - r * 0.33, air.y - r * 0.42,
+                r * 0.27, r * 0.17, -0.6, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
         }
 
         /* --------------------------------------------------------------------
@@ -4090,15 +4185,39 @@
             const lineHeight = 26 * p.scale;
             const hz = audio.stablePitch;
 
+            /* --- Ampel ---------------------------------------------------------
+             * Beide Zeilen beantworten je eine Frage, und zwar die Frage, die
+             * sich die Sängerin auf der Bühne tatsächlich stellt:
+             *
+             *   VOL   — "hört mich das Spiel überhaupt?"
+             *   PITCH — "komme ich mit diesem Ton noch aufs Feld?"
+             *
+             * Die Schwelle für VOL ist NICHT frei gewählt: `moveGate` ist exakt
+             * der Wert, unterhalb dessen updateSmoothedPitch() den Frame
+             * verwirft. Genau ab hier bewegt sich also etwas. Stünde hier eine
+             * eigene Zahl, zeigte die Ampel grün, während die Figur steht.
+             *
+             * Rot bei PITCH heißt "außerhalb des eingesungenen Umfangs" — nicht
+             * "kaputt". Draußen läuft die Figur weiter (Overdrive ist
+             * ausdrücklich erwünscht), sie steht dann aber an der Seitenlinie
+             * an, und das soll man sehen.
+             * ------------------------------------------------------------------ */
+            const lautGenug = audio.currentVolume > CONFIG.moveGate;
+            const umfang = Physics.voiceRange(PLAYER.ANDREA);
+            const imUmfang = hz > 0 && hz >= umfang.min && hz <= umfang.max;
+
             ctx.save();
             ctx.textAlign = 'right';
             ctx.textBaseline = 'alphabetic';
-            ctx.fillStyle = ACCENT_CYAN;
             ctx.font = this.font(20 * p.scale, 'normal');
+
+            ctx.fillStyle = imUmfang ? Renderer.METER_OK : Renderer.METER_BAD;
             ctx.fillText(
                 `PITCH: ${hz > 0 ? Math.round(hz) : '--'} Hz`,
                 p.x - pad, p.y - pad - lineHeight
             );
+
+            ctx.fillStyle = lautGenug ? Renderer.METER_OK : Renderer.METER_BAD;
             ctx.fillText(
                 `VOL: ${audio.currentVolume.toFixed(3)}`,
                 p.x - pad, p.y - pad
@@ -4337,8 +4456,15 @@
                     scale: this.viewport.scale }
                 : this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_MID_Y, this._p1);
 
+            /* Zwei Größen, und der Unterschied ist wesentlich:
+               `size` ist die RUHIGE Endgröße und dient der Kollisionsprüfung —
+               würde die federnde Größe die Box bestimmen, spränge die Ziffer
+               bei jedem Wechsel kurz zur Seite, weil die Box mitatmet.
+               Gezeichnet wird dagegen mit `gefedert`. */
             const size = Renderer.COUNTDOWN_SIZE * p.scale;
-            ctx.font = this.font(size, 'normal', Renderer.GOTHIC_FONT);
+            const bounce = Renderer.countdownBounce(match.silenceDigitAge());
+            const gefedert = size * bounce;
+            ctx.font = this.font(gefedert, 'normal', Renderer.GOTHIC_FONT);
 
             /* --- Kopf-Kollision -----------------------------------------------
              * Die Ziffer ist rund 400 px hoch und steht in der Bildmitte —
@@ -4359,7 +4485,10 @@
                 ], Renderer.COUNTDOWN_DODGE * p.scale);
             }
 
-            this.gothicText(String(count), p.x, p.y + offset, p.scale);
+            /* Kontur und Schein federn mit — sonst behielte eine winzige Ziffer
+               die Strichstärke einer großen und sähe im Einsprung aus wie ein
+               Klecks. */
+            this.gothicText(String(count), p.x, p.y + offset, p.scale * bounce);
             ctx.restore();
         }
 
@@ -4970,12 +5099,46 @@
     Renderer.HUD_BALL_COLOR = '#d9dc54';
     Renderer.HUD_BALL_EDGE = '#8f9430';
 
+    /* Ampelfarben der Messanzeige unten rechts (siehe drawAudioDebug).
+       Bewusst kein reines #00ff00/#ff0000: beide flimmern auf einer Bühnen-
+       kamera und stechen gegen die Neon-Palette des Spiels heraus. */
+    Renderer.METER_OK = '#3ddc84';
+    Renderer.METER_BAD = '#ff4d5e';
+
     /* -------------------------------------------------------------------------
      * Ruhephase: Countdown und Neon-Schein
      * ---------------------------------------------------------------------- */
 
-    /** Schriftgröße des Countdowns in virtuellen Pixeln. */
-    Renderer.COUNTDOWN_SIZE = 400;
+    /** Schriftgröße des Countdowns in virtuellen Pixeln. War 400 (−30 %). */
+    Renderer.COUNTDOWN_SIZE = 280;
+
+    /** Dauer des Einsprungs einer Ziffer in Millisekunden. */
+    Renderer.COUNTDOWN_BOUNCE_MS = 380;
+
+    /**
+     * Stärke des Überschwingens. 1.7 ist der Lehrbuchwert für "ease out back";
+     * hier steht bewusst deutlich mehr, weil der Einsprung übertrieben wirken
+     * soll und nicht dezent.
+     */
+    Renderer.COUNTDOWN_OVERSHOOT = 3.2;
+
+    /**
+     * Größenfaktor der Countdown-Ziffer über ihre Lebensdauer.
+     *
+     * "Ease out back": die Ziffer beginnt bei 0, schießt über ihre Endgröße
+     * hinaus und federt zurück. Der Wert startet exakt bei 0 und endet exakt
+     * bei 1 — die Ziffer steht danach still, sie zappelt nicht weiter.
+     *
+     * @param   {number} alterMs Alter der Ziffer (siehe silenceDigitAge)
+     * @returns {number} Faktor auf die Schriftgröße
+     */
+    Renderer.countdownBounce = function (alterMs) {
+        const t = Math.min(1, Math.max(0, alterMs / Renderer.COUNTDOWN_BOUNCE_MS));
+        const c1 = Renderer.COUNTDOWN_OVERSHOOT;
+        const c3 = c1 + 1;
+        const k = t - 1;
+        return 1 + c3 * k * k * k + c1 * k * k;
+    };
 
     /* -------------------------------------------------------------------------
      * Aufforderung im Zustand SERVE_WAIT (siehe Renderer.drawServePrompt)
@@ -5366,6 +5529,7 @@
                 }
                 document.getElementById('calibConfirm').style.display = 'none';
                 document.getElementById('startWahl').style.display = 'block';
+                this.zeigeMessanzeige(false);
             });
 
             document.getElementById('btnRangeRedo').addEventListener('click', () => {
@@ -5448,6 +5612,7 @@
             document.getElementById('calibSing').style.display = 'block';
             document.getElementById('calibConfirm').style.display = 'none';
             document.getElementById('startWahl').style.display = 'none';
+            this.zeigeMessanzeige(true);
 
             const wer = document.getElementById('calibWho');
             if (wer) {
@@ -5820,6 +5985,27 @@
             if (Date.now() < this._hintUntil) return;
             this.hintDiv.innerText = '';
             this._hintUntil = 0;
+        }
+
+        /**
+         * Die Messanzeige (Hz und Pegel) ein- oder ausblenden.
+         *
+         * Sie gehört zum EINSINGEN. Steht die Frage "Einspielen oder Match?",
+         * ist der Bereich bereits festgeklopft — eine weiterlaufende Zahl
+         * lenkt dort nur noch ab und sieht aus, als wäre noch etwas zu tun.
+         * In diesem Schritt soll ausschließlich die Frage stehen.
+         *
+         * @param {boolean} sichtbar
+         */
+        zeigeMessanzeige(sichtbar) {
+            if (this.livePitchDiv) {
+                this.livePitchDiv.style.display = sichtbar ? '' : 'none';
+            }
+            /* Die Hinweiszeile darunter gehört zur selben Messung und würde
+               sonst als leerer Streifen stehen bleiben. */
+            if (this.hintDiv) {
+                this.hintDiv.style.display = sichtbar ? '' : 'none';
+            }
         }
 
         /**
