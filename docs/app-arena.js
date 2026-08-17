@@ -399,6 +399,18 @@
             notenTief: 620, notenHoch: 300, tastenNah: 828, tastenFern: 10,
             randRechts: (y) => 1216 + 1.035 * (Math.max(150, Math.min(330, y)) - 150),
             randLinks: () => 8,
+            /* Der einzige LEERE Schiedsrichterstuhl der drei Plaetze — auf
+               Sand sitzt links jemand, auf Rasen rechts. Deshalb steht die
+               Besetzung nur hier und ist bei den anderen beiden null.
+               Eingemessen im Bild: Pultblock x = 322..358, seine Oberkante
+               y = 240. Das Hartplatzbild ist exakt 1600x900, Bildpixel sind
+               hier also unmittelbar Zeichenkoordinaten.
+
+               `schulterY` ist die Pultkante: dort verschwindet die Figur. Was
+               darunter gezeichnet wuerde, laege VOR dem Pult statt dahinter.
+               `kopfHoehe` war zuerst 36 — damit war der Kopf so breit wie das
+               ganze Pult. 28 passt zur Entfernung. */
+            schiedsrichter: { x: 345, schulterY: 240, kopfHoehe: 28 },
         },
         SAND: {
             name: 'Sandplatz', bild: 'court_sand',
@@ -408,6 +420,8 @@
             randRechts: (y) => (y <= 200 ? 1385
                 : y >= 280 ? 1596 : 1385 + (y - 200) * (1596 - 1385) / 80),
             randLinks: (y) => (y >= 560 ? 8 : 8 + (560 - y) * 0.6),
+            /* Stuhl links ist im Bild bereits besetzt. */
+            schiedsrichter: null,
         },
         RASEN: {
             name: 'Rasenplatz', bild: 'court_rasen',
@@ -421,6 +435,8 @@
                 : y >= 420 ? 1596 : 1495 + (y - 240) * (1596 - 1495) / 180),
             randLinks: (y) => (y <= 240 ? 162
                 : y >= 420 ? 8 : 162 - (y - 240) * (162 - 8) / 180),
+            /* Stuhl rechts (y = 202..499) ist im Bild bereits besetzt. */
+            schiedsrichter: null,
         },
     };
 
@@ -848,6 +864,9 @@
                 head_alex_neutral: 'Alex_Kopf_neutral.png',
                 head_alex_win: 'Alex_Kopf_froh.png',
                 head_alex_lose: 'Alex_Kopf_ernst.png',
+                /* Der Schiedsrichter. Lag seit jeher im Projekt und wurde von
+                   nichts geladen — siehe Renderer.drawSchiedsrichter(). */
+                head_benni: 'Benni_Kopf.png',
                 body_andrea: 'Beispiel Spieler unten.png',
                 body_alex: 'Beispiel Spieler oben.png',
 
@@ -2672,6 +2691,7 @@
             this.drawPitchIndicators(scene.audio);
             this.drawCrowd();
             this.drawStaff();
+            this.drawSchiedsrichter();
             this.drawNet();
             this.drawBounceMarks(scene.bounceMarks);
             this.drawBall(scene.ball);
@@ -3270,6 +3290,56 @@
          * Der Schiedsrichterstuhl ist entfallen. Er stand links auf Netzhöhe —
          * genau dort, wo jetzt die Tonhöhen-Markierung liegt.
          */
+        /**
+         * Benni auf dem Schiedsrichterstuhl.
+         *
+         * Anders als die Spielfiguren steht er NICHT in Weltkoordinaten: der
+         * Stuhl ist Teil des Platzbildes und bewegt sich nicht. Gerechnet wird
+         * deshalb in Bildkoordinaten, genau wie bei den Notenmarken und der
+         * Klaviatur — die Werte stehen bei ihrem Platz in `PLAETZE`.
+         *
+         * Gezeichnet wird nur, wo `schiedsrichter` gesetzt ist. Auf Sand und
+         * Rasen sitzt bereits jemand im Bild; dort stünde Benni sonst als
+         * zweiter Kopf im selben Stuhl oder, schlimmer, mitten in der Luft —
+         * die Stühle stehen auf den drei Bildern nicht an derselben Stelle.
+         *
+         * Reihenfolge: nach dem Hintergrund, vor den Figuren. Er ist Kulisse,
+         * kein Mitspieler, und darf im Zweifel verdeckt werden.
+         */
+        drawSchiedsrichter() {
+            const stuhl = PLATZ.schiedsrichter;
+            if (!stuhl || !this.assets.isReady('head_benni')) return;
+
+            const ctx = this.ctx;
+            const img = this.assets.get('head_benni');
+            const p = this.viewport.toScreen(stuhl.x, stuhl.schulterY, this._p1);
+
+            const h = stuhl.kopfHoehe * p.scale;
+            const w = h * (img.naturalWidth / img.naturalHeight);
+
+            ctx.save();
+
+            /* Schultern: nur angedeutet, und die Unterkante liegt GENAU auf der
+               Pultkante. Alles darunter würde das Pult übermalen, und er säße
+               scheinbar davor statt dahinter.
+
+               Sie müssen breiter sein als der Kopf und dürfen nicht vollständig
+               hinter ihm liegen — sonst schwebt der Kopf über dem Pult. Deshalb
+               sitzt das Kinn um `KOPF_UEBERLAPP` höher als die Schulterlinie. */
+            const schulterBreite = w * 1.7;
+            const schulterHoehe = 8 * p.scale;
+            ctx.fillStyle = Renderer.UMPIRE_JACKET;
+            ctx.beginPath();
+            ctx.ellipse(p.x, p.y, schulterBreite / 2, schulterHoehe,
+                0, Math.PI, Math.PI * 2);
+            ctx.fill();
+
+            ctx.drawImage(img, p.x - w / 2,
+                p.y - Renderer.UMPIRE_KOPF_UEBERLAPP * p.scale - h, w, h);
+
+            ctx.restore();
+        }
+
         drawStaff() {
             const ctx = this.ctx;
 
@@ -4700,6 +4770,22 @@
      * Physics.BOUNCE_DEPTH.
      */
     Renderer.SERVICE_LINE_DEPTH = 0.268;
+
+    /* Jackenfarbe des Schiedsrichters. Aus dem Hartplatzbild abgegriffen —
+       dasselbe Dunkelblau wie Stuhl und Bande, damit die angedeutete Schulter
+       nicht als Fremdkörper vor der Kulisse steht. */
+    Renderer.UMPIRE_JACKET = '#1f2a4a';
+
+    /**
+     * Wie weit das Kinn über der Schulterlinie sitzt, in virtuellen Pixeln.
+     *
+     * Ohne diesen Versatz deckt der Kopf die Schulter vollständig ab (die
+     * Spielfiguren setzen ihn genau auf die Schulterlinie, dort steht aber
+     * auch ein ganzer Körper darunter). Beim Schiedsrichter sieht man nur den
+     * Ausschnitt über der Pultkante — ist die Schulter unsichtbar, schwebt
+     * ein Kopf über dem Pult.
+     */
+    Renderer.UMPIRE_KOPF_UEBERLAPP = 4;
 
     /** Tiefe des Zuschauerblocks in Weltkoordinaten. */
     Renderer.CROWD_DEPTH = 150;

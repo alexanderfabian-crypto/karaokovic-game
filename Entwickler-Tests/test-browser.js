@@ -680,6 +680,62 @@ class Browser {
             `${(note.links - note.seitenlinie).toFixed(1)} px innen, `
             + `${(note.bande - note.rechts).toFixed(1)} px außen`);
 
+        /* --- 9b. Benni sitzt wirklich auf dem Stuhl ---------------------- *
+         * Gemessen wird das GEZEICHNETE BILD, nicht die Konfiguration.
+         *
+         * Der Grund steht in der Entstehung: beim Einbau hiess das Feld
+         * `schulterY`, gelesen wurde `stuhl.y` — der Kopf landete bei y = NaN
+         * und wurde nirgends gezeichnet. Konfiguration, Bildladen und
+         * Aufrufzaehler waren dabei alle in Ordnung, es flog auch keine
+         * Exception. Eine Pruefung, die nur die Werte ansieht, waere gruen
+         * geblieben, waehrend der Stuhl leer bleibt.
+         *
+         * Deshalb: ein Bildpunkt mitten im Gesicht, einmal mit und einmal ohne
+         * Besetzung. Unterscheiden sie sich nicht, wird dort nichts gezeichnet.
+         * ---------------------------------------------------------------- */
+        const schiri = await b.werteAus(`(async () => {
+            const K = window.KARAOKOVIC, R = K.renderer;
+            if (typeof R.drawSchiedsrichter !== 'function') return { arena: false };
+
+            const vorher = K.platz;
+            K.setzePlatz('HART'); K.handleResize();
+            const st = K.platz.schiedsrichter;
+            if (!st) return { arena: true, besetzt: false };
+
+            /* Mitten ins Gesicht zielen, nicht an den Rand. */
+            const p = R.viewport.toScreen(st.x, st.schulterY - st.kopfHoehe * 0.55, {});
+            const lies = () => {
+                const d = R.ctx.getImageData(Math.round(p.x), Math.round(p.y), 1, 1).data;
+                return d[0] + ',' + d[1] + ',' + d[2];
+            };
+            const frame = () => new Promise(r => requestAnimationFrame(r));
+
+            await frame();
+            const mit = lies();
+            K.platz.schiedsrichter = null;     // kurz raeumen
+            await frame();
+            const ohne = lies();
+            K.platz.schiedsrichter = st;       // und zurueck
+            await frame();
+
+            const andere = K.PLATZ_NAMEN.filter(k => k !== 'HART')
+                .map(k => k + '=' + (K.PLAETZE[k].schiedsrichter ? 'besetzt' : 'leer'))
+                .join(' ');
+
+            /* Platz zuruecksetzen, damit spaetere Pruefungen unberuehrt sind. */
+            K.setzePlatz(K.PLATZ_NAMEN.find(k => K.PLAETZE[k] === vorher) || 'SAND');
+            K.handleResize();
+            return { arena: true, besetzt: true, mit, ohne, andere };
+        })()`);
+        if (schiri.arena) {
+            check('Der Hartplatz-Stuhl ist besetzt', schiri.besetzt === true);
+            check('Und dort wird tatsächlich etwas gezeichnet',
+                schiri.mit !== schiri.ohne,
+                `mit Besetzung RGB ${schiri.mit}, ohne RGB ${schiri.ohne}`);
+            check('Auf Sand und Rasen sitzt niemand zusätzlich (Stuhl schon besetzt)',
+                schiri.andere === 'SAND=leer RASEN=leer', schiri.andere);
+        }
+
         /* --- 10. Nichts ist unterwegs geflogen -------------------------- */
         check('Keine Exception und kein console.error während des Laufs',
             b.fehler.length === 0, b.fehler.join(' | ') || 'sauber');
