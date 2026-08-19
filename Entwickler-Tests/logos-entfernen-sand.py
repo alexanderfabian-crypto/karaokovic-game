@@ -118,7 +118,12 @@ LOECHER = [
     # Untere Kante bis 297 statt 293: die weiche Naht wuerde sonst genau auf der
     # Grenze das ORIGINAL zurueckmischen — und dort steht die Figur. Der Kasten
     # darunter ueberschreibt die vier Zeilen ohnehin wieder.
-    ('banner blau',       614, 194,  646,  297, 'spalte', (393,)),
+    # Reicht bis 655 und damit ACHT Pixel in den Stamm-Kasten hinein. Ohne
+    # diese Ueberlappung endete die weiche Naht dieses Kastens auf dem
+    # Original — und dort stand das dunkelrote Kleid der entfernten Figur, das
+    # als roter Schleier im blauen Banner stehenblieb. Der Stamm-Kasten laeuft
+    # danach und ueberschreibt die Stelle mit voller Deckung.
+    ('banner blau',       614, 194,  655,  297, 'spalte', (393,)),
     # Der Stamm kommt vom "I": gleicher senkrechter Balken, gleiche Hoehe,
     # gleicher Farbverlauf — und weil die Quelle auf DERSELBEN Zeile liegt,
     # stimmt der Verlauf von oben nach unten ohne Nacharbeit.
@@ -129,13 +134,13 @@ LOECHER = [
     # ist Blau bis 1428, rechts ab 1479). Quelle endet bei 1463 und damit weit
     # vor der rechten Kontur — die haette sonst einen dunklen Balken mitten in
     # das "R" gesetzt.
-    ('R stamm',           647, 194,  681,  297, 'klon',  (782, 0)),
+    ('R stamm',           647, 194,  681,  297, 'klon',  (782, 0, False)),
     # Beginnt bei 674 und damit ACHT Pixel INNERHALB des Stamm-Kastens. Ohne
     # diese Ueberlappung trafen zwei weiche Naehte aufeinander, und genau dort
     # mischte sich die Figur zurueck: ein hellgruener Fleck mitten im "R"
     # (gemessen x = 677..684, y = 245..268). Weil dieser Kasten NACH dem Stamm
     # laeuft, blendet seine eigene Naht gegen bereits sauberes Gold.
-    ('R gold',            674, 194,  701,  297, 'klon',  (766, 0)),
+    ('R gold',            674, 194,  701,  297, 'klon',  (766, 0, False)),
     # Unterhalb der Buchstaben: Bandenkante und Sand, waagerecht geklont —
     # so trifft die Kante von selbst auf ihre richtige Hoehe.
     ('bande und sand',    614, 294,  702,  396, 'klon',  (200, 0)),
@@ -261,8 +266,24 @@ def main():
                 n += 1
         return [v / n for v in diff] if n else [0.0, 0.0, 0.0]
 
-    def klon(x0, y0, x1, y1, dx, dy):
-        korr = randkorrektur(x0, y0, x1, y1, dx, dy)
+    def klon(x0, y0, x1, y1, dx, dy, abgleich=True):
+        """Versetzter Klon.
+
+        `abgleich=False` schaltet den Helligkeitsabgleich am Rahmen ab.
+
+        Der Abgleich ist fuer Flaechen gedacht: er misst die Differenz rund um
+        den Kastenrand und zieht sie ueber den ganzen Kasten ab. Auf dem
+        Schriftzug ist das falsch. Dort liegt der Rand teils auf blauem
+        Banner, teils auf goldenem Buchstaben — die gemittelte Differenz
+        gehoert zu keinem von beidem und faerbte den geklonten Buchstaben
+        sichtbar heller. Genau das war der Buehnenbefund "das KARAOKOVIC an
+        der Bande ist kaputt".
+
+        Wo Quelle und Ziel in DERSELBEN Bildzeile liegen (dy = 0), stammen
+        beide ohnehin aus demselben Farbverlauf. Dann ist der Abgleich nicht
+        nur ueberfluessig, sondern schaedlich.
+        """
+        korr = randkorrektur(x0, y0, x1, y1, dx, dy) if abgleich else (0.0, 0.0, 0.0)
         n = 0
         for y in range(y0, y1 + 1):
             for x in range(x0, x1 + 1):
@@ -432,7 +453,8 @@ def main():
         elif art == 'glyph':
             n = glyph(punkte)
         elif art == 'klon':
-            n = klon(x0, y0, x1, y1, par[0], par[1])
+            n = klon(x0, y0, x1, y1, par[0], par[1],
+                     par[2] if len(par) > 2 else True)
         elif art == 'spalte':
             n = spalte(x0, y0, x1, y1, par[0])
         else:

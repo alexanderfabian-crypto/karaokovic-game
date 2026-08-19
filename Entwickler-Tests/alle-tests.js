@@ -25,6 +25,8 @@ const TESTS = [
     ['test-ruhige-figur.js', 'Figur steht still bei gehaltenem Ton (Arena)'],
     ['test-ruhe-im-laerm.js', 'Ruhepruefung im lauten Raum (Arena)'],
     ['test-einspielen.js', 'Einspielen zaehlt getrennt vom Match (Arena)'],
+    ['test-aufschlag-tonhoehe.js', 'Aufschlag nur im Tonumfang (Arena)'],
+    ['test-netz-verdeckung.js', 'Netz verdeckt den Ball (Sandplatz)'],
     ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz: V41'],
     /* Das Balltempo weicht seit ARENA-3 zwischen den Fassungen ab. Die
        Sendeplatz-Rechnung muss deshalb fuer beide gelten, nicht nur fuer die

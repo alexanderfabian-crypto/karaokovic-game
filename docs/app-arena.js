@@ -145,6 +145,24 @@
            halb so lang zu halten wie vorher. */
         serveVolume: 0.022,
 
+        /**
+         * Wie weit der Aufschlagton ausserhalb des eingesungenen Umfangs
+         * liegen darf, in Halbtoenen nach oben wie nach unten.
+         *
+         * Buehnenwunsch: "ein Aufschlag, der viel zu hoch oder viel zu niedrig
+         * als die Range gesungen wird, darf den Aufschlag nicht ausloesen."
+         * Bisher zaehlte allein die LAUTSTAERKE — ein Quietschen oder ein
+         * Brummen weit unter dem Umfang loeste genauso aus wie ein sauber
+         * gesungener Ton, und der Ball flog dann an die geklemmte Feldkante.
+         *
+         * 5 Halbtoene sind bewusst grosszuegig: der Overdrive ueber den
+         * Umfang hinaus ist ausdruecklich erwuenscht (siehe
+         * freqToQuantizedX), und wer knapp daneben liegt, soll trotzdem
+         * aufschlagen koennen. Abgewiesen wird nur, was offensichtlich nicht
+         * gemeint war.
+         */
+        aufschlagToleranzHalbtoene: 5,
+
         /* ---------------------------------------------------------------------
          * Ausreißerschutz der Tonhöhe (siehe updateSmoothedPitch).
          *
@@ -413,6 +431,11 @@
             notenTief: 620, notenHoch: 300, tastenNah: 828, tastenFern: 10,
             randRechts: (y) => 1216 + 1.035 * (Math.max(150, Math.min(330, y)) - 150),
             randLinks: () => 8,
+            /* Bauchbinde: unten links, wie in der Vorlage gemessen. */
+            hudX: 84, hudY: 742,
+            /* Kein Netzband eingemessen -> keine Verdeckung, Verhalten wie
+               bisher. Siehe Renderer.netzVerdeckt(). */
+            netz: null,
             /* Der einzige LEERE Schiedsrichterstuhl der drei Plaetze — auf
                Sand sitzt links jemand, auf Rasen rechts. Deshalb steht die
                Besetzung nur hier und ist bei den anderen beiden null.
@@ -437,6 +460,27 @@
             randRechts: (y) => (y <= 200 ? 1385
                 : y >= 280 ? 1596 : 1385 + (y - 200) * (1596 - 1385) / 80),
             randLinks: (y) => (y >= 560 ? 8 : 8 + (560 - y) * 0.6),
+            /* Bauchbinde OBEN links. Auf dem Sandplatz fuellt das Feld das
+               Bild weiter aus als auf dem Hartplatz: unten links liegt die
+               vordere Grundlinie samt Aussenbereich deutlich hoeher, und die
+               Bauchbinde stand dort auf dem Sand statt daneben. Oben deckt sie
+               Tribuene ab, wo nichts Wichtiges liegt. */
+            hudX: 84, hudY: 40,
+            /* Das GEMALTE Netz, Zeile fuer Zeile im gerenderten Bild
+               eingemessen. Es haengt durch wie ein echtes: an den Pfosten
+               liegt die Oberkante bei y = 382, zur Mitte hin faellt sie auf
+               401. Gemessen bei x = 340 -> 382 und x = 700 -> 396, das ergibt
+               0.0389 px je Pixel Abstand von der Feldmitte (830.75).
+               Der Fuss liegt ueber die ganze Breite bei y = 480.
+
+               Wofuer: ein Ball JENSEITS des Netzes, dessen Bildpunkt in dieses
+               Band faellt, steckt hinter dem Netz und darf nicht sichtbar
+               sein. Bisher wurde er darueber gezeichnet und schwebte durch das
+               Netz hindurch. */
+            netz: {
+                oben: (x) => 401 - 0.0389 * Math.abs(x - 830.75),
+                unten: 480,
+            },
             /* Stuhl links, im Bild bereits besetzt: Benni bekommt nur den
                KOPF ueber den gemalten gelegt, der Koerper bleibt der des
                Bildes. Deshalb `schultern: false` — eine zusaetzliche
@@ -459,6 +503,8 @@
                 : y >= 420 ? 1596 : 1495 + (y - 240) * (1596 - 1495) / 180),
             randLinks: (y) => (y <= 240 ? 162
                 : y >= 420 ? 8 : 162 - (y - 240) * (162 - 8) / 180),
+            hudX: 84, hudY: 742,
+            netz: null,
             /* Stuhl RECHTS (y = 202..499), im Bild bereits besetzt — wie
                auf Sand nur der Kopf, keine Schulter.
                Eingemessen: Kopf x = 1322..1350, y = 200..245. */
@@ -1972,6 +2018,32 @@
         }
 
         /**
+         * Taugt der anliegende Ton zum Ausloesen eines Aufschlags?
+         *
+         * Nur die Tonhoehe wird geprueft, nicht die Lautstaerke — die haengt
+         * an CONFIG.serveVolume und wird getrennt behandelt.
+         *
+         * Wird GAR KEIN Ton erkannt, gilt der Aufschlag weiterhin als gueltig.
+         * Das ist Absicht: ein percussiver Einsatz ohne erkennbare Tonhoehe
+         * soll ausloesen duerfen, und eine strengere Regel haette in einem
+         * lauten Raum eine zweite Sperre eingebaut, die niemand sieht.
+         *
+         * @param   {AudioEngine} engine Eingang des Aufschlaegers
+         * @returns {boolean}
+         */
+        aufschlagTonPasst(engine) {
+            const hz = engine.smoothedPitch;
+            if (!(hz > 0)) return true;
+            /* Umfang des EINGANGS, nicht des Aufschlaegers — dieselbe
+               Unterscheidung wie in triggerServe(): im Arcade-Modus liest
+               serverAudio() bei Alex' Aufschlag Andreas Mikrofon. */
+            const player = (engine === this.audio2) ? PLAYER.ALEX : PLAYER.ANDREA;
+            const r = Physics.voiceRange(player);
+            const spielraum = Math.pow(2, CONFIG.aufschlagToleranzHalbtoene / 12);
+            return hz >= r.min / spielraum && hz <= r.max * spielraum;
+        }
+
+        /**
          * `currentX` auf das Spielfeld klemmen (äußere Seitenlinien).
          *
          * Wird die Linie erreicht, muss auch die Geschwindigkeit auf 0 — sonst
@@ -2295,7 +2367,20 @@
                 b.y = this.serveRestY();
 
                 if (match.state === STATE.SERVE_WAIT) {
-                    if (this.serverAudio().currentVolume >= CONFIG.serveVolume) {
+                    const ton = this.serverAudio();
+                    const passt = this.aufschlagTonPasst(ton);
+                    if (!passt && ton.currentVolume >= CONFIG.serveVolume
+                        && Date.now() - (this._tonAbgewiesen || 0) > 700) {
+                        /* Sichtbar machen, sonst sieht es aus wie ein Aufschlag,
+                           der einfach nicht reagiert — genau der Befund, den
+                           die Ampel schon einmal ausgeloest hat. */
+                        this._tonAbgewiesen = Date.now();
+                        Protokoll.schreib('AUFSCHLAG',
+                            `abgewiesen: ${Math.round(ton.smoothedPitch)} Hz liegt `
+                            + `mehr als ${CONFIG.aufschlagToleranzHalbtoene} Halbtoene `
+                            + `ausserhalb des Umfangs`);
+                    }
+                    if (passt && ton.currentVolume >= CONFIG.serveVolume) {
                         this.serveCharge++;
                         /* Siehe Physics.SERVE_CHARGE_FRAMES — nur eine Sperre
                            gegen einzelne Messspitzen, kein Durchhaltetest. */
@@ -3655,12 +3740,50 @@
             }
         }
 
+        /**
+         * Steckt ein Bildpunkt hinter dem GEMALTEN Netz?
+         *
+         * Buehnenbefund auf dem Sandplatz: "der Ball ist auch zu sehen, obwohl
+         * ihn eigentlich das Netz ein Stueckweit verdecken muesste."
+         *
+         * Der Grund ist der Aufbau: seit der Platz aus einem Bild kommt, zeichnet
+         * drawNet() gar nichts mehr — das Netz steckt im Hintergrund, und der
+         * Ball wird IMMER darueber gemalt. Zwischen Hintergrund und Ball laesst
+         * sich nichts einschieben, also muss der Ball an dieser Stelle
+         * weggelassen werden.
+         *
+         * Zwei Bedingungen, beide noetig:
+         *   1. Der Ball ist JENSEITS des Netzes (kleineres Welt-y). Diesseits
+         *      steht er vor dem Netz und gehoert sichtbar.
+         *   2. Sein Bildpunkt faellt in das gemessene Netzband.
+         *
+         * Gerechnet wird in virtuellen Koordinaten, deshalb die Ruecktransfor-
+         * mation aus dem Bildschirmpunkt: das Band ist am Bild eingemessen und
+         * nicht an der Kamera — auf dem Sandplatz laufen beide ohnehin
+         * auseinander (siehe Uebergabeprotokoll).
+         *
+         * @param   {number} weltY Welt-Y des Balls
+         * @param   {ScreenPoint} p Projizierter Punkt
+         * @returns {boolean}
+         */
+        netzVerdeckt(weltY, p) {
+            const n = PLATZ.netz;
+            if (!n || weltY >= COURT_MID_Y) return false;
+            const vx = (p.x - this.viewport.offsetX) / this.viewport.scale;
+            const vy = (p.y - this.viewport.offsetY) / this.viewport.scale;
+            return vy >= n.oben(vx) && vy <= n.unten;
+        }
+
         /** @param {Ball} ball */
         drawBall(ball) {
             const ctx = this.ctx;
 
             /* Schatten am Boden — schrumpft mit zunehmender Flughöhe. */
             const ground = this.proj.project(ball.x, ball.y, 0, this._p1);
+            /* Der Schatten liegt am Boden und steckt genauso hinter dem Netz
+               wie der Ball selbst — er wird deshalb getrennt geprueft. */
+            const schattenSichtbar = !this.netzVerdeckt(ball.y, ground);
+            if (schattenSichtbar) {
             const shadowRadius = Math.max(2, ball.radius - (ball.z * 0.15));
             ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
             ctx.beginPath();
@@ -3671,9 +3794,11 @@
                 0, 0, Math.PI * 2
             );
             ctx.fill();
+            }
 
             /* Ball auf Flughöhe. */
             const air = this.proj.project(ball.x, ball.y, ball.z, this._p2);
+            if (this.netzVerdeckt(ball.y, air)) return;
             if (this.assets.isReady('ball')) {
                 this.blitWorldSprite('ball', air, ball.radius * 2, true);
                 return;
@@ -6694,6 +6819,10 @@
         Renderer.PITCH_NOTE_Y_HIGH = PLATZ.notenHoch;
         Renderer.KEYS_Y_NEAR = PLATZ.tastenNah;
         Renderer.KEYS_Y_FAR = PLATZ.tastenFern;
+
+        /* Bauchbinde je Platz — auf Sand oben links statt unten links. */
+        Renderer.HUD_X = PLATZ.hudX;
+        Renderer.HUD_Y = PLATZ.hudY;
 
         /* Figurengroesse: reine Optik, deshalb hier und nicht in der Welt. */
         Renderer.BODY_HEIGHT = 118 * PLATZ.figur;
