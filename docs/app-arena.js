@@ -1927,31 +1927,6 @@
         }
 
         /**
-         * Beide Figuren zur Aufschlagposition GEHEN lassen.
-         *
-         * Bühnenbefund: "Andrea blieb für ihren eigenen Aufschlag an ihrer
-         * letzten Position des Ballwechsels zuvor stehen." Richtig — sie blieb
-         * ueberall stehen, auch dort, wo sie es nicht sollte.
-         *
-         * Der urspruengliche Wunsch war "erst dann hin, wenn der Aufschlag
-         * tatsaechlich erfolgt", und dabei ist der Sprung ganz entfallen. Das
-         * ist die Mitte zwischen beiden: waehrend Punktanzeige und Bumper
-         * bleibt sie stehen (dort stoerte der Sprung), und mit dem Beginn der
-         * Ruhephase GEHT sie in Position — sichtbar, gedaempft, waehrend der
-         * Countdown laeuft. Ein Sprung ist es nicht mehr, ein Stehenbleiben
-         * aber auch nicht.
-         *
-         * Bewusst dieselbe Daempfung wie im Ballwechsel: eine Figur, die sich
-         * zwischendurch anders bewegt, faellt sofort auf.
-         */
-        gehZumAufschlag() {
-            this.targetX = VIRTUAL_WIDTH / 2;
-            this.alexTargetX = VIRTUAL_WIDTH / 2;
-            this.glideToTarget();
-            this.glideAlexToTarget();
-        }
-
-        /**
          * X-Position der Figur, die gerade aufschlägt.
          * @returns {number} Weltkoordinate
          */
@@ -3764,7 +3739,17 @@
         drawPlayers(scene) {
             const match = scene.match;
 
-            let andreaScale = 1, alexScale = 1;
+            /* Die Groesse bleibt fest — siehe Renderer.HEAD_SCALE. Bis
+               ARENA-6 wuchs hier der Gewinner um 30 % und die Verliererin
+               schrumpfte um 15 %, jeweils mit dem ganzen Koerper. Beides ist
+               entfallen: die Koepfe stehen dauerhaft auf der Groesse des
+               Gewinners, und auf einen Punkt reagiert nur noch das Gesicht.
+
+               Der Wert 1 wird trotzdem durchgereicht statt den Parameter zu
+               streichen: drawPlayer() rechnet ihn in dieselbe Skalierung wie
+               Tiefe und Letterbox ein, und dort soll die Kette vollstaendig
+               bleiben. */
+            const andreaScale = 1, alexScale = 1;
             let andreaEmotion = 'neutral', alexEmotion = 'neutral';
             let andreaY = 0, alexY = 0;
 
@@ -3772,15 +3757,14 @@
                 const elapsed = match.elapsed();
                 const ease = Math.min(1, elapsed / 500);
                 const showEmotion = elapsed > 300;
+                /* Das Einsacken der Verliererin bleibt: es ist eine POSITION,
+                   keine Groesse, und traegt die Enttaeuschung, seit das
+                   Schrumpfen weg ist. */
                 if (match.lastWinner === PLAYER.ANDREA) {
-                    andreaScale = 1 + (0.3 * ease);
-                    alexScale = 1 - (0.15 * ease);
                     andreaEmotion = showEmotion ? 'win' : 'neutral';
                     alexEmotion = showEmotion ? 'lose' : 'neutral';
                     alexY = 20 * ease;
                 } else {
-                    alexScale = 1 + (0.3 * ease);
-                    andreaScale = 1 - (0.15 * ease);
                     alexEmotion = showEmotion ? 'win' : 'neutral';
                     andreaEmotion = showEmotion ? 'lose' : 'neutral';
                     andreaY = 20 * ease;
@@ -5033,6 +5017,26 @@
      */
     Renderer.UMPIRE_SCALE = 1.5;
 
+    /**
+     * Fester Groessenfaktor auf die Koepfe BEIDER Spielfiguren.
+     *
+     * 1.3 ist kein neuer Wert, sondern genau der, mit dem bisher der GEWINNER
+     * eines Punktes kurz aufblies (1 + 0.3). Er gilt jetzt dauerhaft und fuer
+     * beide: die Koepfe haben immer die Groesse des Kopfes, der gerade
+     * gepunktet hat.
+     *
+     * Damit entfaellt die Groessenanimation ersatzlos. Sie war das einzige,
+     * was den Kopf ueberhaupt in der Groesse veraenderte — beim Punkt wuchs
+     * die eine Figur um 30 %, die andere schrumpfte um 15 %, und zwar samt
+     * Koerper. Uebrig bleibt als Reaktion auf einen Punkt der
+     * GESICHTSAUSDRUCK, und nur der.
+     *
+     * Wirkt NUR auf den Kopf, nicht auf den Koerper: HEAD_BOX geht allein in
+     * die Kopfeinpassung, BODY_HEIGHT bleibt unberuehrt. Der Bobblehead-Look
+     * ist damit Absicht und nicht Nebenwirkung.
+     */
+    Renderer.HEAD_SCALE = 1.3;
+
     /** Tiefe des Zuschauerblocks in Weltkoordinaten. */
     Renderer.CROWD_DEPTH = 150;
     /** Anzahl der Zuschauerreihen. */
@@ -5755,6 +5759,10 @@
 
         /** Einmalige Initialisierung: Assets, Canvas, Hotkeys, UI. */
         boot() {
+            /* Einmal setzen, bevor irgendetwas gezeichnet wird. HEAD_BOX steht
+               sonst auf seinen Literalwerten, bis im Onboarding ein Platz
+               gewaehlt wird — die Koepfe waeren bis dahin ohne HEAD_SCALE. */
+            setzePlatz(PLATZ_NAMEN[0]);
             this.assets.loadAll();
             this.input.attach();
 
@@ -6255,10 +6263,10 @@
             switch (match.state) {
                 /* --- GESCHÜTZT: 3 Sekunden absolute Ruhe ---------------------- */
                 case STATE.SILENCE_CHECK:
-                    /* In Position GEHEN, nicht springen — siehe
-                       gehZumAufschlag(). Die zwei Sekunden Countdown sind
-                       genau das Fenster dafuer. */
-                    this.physics.gehZumAufschlag();
+                    /* Nur noch festhalten. Versetzt wurde bereits in der
+                       Jingle-Blende, wo es niemand sieht — waehrend des
+                       Countdowns darf sich nichts mehr bewegen. */
+                    this.physics.haltWoSieSind();
                     /* Im Duell muss es an BEIDEN Mikrofonen still sein — sonst
                        hält der eine Spieler die Ruhe und der andere redet sie
                        kaputt, ohne dass man sähe, woran es liegt. */
@@ -6412,6 +6420,28 @@
                 case STATE.TRANSITION: {
                     const prog = match.elapsed() / TIMING.TRANSITION_MS;
                     if (prog > 0.2 && !match.transitionResetDone) {
+                        /* HIER, und nur hier, gehen beide Figuren zurueck in
+                           die Mitte — im dunkelsten Frame der Jingle-Blende.
+                           Zwei Dinge treffen an dieser Stelle zusammen, beide
+                           nachgerechnet und nicht geschaetzt:
+                             - drawPlayers() zeichnet die Figuren zwischen
+                               prog 0.1 und 0.3 ueberhaupt nicht (300..900 ms),
+                             - drawDimOverlay() ist bei prog 0.2 auf alpha 1.0,
+                               das Bild ist also vollstaendig schwarz.
+                           Das Zuruecksetzen ist damit doppelt unsichtbar.
+
+                           Vorgeschichte in zwei Schritten: erst sprang die
+                           Figur hier sichtbar (ARENA-4 nahm den Sprung ganz
+                           heraus), dann rutschte sie beim Countdown sichtbar
+                           zurueck (ARENA-5). Beides war zu spaet — waehrend
+                           des Countdowns schaut das Publikum bereits auf den
+                           Platz.
+
+                           REIHENFOLGE ZWINGEND: erst versetzen, dann
+                           prepareServe(). Das legt den Ball an `currentX` ab;
+                           umgekehrt klebte er an der alten Position. */
+                        this.physics.haltAt();
+                        this.physics.haltAlexAt();
                         this.physics.prepareServe();
                         match.transitionResetDone = true;
                     }
@@ -6601,8 +6631,8 @@
 
         /* Figurengroesse: reine Optik, deshalb hier und nicht in der Welt. */
         Renderer.BODY_HEIGHT = 118 * PLATZ.figur;
-        HEAD_BOX.width = 72 * PLATZ.figur;
-        HEAD_BOX.height = 76 * PLATZ.figur;
+        HEAD_BOX.width = 72 * PLATZ.figur * Renderer.HEAD_SCALE;
+        HEAD_BOX.height = 76 * PLATZ.figur * Renderer.HEAD_SCALE;
 
         console.info(`[Karaokovic] Platz: ${PLATZ.name}`);
     }
