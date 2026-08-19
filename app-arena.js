@@ -100,6 +100,11 @@
         mode: 'ARCADE',
 
         volumeGate: 0.02,
+        /* Faktor, mit dem die Ruhegrenze ueber dem gemessenen Raumpegel
+           liegt. 1.6 ist gut ein Drittel lauter als das Rauschen und immer
+           noch klar unter einem gesungenen Ton — sofern der Eingang Reserve
+           hat. Siehe Game.stilleGrenze(). */
+        stilleFaktor: 1.6,
 
         /* ---------------------------------------------------------------------
          * Drei GETRENNTE Schwellen statt einer.
@@ -4772,6 +4777,26 @@
                Klecks. */
             this.gothicText(String(count), p.x, p.y + offset, p.scale * bounce);
             ctx.restore();
+
+            /* Haengt die Ruhepruefung, muss es IM BILD stehen. Ein Countdown,
+               der bei 2 klebt, sieht aus wie ein eingefrorenes Spiel — der
+               Operator soll wissen, dass es der Raum ist und nicht der
+               Rechner. */
+            if (scene && scene.ruheHaengt) {
+                ctx.save();
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = this.font(30 * p.scale, 'bold');
+                ctx.fillStyle = Renderer.METER_BAD;
+                const y = p.y + size * 0.75;
+                ctx.fillText('RAUM ZU LAUT — ES BRAUCHT RUHE', p.x, y);
+                ctx.font = this.font(20 * p.scale, 'normal');
+                ctx.fillText(
+                    `Raumpegel ${(scene.raumpegel || 0).toFixed(3)}`
+                    + '   ·   Alt+Shift+A schlägt trotzdem auf',
+                    p.x, y + 30 * p.scale);
+                ctx.restore();
+            }
         }
 
         /**
@@ -5589,6 +5614,15 @@
                Session zaehlt: was passiert ist, liegt danach auf der Platte und
                nicht nur im Arbeitsspeicher eines Browsers, den gleich jemand
                schliesst. */
+            /* Notausgang: Aufschlag erzwingen. Auf einer Aufzeichnung ist ein
+               Spiel, das nicht weitergeht, teurer als ein Aufschlag, der eine
+               Sekunde zu frueh kommt. */
+            if (e.code === 'KeyA') {
+                e.preventDefault();
+                this.erzwingeAufschlag();
+                return;
+            }
+
             if (e.code === 'KeyL') {
                 e.preventDefault();
                 const text = Protokoll.text();
@@ -5601,6 +5635,26 @@
                 URL.revokeObjectURL(url);
                 console.info(`[Operator] Protokoll gesichert (${Protokoll.zeilen.length} Zeilen).`);
             }
+        }
+
+        /**
+         * Aufschlag von Hand ausloesen (Operator-Hotkey Alt+Shift+A).
+         *
+         * Notausgang fuer einen zu lauten Raum: liegt das Geraeusch auf der
+         * Hoehe des Gesangs, wird die Ruhepruefung nie fertig, und das Spiel
+         * steht. Auf einer Aufzeichnung ist ein Aufschlag zur Unzeit billiger
+         * als ein Stillstand.
+         *
+         * Geht bewusst ueber triggerServe() und nicht ueber einen gefaelschten
+         * Pegel: der Ball soll dorthin fliegen, wohin zuletzt gesungen wurde,
+         * genau wie bei einem regulaeren Aufschlag.
+         */
+        erzwingeAufschlag() {
+            if (this.match.state !== STATE.SILENCE_CHECK
+                && this.match.state !== STATE.SERVE_WAIT) return;
+            this.physics.triggerServe();
+            Protokoll.schreib('OPERATOR', 'Aufschlag von Hand erzwungen');
+            console.info('[Operator] Aufschlag erzwungen.');
         }
 
         /** Nach einem Eingriff sauber in die Ruhe-Phase zurückkehren. */
@@ -5708,7 +5762,7 @@
             this.handleResize();
 
             this.bindOnboarding();
-            console.info('[Karaokovic] ARENA-1 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset, Alt+Shift+L = Protokoll.');
+            console.info('[Karaokovic] ARENA-1 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset, Alt+Shift+A = Aufschlag erzwingen, Alt+Shift+L = Protokoll.');
         }
 
         /** Canvasgröße nachziehen; im Ruhezustand den Aufschlag neu aufbauen. */
@@ -6017,6 +6071,48 @@
          *
          * @returns {number} RMS
          */
+        /**
+         * Gemessener Raumpegel: das 20. Perzentil der letzten drei Sekunden.
+         *
+         * Perzentil und nicht Mittelwert oder Minimum: der Mittelwert wird von
+         * jedem gesungenen Ton hochgezogen, das Minimum von einer einzigen
+         * stillen Messung heruntergerissen. Das untere Fuenftel beschreibt das,
+         * was der Raum OHNE Zutun macht.
+         *
+         * @returns {number} RMS
+         */
+        raumpegel() {
+            const r = this._pegelRing;
+            if (!r || r.length < 30) return 0;
+            const s = r.slice().sort((a, b) => a - b);
+            return s[Math.floor(s.length * 0.2)];
+        }
+
+        /**
+         * Ab welchem Pegel die Ruhe als gebrochen gilt.
+         *
+         * BUEHNENBEFUND, aus dem Protokoll gerechnet: in einer Session lag das
+         * Raumgeraeusch bei einem Median von 0.025, waehrend die Aufschlaege
+         * mit 0.023 bis 0.027 kamen — Rauschen und Gesang waren gleich laut.
+         * Gegen die feste Grenze von 0.020 hiess das: die Ruhepruefung konnte
+         * NIE fertig werden, das Spiel hing 42 Sekunden fest.
+         *
+         * Die Grenze waechst deshalb mit dem Raum mit. Sie sinkt aber NIE unter
+         * den eingestellten Wert — in einem ruhigen Studio bleibt alles exakt
+         * wie bisher, und niemand bekommt durch die Hintertuer eine laschere
+         * Pruefung.
+         *
+         * Das ersetzt keinen sauberen Eingang: liegt der Gesang auf dem Pegel
+         * des Raums, kann keine Schwelle beides trennen. Es verhindert nur,
+         * dass daraus ein Stillstand wird.
+         *
+         * @returns {number} RMS
+         */
+        stilleGrenze() {
+            return Math.max(CONFIG.volumeGate,
+                this.raumpegel() * CONFIG.stilleFaktor);
+        }
+
         loudestVolume() {
             if (CONFIG.mode !== MODE.VERSUS || !this.audio2.analyser) {
                 return this.audio.currentVolume;
@@ -6053,6 +6149,11 @@
             try {
                 const result = this.audio.analyse();
 
+                /* Raumpegel mitschreiben: 180 Messungen = drei Sekunden. */
+                if (!this._pegelRing) this._pegelRing = [];
+                this._pegelRing.push(this.loudestVolume());
+                if (this._pegelRing.length > 180) this._pegelRing.shift();
+
                 /* Zweiter Eingang nur im Duell — im Arcade-Modus hat diese
                    Instanz keinen Audiograph, `analyse()` würde werfen. */
                 let result2 = null;
@@ -6087,6 +6188,8 @@
                     }
 
                     this._scene.andreaX = this.physics.currentX;
+                    this._scene.ruheHaengt = !!this.ruheHaengt;
+                    this._scene.raumpegel = this.raumpegel();
                     this.renderer.render(this._scene);
                 }
             } catch (err) {
@@ -6159,7 +6262,8 @@
                     /* Im Duell muss es an BEIDEN Mikrofonen still sein — sonst
                        hält der eine Spieler die Ruhe und der andere redet sie
                        kaputt, ohne dass man sähe, woran es liegt. */
-                    if (this.loudestVolume() >= CONFIG.volumeGate) {
+                    const grenze = this.stilleGrenze();
+                    if (this.loudestVolume() >= grenze) {
                         /* GENAU diese Zeile beantwortet den Befund "sie schlug
                            nicht auf": jeder Ruecksetzer mit dem Pegel, der ihn
                            ausgeloest hat. Gedrosselt auf zehn pro Sekunde,
@@ -6169,13 +6273,32 @@
                             this._letzterRuheLog = jetzt;
                             Protokoll.schreib('RUHE',
                                 `zurueckgesetzt, Pegel ${this.loudestVolume().toFixed(3)}`
-                                + ` (Grenze ${CONFIG.volumeGate})`);
+                                + ` (Grenze ${grenze.toFixed(3)}, Raum `
+                                + `${this.raumpegel().toFixed(3)})`);
                         }
                         match.resetSilenceTimer();
                     }
+                    /* Steckt die Ruhepruefung fest, ist das auf einer
+                       Aufzeichnung der teuerste Zustand ueberhaupt: das Spiel
+                       sieht heil aus und geht trotzdem nicht weiter. Nach acht
+                       Sekunden steht es deshalb im Bild UND im Protokoll. */
+                    this._ruheSeit = this._ruheSeit || Date.now();
+                    const haengt = Date.now() - this._ruheSeit > 8000;
+                    if (haengt && !this._ruheGemeldet) {
+                        this._ruheGemeldet = true;
+                        Protokoll.schreib('WARNUNG',
+                            `Ruhe seit 8 s nicht erreicht — Raumpegel `
+                            + `${this.raumpegel().toFixed(3)}, Grenze `
+                            + `${grenze.toFixed(3)}. Eingang zu leise oder Raum zu laut.`);
+                    }
+                    this.ruheHaengt = haengt;
+
                     if (match.isSilenceComplete()) {
                         match.state = STATE.SERVE_WAIT;
                         this.physics.serveCharge = 0;
+                        this._ruheSeit = null;
+                        this._ruheGemeldet = false;
+                        this.ruheHaengt = false;
                     }
                     break;
 
