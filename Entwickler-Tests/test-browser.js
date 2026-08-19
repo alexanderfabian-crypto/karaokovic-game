@@ -798,6 +798,61 @@ class Browser {
                 schiri.andere);
         }
 
+        /* --- 9c. Bauchbinde nur im Match --------------------------------- *
+         * Gemessen wird wieder das GEZEICHNETE BILD und nicht die Absicht:
+         * ein Bildpunkt mitten im Kasten, einmal im Einspielen und einmal im
+         * Match. Sind beide gleich, wird dort nichts gezeichnet — oder in
+         * beiden Faellen dasselbe, was genauso falsch waere.
+         *
+         * Dazu die Gegenprobe, dass die Klaviatur im Einspielen NICHT mit
+         * verschwunden ist: sie haengt am selben Aufruf wie die Bauchbinde,
+         * und genau deshalb ist sie beim Ausbau leicht zu verlieren.
+         * ---------------------------------------------------------------- */
+        const binde = await b.werteAus(`(async () => {
+            const K = window.KARAOKOVIC, R = K.renderer;
+            if (!K.platz || !K.platz.hudX) return { arena: false };
+
+            const p = R.viewport.toScreen(K.platz.hudX + 40, K.platz.hudY + 20, {});
+            const lies = () => {
+                const d = R.ctx.getImageData(Math.round(p.x), Math.round(p.y), 1, 1).data;
+                return d[0] + ',' + d[1] + ',' + d[2];
+            };
+            const frame = () => new Promise(r => requestAnimationFrame(r));
+
+            /* Einen Ton anlegen, damit die Klaviatur ueberhaupt etwas zeigt —
+               sie leuchtet nur die getroffene Taste. */
+            K.audio.livePitch = 200;
+            K.audio.heldPitch = 200;
+            K.audio.heldPitchAt = Date.now();
+
+            let tasteGesehen = false;
+            const echt = R.drawKeyboards.bind(R);
+            R.drawKeyboards = function (...a) { tasteGesehen = true; return echt(...a); };
+
+            await frame();
+            const imEinspielen = lies();
+            const tasteImEinspielen = tasteGesehen;
+
+            tasteGesehen = false;
+            K.match.startMatch();
+            await frame();
+            const imMatch = lies();
+            const tasteImMatch = tasteGesehen;
+
+            R.drawKeyboards = echt;
+            return { arena: true, imEinspielen, imMatch,
+                     tasteImEinspielen, tasteImMatch };
+        })()`);
+        if (binde.arena) {
+            check('Im Einspielen steht keine Bauchbinde, im Match schon',
+                binde.imEinspielen !== binde.imMatch,
+                `Einspielen RGB ${binde.imEinspielen}, Match RGB ${binde.imMatch}`);
+            check('Die Klaviatur bleibt im Einspielen erhalten',
+                binde.tasteImEinspielen === true);
+            check('Und im Match wird sie nicht gezeichnet',
+                binde.tasteImMatch === false);
+        }
+
         /* --- 10. Nichts ist unterwegs geflogen -------------------------- */
         check('Keine Exception und kein console.error während des Laufs',
             b.fehler.length === 0, b.fehler.join(' | ') || 'sauber');

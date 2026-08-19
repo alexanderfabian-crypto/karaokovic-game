@@ -4070,6 +4070,26 @@
          * @param {MatchState} match
          */
         drawHud(match, audio, audio2) {
+            /* IM EINSPIELEN STEHT HIER NICHTS.
+             *
+             * Die Bauchbinde ist die Anzeige des MATCHES. Im Einspielen wird
+             * nicht gezaehlt, und eine Anzeige an derselben Stelle liest sich
+             * fuer jeden im Raum wie ein Spielstand — auf dem Sandplatz seit
+             * ARENA-9 zusaetzlich prominent oben links. Damit ist die Position
+             * jetzt eindeutig: Bauchbinde sichtbar heisst, es zaehlt.
+             *
+             * Der Zaehler in match.warmupScore laeuft weiter mit. Er kostet
+             * nichts, ist geprueft (test-einspielen.js) und waere die Stelle,
+             * an der eine Einspiel-Anzeige wieder anzusetzen haette.
+             *
+             * Die Klaviatur haengt an DIESEM Aufruf und gehoert ausdruecklich
+             * ins Einspielen — sie ist dort die Tonhoehen-Rueckmeldung. Sie
+             * muss deshalb vor dem Ausstieg gezeichnet werden. */
+            if (match.isWarmup) {
+                this.drawKeyboards(audio, audio2);
+                return;
+            }
+
             const ctx = this.ctx;
             const p = this.viewport.toScreen(Renderer.HUD_X, Renderer.HUD_Y, this._p1);
             const s = p.scale;
@@ -4116,31 +4136,19 @@
 
             /* Alex oben, Andrea unten — dieselbe Reihenfolge wie in der
                Großanzeige (scoreLine liest sich "ALEX - ANDREA"). */
-            /* Im Einspielen steht hier der EINSPIEL-Zaehler, nicht der
-               Matchstand — und er ist als solcher erkennbar:
-
-                 - schlichte Zahlen statt 0/15/30/40. Tennis-Zaehlweise waere
-                   hier eine falsche Zusage; gezaehlt werden Ballwechsel.
-                 - Satzspalte auf "–", weil es im Einspielen keine Saetze gibt.
-                 - andere Farbe (Cyan statt Gelb).
-
-               Ohne diese Anzeige sah man beim Einspielen ueberhaupt nicht, ob
-               ein Ballwechsel gewonnen wurde: die Bauchbinde stand dauerhaft
-               auf 0:0, weil das Einspielen den Matchstand nicht beruehrt. */
-            const warmup = match.isWarmup;
+            /* Ab hier laeuft immer das Match — im Einspielen ist die Methode
+               oben schon ausgestiegen. */
             const rows = [
                 {
                     name: 'ALEX',
-                    sets: warmup ? '–' : String(match.sets.alex),
-                    points: warmup ? String(match.warmupScore.alex)
-                        : MatchState.tennisScore(match.score.alex, match.score.andrea),
+                    sets: String(match.sets.alex),
+                    points: MatchState.tennisScore(match.score.alex, match.score.andrea),
                     isServing: match.server === PLAYER.ALEX
                 },
                 {
                     name: 'ANDREA',
-                    sets: warmup ? '–' : String(match.sets.andrea),
-                    points: warmup ? String(match.warmupScore.andrea)
-                        : MatchState.tennisScore(match.score.andrea, match.score.alex),
+                    sets: String(match.sets.andrea),
+                    points: MatchState.tennisScore(match.score.andrea, match.score.alex),
                     isServing: match.server === PLAYER.ANDREA
                 }
             ];
@@ -4175,14 +4183,12 @@
                    einzelnen — in der Spaltendarstellung steht dort wie im
                    echten Tennis auf beiden Seiten 40, der Vorteil erscheint
                    als ADV in genau einer Zeile. */
-                ctx.fillStyle = warmup ? ACCENT_CYAN : ACCENT_YELLOW;
+                ctx.fillStyle = ACCENT_YELLOW;
                 ctx.font = this.font(Renderer.HUD_POINTS_SIZE * s, 'bold', Renderer.HUD_FONT);
                 ctx.fillText(row.points === 'DEUCE' ? '40' : row.points, pointsX, cy);
             }
 
             ctx.restore();
-
-            if (match.isWarmup) this.drawKeyboards(audio, audio2);
         }
 
         /* --------------------------------------------------------------------
