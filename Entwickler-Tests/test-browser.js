@@ -363,6 +363,59 @@ class Browser {
         check('Fehlweg nach einem Richtungswechsel bleibt unter 30 px',
             richtung.fehlweg < 30, `${richtung.fehlweg} px (war 50 px bei pitchSmooth 0.15)`);
 
+        /* --- 5b. Laufrichtung auf der ECHTEN Strecke, beide Figuren ------- *
+         * Der Test oben setzt targetX direkt. Damit umgeht er die Totzone aus
+         * Physics.ruhigesZiel(), die seit ARENA-4 dazwischenliegt — geprueft
+         * wurde also nicht der Weg, den das Spiel wirklich geht. Und die obere
+         * Figur (Spieler 2) kam ueberhaupt nicht vor.
+         *
+         * Hier laufen beide ueber genau die Kette, die auch im Spiel laeuft.
+         * Erwartung fuer beide gleich: hoeherer Ton = weiter rechts.
+         * ---------------------------------------------------------------- */
+        const echt = await b.werteAus(`(() => {
+            const K = window.KARAOKOVIC, P = K.physics;
+            const Ph = P.constructor;
+            if (typeof Ph.ruhigesZiel !== 'function') return { arena: false };
+
+            const lauf = (spieler) => {
+                const unten = spieler === K.PLAYER.ANDREA;
+                /* ZUERST auf dem Anfangston ankommen lassen. Ohne das startet
+                   die Figur in der Bildmitte, waehrend der tiefste Ton ganz
+                   links liegt — der Anlauf dorthin zaehlte als Rueckschritt,
+                   und der Test meldete einen Fehler, den es nicht gab. */
+                const anfang = P.freqToQuantizedX(110, spieler);
+                if (unten) { P.currentX = anfang; P.targetX = anfang; P.velocityX = 0; }
+                else { P.paddleAlex.x = anfang; P.alexTargetX = anfang; P.alexVelocityX = 0; }
+                const xs = [];
+                for (let i = 0; i < 90; i++) {
+                    /* Tonleiter ueber zwei Oktaven, aufwaerts. */
+                    const hz = 110 * Math.pow(2, (i / 89) * 2);
+                    const ziel = P.freqToQuantizedX(hz, spieler);
+                    if (unten) {
+                        P.targetX = Ph.ruhigesZiel(ziel, P.targetX, spieler);
+                        P.glideToTarget();
+                        xs.push(P.currentX);
+                    } else {
+                        P.alexTargetX = Ph.ruhigesZiel(ziel, P.alexTargetX, spieler);
+                        P.glideAlexToTarget();
+                        xs.push(P.paddleAlex.x);
+                    }
+                }
+                let rueck = 0;
+                for (let i = 1; i < xs.length; i++) if (xs[i] - xs[i-1] < -0.01) rueck++;
+                return { rueck, von: +xs[0].toFixed(1), bis: +xs[xs.length-1].toFixed(1) };
+            };
+            return { arena: true, unten: lauf(K.PLAYER.ANDREA), oben: lauf(K.PLAYER.ALEX) };
+        })()`);
+        if (echt.arena) {
+            check('Steigender Ton: untere Figur laeuft nur nach rechts (echte Strecke)',
+                echt.unten.rueck === 0 && echt.unten.bis > echt.unten.von,
+                `${echt.unten.rueck} Rueckschritte, ${echt.unten.von} -> ${echt.unten.bis}`);
+            check('Steigender Ton: obere Figur laeuft nur nach rechts (echte Strecke)',
+                echt.oben.rueck === 0 && echt.oben.bis > echt.oben.von,
+                `${echt.oben.rueck} Rueckschritte, ${echt.oben.von} -> ${echt.oben.bis}`);
+        }
+
         /* --- 6. Onboarding bis ins Einspielen ---------------------------- *
          * BEWUSST über die echten Knöpfe in ihrer echten Reihenfolge:
          * Modus -> Mikrofon -> tief -> hoch -> Bereich bestätigen -> Start.

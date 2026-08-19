@@ -911,6 +911,13 @@
                 /* Der Schiedsrichter. Lag seit jeher im Projekt und wurde von
                    nichts geladen — siehe Renderer.drawSchiedsrichter(). */
                 head_benni: 'Benni_Kopf.png',
+                /* RESERVIERT fuer weitere Gesichtsausdruecke. Leerer String =
+                   Slot da, Datei fehlt noch; geladen wird nichts, und
+                   assets.failed bleibt leer. Sobald hier Dateinamen stehen,
+                   greift resolveSchiriKopf() sie von selbst ab — es ist dann
+                   KEINE Codeaenderung mehr noetig, nur zwei Dateinamen. */
+                head_benni_punkt: '',
+                head_benni_ernst: '',
                 body_andrea: 'Beispiel Spieler unten.png',
                 body_alex: 'Beispiel Spieler oben.png',
 
@@ -1404,6 +1411,7 @@
          * @param {string} next Wert aus STATE.
          */
         setState(next) {
+            if (next !== this.state) Protokoll.schreib('ZUSTAND', `${this.state} -> ${next}`);
             this.state = next;
             this.stateTimer = Date.now();
         }
@@ -1914,6 +1922,31 @@
         }
 
         /**
+         * Beide Figuren zur Aufschlagposition GEHEN lassen.
+         *
+         * Bühnenbefund: "Andrea blieb für ihren eigenen Aufschlag an ihrer
+         * letzten Position des Ballwechsels zuvor stehen." Richtig — sie blieb
+         * ueberall stehen, auch dort, wo sie es nicht sollte.
+         *
+         * Der urspruengliche Wunsch war "erst dann hin, wenn der Aufschlag
+         * tatsaechlich erfolgt", und dabei ist der Sprung ganz entfallen. Das
+         * ist die Mitte zwischen beiden: waehrend Punktanzeige und Bumper
+         * bleibt sie stehen (dort stoerte der Sprung), und mit dem Beginn der
+         * Ruhephase GEHT sie in Position — sichtbar, gedaempft, waehrend der
+         * Countdown laeuft. Ein Sprung ist es nicht mehr, ein Stehenbleiben
+         * aber auch nicht.
+         *
+         * Bewusst dieselbe Daempfung wie im Ballwechsel: eine Figur, die sich
+         * zwischendurch anders bewegt, faellt sofort auf.
+         */
+        gehZumAufschlag() {
+            this.targetX = VIRTUAL_WIDTH / 2;
+            this.alexTargetX = VIRTUAL_WIDTH / 2;
+            this.glideToTarget();
+            this.glideAlexToTarget();
+        }
+
+        /**
          * X-Position der Figur, die gerade aufschlägt.
          * @returns {number} Weltkoordinate
          */
@@ -2268,6 +2301,10 @@
                         /* Siehe Physics.SERVE_CHARGE_FRAMES — nur eine Sperre
                            gegen einzelne Messspitzen, kein Durchhaltetest. */
                         if (this.serveCharge >= Physics.SERVE_CHARGE_FRAMES) {
+                            Protokoll.schreib('AUFSCHLAG',
+                                `${this.match.server}, Pegel `
+                                + `${this.serverAudio().currentVolume.toFixed(3)}`
+                                + `, Ton ${Math.round(this.serverAudio().smoothedPitch)} Hz`);
                             this.triggerServe();
                             this.serveCharge = 0;
                         }
@@ -2813,7 +2850,7 @@
             this.drawPitchIndicators(scene.audio);
             this.drawCrowd();
             this.drawStaff();
-            this.drawSchiedsrichter();
+            this.drawSchiedsrichter(scene.match);
             this.drawNet();
             this.drawBounceMarks(scene.bounceMarks);
             this.drawBall(scene.ball);
@@ -2842,7 +2879,7 @@
             /* Ganz zuletzt, damit die Werte auch unter der Abdunkelung und
                unter dem Bumper lesbar bleiben — sie sind ein Kontrollmittel
                für den Operator, kein Teil der Show. */
-            this.drawAudioDebug(scene.audio);
+            this.drawAudioDebug(scene.audio, scene.match);
 
             /* Ausblenden bewusst NACH dem Zeichnen — identische Optik zu V36. */
             scene.bounceMarks.fade();
@@ -3428,15 +3465,33 @@
          * Reihenfolge: nach dem Hintergrund, vor den Figuren. Er ist Kulisse,
          * kein Mitspieler, und darf im Zweifel verdeckt werden.
          */
-        drawSchiedsrichter() {
+        /**
+         * Welcher Benni-Kopf gerade gilt.
+         *
+         * Faellt immer auf 'head_benni' zurueck, solange die anderen Dateien
+         * fehlen — deshalb ist der Ausdruckswechsel schon jetzt verdrahtet und
+         * trotzdem folgenlos. Wer die Bilder liefert, muss nichts anfassen.
+         *
+         * @param   {MatchState} [match]
+         * @returns {string} Asset-Schluessel
+         */
+        resolveSchiriKopf(match) {
+            if (match && match.state === STATE.POINT_SCORED
+                && this.assets.isReady('head_benni_punkt')) {
+                return 'head_benni_punkt';
+            }
+            return 'head_benni';
+        }
+
+        drawSchiedsrichter(match) {
             const stuhl = PLATZ.schiedsrichter;
             if (!stuhl || !this.assets.isReady('head_benni')) return;
 
             const ctx = this.ctx;
-            const img = this.assets.get('head_benni');
+            const img = this.assets.get(this.resolveSchiriKopf(match));
             const p = this.viewport.toScreen(stuhl.x, stuhl.schulterY, this._p1);
 
-            const h = stuhl.kopfHoehe * p.scale;
+            const h = stuhl.kopfHoehe * Renderer.UMPIRE_SCALE * p.scale;
             const w = h * (img.naturalWidth / img.naturalHeight);
 
             ctx.save();
@@ -4367,7 +4422,7 @@
          * die Bauchbinde, beides übereinander wäre unlesbar gewesen.
          * @param {AudioEngine} [audio]
          */
-        drawAudioDebug(audio) {
+        drawAudioDebug(audio, match) {
             if (!audio) return;
 
             const ctx = this.ctx;
@@ -4396,7 +4451,40 @@
              * ausdrücklich erwünscht), sie steht dann aber an der Seitenlinie
              * an, und das soll man sehen.
              * ------------------------------------------------------------------ */
-            const lautGenug = audio.currentVolume > CONFIG.moveGate;
+            /* --- Was gerade VERLANGT ist ---------------------------------------
+             * BUEHNENBEFUND: "Andrea schlug gar nicht auf, erst beim dritten
+             * Ansingen — und ich war bei Hz und Vol im gruenen Bereich."
+             *
+             * Genau das war der Fehler, und zwar meiner: die Ampel zeigte
+             * immer dasselbe an, naemlich "das Spiel hoert dich" (ab
+             * moveGate = 0.015). Zum Aufschlagen muss man aber ZUERST zwei
+             * Sekunden UNTER volumeGate (0.020) bleiben. Wer der gruenen
+             * Anzeige folgte und weitersang, setzte die Ruhe-Uhr in jedem
+             * Frame zurueck — die Ampel forderte auf zu tun, was den Aufschlag
+             * verhindert.
+             *
+             * Die Ampel beantwortet deshalb jetzt die Frage des AUGENBLICKS:
+             *
+             *   Ruhephase   -> "bist du leise genug?"   gruen unter volumeGate
+             *   Aufschlag   -> "bist du laut genug?"    gruen ab serveVolume
+             *   Ballwechsel -> "hoert dich das Spiel?"  gruen ueber moveGate
+             *
+             * Dazu ein Wort im Klartext. Eine Farbe allein reicht nicht, wenn
+             * dieselbe Farbe je nach Zustand das Gegenteil bedeutet.
+             * ------------------------------------------------------------------ */
+            const zustand = match ? match.state : null;
+            let lautGenug, hinweis;
+            if (zustand === STATE.SILENCE_CHECK) {
+                lautGenug = audio.currentVolume < CONFIG.volumeGate;
+                hinweis = 'STILL';
+            } else if (zustand === STATE.SERVE_WAIT) {
+                lautGenug = audio.currentVolume >= CONFIG.serveVolume;
+                hinweis = 'JETZT SINGEN';
+            } else {
+                lautGenug = audio.currentVolume > CONFIG.moveGate;
+                hinweis = '';
+            }
+
             const umfang = Physics.voiceRange(PLAYER.ANDREA);
             const imUmfang = hz > 0 && hz >= umfang.min && hz <= umfang.max;
 
@@ -4413,7 +4501,7 @@
 
             ctx.fillStyle = lautGenug ? Renderer.METER_OK : Renderer.METER_BAD;
             ctx.fillText(
-                `VOL: ${audio.currentVolume.toFixed(3)}`,
+                `VOL: ${audio.currentVolume.toFixed(3)}${hinweis ? '  ' + hinweis : ''}`,
                 p.x - pad, p.y - pad
             );
             ctx.restore();
@@ -4910,6 +4998,15 @@
      * ein Kopf über dem Pult.
      */
     Renderer.UMPIRE_KOPF_UEBERLAPP = 4;
+
+    /**
+     * Gemeinsamer Groessenfaktor auf Bennis Kopf, ueber alle drei Plaetze.
+     *
+     * Als EIN Wert und nicht dreimal von Hand: die drei Koepfe wurden je Platz
+     * auf den gemalten Stuhl eingemessen, ihr VERHAELTNIS zueinander stimmt
+     * also. Wer an einer einzelnen Zahl dreht, zerlegt genau das.
+     */
+    Renderer.UMPIRE_SCALE = 1.5;
 
     /** Tiefe des Zuschauerblocks in Weltkoordinaten. */
     Renderer.CROWD_DEPTH = 150;
@@ -5485,6 +5582,24 @@
                 this.match.hardReset();
                 this.restartServe();
                 console.info('[Operator] Hard Reset');
+                return;
+            }
+
+            /* Protokoll als Datei herausziehen. Der eine Griff, der nach einer
+               Session zaehlt: was passiert ist, liegt danach auf der Platte und
+               nicht nur im Arbeitsspeicher eines Browsers, den gleich jemand
+               schliesst. */
+            if (e.code === 'KeyL') {
+                e.preventDefault();
+                const text = Protokoll.text();
+                const url = URL.createObjectURL(
+                    new Blob([text], { type: 'text/plain' }));
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'karaokovic-protokoll.txt';
+                a.click();
+                URL.revokeObjectURL(url);
+                console.info(`[Operator] Protokoll gesichert (${Protokoll.zeilen.length} Zeilen).`);
             }
         }
 
@@ -5593,7 +5708,7 @@
             this.handleResize();
 
             this.bindOnboarding();
-            console.info('[Karaokovic] ARENA-1 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset.');
+            console.info('[Karaokovic] ARENA-1 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset, Alt+Shift+L = Protokoll.');
         }
 
         /** Canvasgröße nachziehen; im Ruhezustand den Aufschlag neu aufbauen. */
@@ -6037,12 +6152,27 @@
             switch (match.state) {
                 /* --- GESCHÜTZT: 3 Sekunden absolute Ruhe ---------------------- */
                 case STATE.SILENCE_CHECK:
-                    /* Stehen bleiben, nicht in die Mitte springen. */
-                    this.physics.haltWoSieSind();
+                    /* In Position GEHEN, nicht springen — siehe
+                       gehZumAufschlag(). Die zwei Sekunden Countdown sind
+                       genau das Fenster dafuer. */
+                    this.physics.gehZumAufschlag();
                     /* Im Duell muss es an BEIDEN Mikrofonen still sein — sonst
                        hält der eine Spieler die Ruhe und der andere redet sie
                        kaputt, ohne dass man sähe, woran es liegt. */
-                    if (this.loudestVolume() >= CONFIG.volumeGate) match.resetSilenceTimer();
+                    if (this.loudestVolume() >= CONFIG.volumeGate) {
+                        /* GENAU diese Zeile beantwortet den Befund "sie schlug
+                           nicht auf": jeder Ruecksetzer mit dem Pegel, der ihn
+                           ausgeloest hat. Gedrosselt auf zehn pro Sekunde,
+                           sonst stuenden hier 60 Zeilen je Sekunde. */
+                        const jetzt = Date.now();
+                        if (jetzt - (this._letzterRuheLog || 0) > 100) {
+                            this._letzterRuheLog = jetzt;
+                            Protokoll.schreib('RUHE',
+                                `zurueckgesetzt, Pegel ${this.loudestVolume().toFixed(3)}`
+                                + ` (Grenze ${CONFIG.volumeGate})`);
+                        }
+                        match.resetSilenceTimer();
+                    }
                     if (match.isSilenceComplete()) {
                         match.state = STATE.SERVE_WAIT;
                         this.physics.serveCharge = 0;
@@ -6355,6 +6485,49 @@
     }
 
     /* =========================================================================
+     * PROTOKOLL
+     *
+     * Angefragt wurde "pruefe die letzten Logs" — und es gab keine. Das Spiel
+     * schrieb 15 Konsolenzeilen und sonst nichts: kein localStorage, keine
+     * Datei, keine Telemetrie. Was in einer Session passiert war, liess sich
+     * hinterher nur noch nachstellen, nicht nachlesen.
+     *
+     * Deshalb hier ein Ringspeicher im Arbeitsspeicher, den der Operator als
+     * Datei herausziehen kann (Alt+Shift+L). BEWUSST kein localStorage: auf der
+     * Buehnenmaschine will niemand wissen, ob der Browser gerade im privaten
+     * Modus laeuft oder wann er aufraeumt.
+     *
+     * Aufgezeichnet wird, was die bisherigen Buehnenbefunde beantwortet haette:
+     * Zustandswechsel, jeder Ruecksetzer der Ruhe-Uhr samt Pegel, jeder
+     * Aufschlag, jeder Punkt. Nicht jeder Frame — 60 Zeilen pro Sekunde liest
+     * niemand, und der Ringspeicher waere in einer Minute voll.
+     * ====================================================================== */
+
+    const Protokoll = {
+        /** @type {string[]} */
+        zeilen: [],
+        /** Mehr braucht es nicht: rund eine Stunde Betrieb bei dieser Dichte. */
+        MAX: 2000,
+        _start: Date.now(),
+
+        /**
+         * Eine Zeile aufzeichnen.
+         * @param {string} bereich Kurzes Schlagwort, z. B. 'ZUSTAND'
+         * @param {string} text
+         */
+        schreib(bereich, text) {
+            const s = ((Date.now() - this._start) / 1000).toFixed(1).padStart(7);
+            this.zeilen.push(`${s}s  ${bereich.padEnd(9)} ${text}`);
+            if (this.zeilen.length > this.MAX) this.zeilen.shift();
+        },
+
+        /** @returns {string} Das gesamte Protokoll als Text. */
+        text() {
+            return this.zeilen.join('\n');
+        },
+    };
+
+    /* =========================================================================
      * BOOTSTRAP
      * ====================================================================== */
 
@@ -6376,6 +6549,12 @@
        die Pause zwischen zwei Ballwechseln haengt daran, und sie soll
        gelesen und nicht geraten werden. */
     game.TIMING = TIMING;
+
+    /* Protokoll auch aus der Konsole erreichbar:
+         copy(window.KARAOKOVIC.protokoll())   -> in die Zwischenablage
+       Alt+Shift+L legt es als Datei ab. */
+    game.protokoll = () => Protokoll.text();
+    game.Protokoll = Protokoll;
 
     /* Feldgrenzen in Weltkoordinaten — damit sich die Physikgrenzen zur
        Kontrolle ueber das Platzbild legen lassen, ohne im Renderer zu
