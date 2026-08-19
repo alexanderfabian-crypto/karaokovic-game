@@ -1356,6 +1356,20 @@
         constructor() {
             /** @type {{andrea:number, alex:number}} Punkte im aktuellen Spiel. */
             this.score = { andrea: 0, alex: 0 };
+            /**
+             * @type {{andrea:number, alex:number}} Gewonnene Ballwechsel im
+             * EINSPIELEN.
+             *
+             * Bewusst ein eigener Zaehler und nicht `score`. Das Einspielen
+             * darf den Matchstand unter keinen Umstaenden beruehren — weder
+             * die Punkte noch die Saetze, das Aufschlagrecht oder die
+             * Undo-Historie. Sonst stuende beim Anpfiff ein Stand da, den es
+             * nie gab, und ein Undo koennte in die Probe zurueckspringen.
+             *
+             * Angezeigt wird er trotzdem: ohne Rueckmeldung sieht beim
+             * Einspielen niemand, ob ein Ballwechsel gewonnen wurde.
+             */
+            this.warmupScore = { andrea: 0, alex: 0 };
             /** @type {{andrea:number, alex:number}} Gewonnene Sätze. */
             this.sets = { andrea: 0, alex: 0 };
             /**
@@ -1405,6 +1419,7 @@
         startMatch() {
             this.phase = PHASE.MATCH;
             this.score = { andrea: 0, alex: 0 };
+            this.warmupScore = { andrea: 0, alex: 0 };
             this.sets = { andrea: 0, alex: 0 };
             this.history.length = 0;
             this.server = PLAYER.ANDREA;
@@ -1495,6 +1510,9 @@
                Bühne dieselben sind. */
             if (this.isWarmup) {
                 this.lastWinner = winner;
+                /* Nur der eigene Zaehler — siehe warmupScore. */
+                if (winner === PLAYER.ANDREA) this.warmupScore.andrea++;
+                else this.warmupScore.alex++;
                 this.setState(STATE.POINT_SCORED);
                 return;
             }
@@ -1536,6 +1554,7 @@
         /** Kompletter Reset auf 0:0 (Operator-Hotkey Alt+Shift+X). */
         hardReset() {
             this.score = { andrea: 0, alex: 0 };
+            this.warmupScore = { andrea: 0, alex: 0 };
             this.sets = { andrea: 0, alex: 0 };
             this.history.length = 0;
             this.currentWordIndex = 0;
@@ -2858,8 +2877,11 @@
 
             /* Ganz zuletzt, damit die Werte auch unter der Abdunkelung und
                unter dem Bumper lesbar bleiben — sie sind ein Kontrollmittel
-               für den Operator, kein Teil der Show. */
-            this.drawAudioDebug(scene.audio, scene.match);
+               für den Operator, kein Teil der Show. Standardmaessig AUS,
+               siehe Renderer.SHOW_AUDIO_METER. */
+            if (Renderer.SHOW_AUDIO_METER) {
+                this.drawAudioDebug(scene.audio, scene.match);
+            }
 
             /* Ausblenden bewusst NACH dem Zeichnen — identische Optik zu V36. */
             scene.bounceMarks.fade();
@@ -3969,17 +3991,31 @@
 
             /* Alex oben, Andrea unten — dieselbe Reihenfolge wie in der
                Großanzeige (scoreLine liest sich "ALEX - ANDREA"). */
+            /* Im Einspielen steht hier der EINSPIEL-Zaehler, nicht der
+               Matchstand — und er ist als solcher erkennbar:
+
+                 - schlichte Zahlen statt 0/15/30/40. Tennis-Zaehlweise waere
+                   hier eine falsche Zusage; gezaehlt werden Ballwechsel.
+                 - Satzspalte auf "–", weil es im Einspielen keine Saetze gibt.
+                 - andere Farbe (Cyan statt Gelb).
+
+               Ohne diese Anzeige sah man beim Einspielen ueberhaupt nicht, ob
+               ein Ballwechsel gewonnen wurde: die Bauchbinde stand dauerhaft
+               auf 0:0, weil das Einspielen den Matchstand nicht beruehrt. */
+            const warmup = match.isWarmup;
             const rows = [
                 {
                     name: 'ALEX',
-                    sets: match.sets.alex,
-                    points: MatchState.tennisScore(match.score.alex, match.score.andrea),
+                    sets: warmup ? '–' : String(match.sets.alex),
+                    points: warmup ? String(match.warmupScore.alex)
+                        : MatchState.tennisScore(match.score.alex, match.score.andrea),
                     isServing: match.server === PLAYER.ALEX
                 },
                 {
                     name: 'ANDREA',
-                    sets: match.sets.andrea,
-                    points: MatchState.tennisScore(match.score.andrea, match.score.alex),
+                    sets: warmup ? '–' : String(match.sets.andrea),
+                    points: warmup ? String(match.warmupScore.andrea)
+                        : MatchState.tennisScore(match.score.andrea, match.score.alex),
                     isServing: match.server === PLAYER.ANDREA
                 }
             ];
@@ -4008,13 +4044,13 @@
                 ctx.textAlign = 'right';
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
                 ctx.font = this.font(Renderer.HUD_SETS_SIZE * s, 'bold', Renderer.HUD_FONT);
-                ctx.fillText(String(row.sets), setsX, cy);
+                ctx.fillText(row.sets, setsX, cy);
 
                 /* "DEUCE" ist ein Zustand beider Spielerinnen, kein Wert einer
                    einzelnen — in der Spaltendarstellung steht dort wie im
                    echten Tennis auf beiden Seiten 40, der Vorteil erscheint
                    als ADV in genau einer Zeile. */
-                ctx.fillStyle = ACCENT_YELLOW;
+                ctx.fillStyle = warmup ? ACCENT_CYAN : ACCENT_YELLOW;
                 ctx.font = this.font(Renderer.HUD_POINTS_SIZE * s, 'bold', Renderer.HUD_FONT);
                 ctx.fillText(row.points === 'DEUCE' ? '40' : row.points, pointsX, cy);
             }
@@ -4680,10 +4716,14 @@
                 ctx.fillText(`"${match.currentWord()}"`, wordPos.x, wordPos.y);
             }
 
-            const scorePos = this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_TOP + 120, this._p2);
-            ctx.fillStyle = 'rgba(255, 255, 0, 0.5)';
-            ctx.font = this.font(90 * scorePos.scale);
-            ctx.fillText(scoreLine, scorePos.x, scorePos.y);
+            /* WAEHREND DER BLENDE STEHT KEIN PUNKTESTAND MEHR.
+               Hier lag der Stand in 90 px quer ueber dem Platz. Der Bumper ist
+               der Moment, in dem das Bild atmet und der naechste Ballwechsel
+               vorbereitet wird — die Zahl gehoert in die Bauchbinde, wo sie
+               ohnehin durchgehend steht, und nicht zusaetzlich hierher.
+               `scoreLine` bleibt als Parameter erhalten: drawPointBanner()
+               benutzt denselben Wert, und die Signatur ist Teil der
+               Aufrufkette in render(). */
         }
 
         /**
@@ -5438,6 +5478,21 @@
     /* Ampelfarben der Messanzeige unten rechts (siehe drawAudioDebug).
        Bewusst kein reines #00ff00/#ff0000: beide flimmern auf einer Bühnen-
        kamera und stechen gegen die Neon-Palette des Spiels heraus. */
+    /**
+     * Steht die Messanzeige unten rechts im Bild?
+     *
+     * AUS, weil sie im Bild nichts verloren hat: auf einer Aufzeichnung ist
+     * eine Diagnosezeile ein Fremdkoerper. GELOESCHT wird sie trotzdem nicht —
+     * genau diese Anzeige hat den Befund "sie schlug nicht auf" erklaert, und
+     * beim Einpegeln vor der Show ist sie das einzige Mittel, den Pegel gegen
+     * die Schwellen zu sehen.
+     *
+     * Alt+Shift+M schaltet sie um. Die Einstellung ueberlebt kein Neuladen,
+     * und das ist Absicht: so kann sie nach einer Probe nicht versehentlich
+     * an bleiben.
+     */
+    Renderer.SHOW_AUDIO_METER = false;
+
     Renderer.METER_OK = '#3ddc84';
     Renderer.METER_BAD = '#ff4d5e';
 
@@ -5627,6 +5682,17 @@
                 return;
             }
 
+            /* Messanzeige unten rechts ein- und ausschalten. */
+            if (e.code === 'KeyM') {
+                e.preventDefault();
+                Renderer.SHOW_AUDIO_METER = !Renderer.SHOW_AUDIO_METER;
+                Protokoll.schreib('OPERATOR',
+                    `Messanzeige ${Renderer.SHOW_AUDIO_METER ? 'an' : 'aus'}`);
+                console.info(`[Operator] Messanzeige `
+                    + `${Renderer.SHOW_AUDIO_METER ? 'eingeblendet' : 'ausgeblendet'}.`);
+                return;
+            }
+
             if (e.code === 'KeyL') {
                 e.preventDefault();
                 const text = Protokoll.text();
@@ -5770,7 +5836,7 @@
             this.handleResize();
 
             this.bindOnboarding();
-            console.info('[Karaokovic] ARENA-1 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset, Alt+Shift+A = Aufschlag erzwingen, Alt+Shift+L = Protokoll.');
+            console.info('[Karaokovic] ARENA-1 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset, Alt+Shift+A = Aufschlag erzwingen, Alt+Shift+M = Messanzeige, Alt+Shift+L = Protokoll.');
         }
 
         /** Canvasgröße nachziehen; im Ruhezustand den Aufschlag neu aufbauen. */
