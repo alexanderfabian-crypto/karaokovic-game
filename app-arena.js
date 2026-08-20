@@ -1610,8 +1610,15 @@
             this.history = [];
             /** @type {string} Aktueller Zustand, siehe STATE. */
             this.state = STATE.SILENCE_CHECK;
-            /** @type {number} Startzeitpunkt des aktuellen Zustands (ms). */
-            this.stateTimer = 0;
+            /**
+             * @type {number} Startzeitpunkt des aktuellen Zustands (ms).
+             *
+             * BEWUSST die Uhr und nicht 0: seit die Haenger-Erkennung der
+             * Ruhephase aus `elapsed()` liest, waere 0 gleichbedeutend mit
+             * "haengt seit Beginn der Zeitrechnung" — die Warnung stuende im
+             * ersten Frame im Bild.
+             */
+            this.stateTimer = Uhr.jetzt();
             /** @type {number} Referenzzeit der 3-Sekunden-Stille (ms). */
             this.silenceTimerStart = 0;
             /** @type {string} Gewinner des letzten Punktes. */
@@ -2293,7 +2300,12 @@
         triggerServe() {
             const b = this.ball;
             const servedByAndrea = this.match.server === PLAYER.ANDREA;
-            this.match.state = STATE.PLAYING;
+            /* Ueber setState(), nicht per Zuweisung: nur so steht der Uebergang
+               im Protokoll. Ausgerechnet die zwei Wechsel rund um den Aufschlag
+               (-> SERVE_WAIT, -> PLAYING) fehlten dort bisher — also genau in
+               dem Bereich, aus dem der Befund "sie schlug nicht auf"
+               ausgewertet wurde. */
+            this.match.setState(STATE.PLAYING);
             b.bounces = 0;
             b.lastHitter = this.match.server;
 
@@ -6876,7 +6888,7 @@
 
             switch (match.state) {
                 /* --- GESCHÜTZT: 3 Sekunden absolute Ruhe ---------------------- */
-                case STATE.SILENCE_CHECK:
+                case STATE.SILENCE_CHECK: {
                     /* Nur noch festhalten. Versetzt wurde bereits in der
                        Jingle-Blende, wo es niemand sieht — waehrend des
                        Countdowns darf sich nichts mehr bewegen. */
@@ -6903,10 +6915,25 @@
                     /* Steckt die Ruhepruefung fest, ist das auf einer
                        Aufzeichnung der teuerste Zustand ueberhaupt: das Spiel
                        sieht heil aus und geht trotzdem nicht weiter. Nach acht
-                       Sekunden steht es deshalb im Bild UND im Protokoll. */
-                    this._ruheSeit = this._ruheSeit || Date.now();
-                    const haengt = Date.now() - this._ruheSeit > 8000;
-                    if (haengt && !this._ruheGemeldet) {
+                       Sekunden steht es deshalb im Bild UND im Protokoll.
+                     *
+                     * GEMESSEN WIRD DIE ZEIT IM ZUSTAND, nicht auf einer
+                     * eigenen Uhr. Die eigene Uhr (`_ruheSeit`) wurde nur im
+                     * regulaeren Ausstieg zurueckgesetzt — nach einem
+                     * erzwungenen Aufschlag (Notausgang, Ctrl+Shift+A) blieb ihr alter
+                     * Zeitstempel stehen, und die NAECHSTE Ruhephase zeigte ab
+                     * dem ersten Frame "RAUM ZU LAUT", auch im stillen Studio.
+                     * `elapsed()` zaehlt ab Zustandseintritt und ueberlebt
+                     * damit jeden Ausstiegsweg; Voraussetzung dafuer ist, dass
+                     * ALLE Uebergaenge ueber setState() laufen.
+                     *
+                     * Der Merker setzt sich unter acht Sekunden von selbst
+                     * zurueck — ein spaeterer Haenger wird also wieder
+                     * gemeldet und nicht nur einmal pro Sitzung. */
+                    const haengt = match.elapsed() > Game.RUHE_WARNUNG_MS;
+                    if (!haengt) {
+                        this._ruheGemeldet = false;
+                    } else if (!this._ruheGemeldet) {
                         this._ruheGemeldet = true;
                         Protokoll.schreib('WARNUNG',
                             `Ruhe seit 8 s nicht erreicht — Raumpegel `
@@ -6916,14 +6943,12 @@
                     this.ruheHaengt = haengt;
 
                     if (match.isSilenceComplete()) {
-                        match.state = STATE.SERVE_WAIT;
+                        match.setState(STATE.SERVE_WAIT);
                         this.physics.serveCharge = 0;
-                        this._ruheSeit = null;
-                        this._ruheGemeldet = false;
                         this.ruheHaengt = false;
                     }
                     break;
-
+                }
                 case STATE.SERVE_WAIT:
                     this.physics.haltWoSieSind();
                     break;
@@ -7177,6 +7202,15 @@
 
     /** Anzeigedauer einer Kalibrierungs-Rückmeldung in Millisekunden. */
     Game.HINT_MS = 2500;
+
+    /**
+     * Nach so vielen Millisekunden ohne erreichte Ruhe wird gewarnt.
+     *
+     * Deutlich ueber TIMING.SILENCE_MS (2000), damit ein einzelner Huster die
+     * Warnung nicht ausloest: erst wenn die Uhr rund viermal zurueckgesetzt
+     * wurde, steht offensichtlich etwas Dauerhaftes im Raum.
+     */
+    Game.RUHE_WARNUNG_MS = 8000;
 
     /* -------------------------------------------------------------------------
      * Startdiagnose (siehe Game.messeBildrate / Game.messeAnalyse)
