@@ -1982,6 +1982,20 @@
              * holen, dann erst laufen.
              */
             this.serveMovementLock = false;
+            /**
+             * @type {{bis:number, zuHoch:boolean}} Laufende Abweisung des
+             * Aufschlagtons, fuer die Anzeige unter "AUFSCHLAG!".
+             *
+             * `bis` ist der Zeitpunkt, bis zu dem die Zeile stehen bleibt —
+             * ein kurzer Nachlauf, damit sie nicht im Takt der Messung
+             * flackert. `bis = 0` heisst: keine Abweisung.
+             *
+             * EIN festes Objekt, das nur beschrieben wird, statt eines neuen
+             * je Frame: waehrend jemand danebensingt liefe das sonst 60-mal
+             * je Sekunde. Dieselbe Ueberlegung wie beim Pegel- und beim
+             * Kalibrier-Ringspeicher.
+             */
+            this.abweisung = { bis: 0, zuHoch: false };
             /** @type {number} Schläge von Andrea im laufenden Ballwechsel. */
             this.rallyShots = 0;
 
@@ -2061,6 +2075,7 @@
             /* Sicherheitsnetz: ein neuer Ballwechsel beginnt nie gesperrt.
                Gesetzt wird die Sperre ausschließlich beim Aufschlag selbst. */
             this.serveMovementLock = false;
+            this.abweisung.bis = 0;
             this.bounceMarks.clear();
         }
 
@@ -2515,16 +2530,46 @@
                 if (match.state === STATE.SERVE_WAIT) {
                     const ton = this.serverAudio();
                     const passt = this.aufschlagTonPasst(ton);
-                    if (!passt && ton.currentVolume >= CONFIG.serveVolume
-                        && Date.now() - (this._tonAbgewiesen || 0) > 700) {
+                    if (!passt && ton.currentVolume >= CONFIG.serveVolume) {
                         /* Sichtbar machen, sonst sieht es aus wie ein Aufschlag,
                            der einfach nicht reagiert — genau der Befund, den
                            die Ampel schon einmal ausgeloest hat. */
-                        this._tonAbgewiesen = Date.now();
-                        Protokoll.schreib('AUFSCHLAG',
-                            `abgewiesen: ${Math.round(ton.smoothedPitch)} Hz liegt `
-                            + `mehr als ${CONFIG.aufschlagToleranzHalbtoene} Halbtoene `
-                            + `ausserhalb des Umfangs`);
+                        const spieler = (ton === this.audio2)
+                            ? PLAYER.ALEX : PLAYER.ANDREA;
+                        const r = Physics.voiceRange(spieler);
+                        const spielraum =
+                            Math.pow(2, CONFIG.aufschlagToleranzHalbtoene / 12);
+                        const hz = ton.smoothedPitch;
+                        const zuHoch = hz > r.max * spielraum;
+
+                        /* Fuer das Bild: der Grund steht unter "AUFSCHLAG!"
+                           (siehe Renderer.drawServePrompt), solange abgewiesen
+                           wird, plus Nachlauf gegen Flackern. */
+                        this.abweisung.bis = Uhr.jetzt() + Physics.ABWEISUNG_NACHLAUF_MS;
+                        this.abweisung.zuHoch = zuHoch;
+
+                        if (Uhr.jetzt() - (this._tonAbgewiesen || 0) > 700) {
+                            this._tonAbgewiesen = Uhr.jetzt();
+                            /* OKTAV-DIAGNOSE. Laege der Ton eine Oktave
+                               versetzt IM Umfang, ist mit hoher Sicherheit
+                               die KALIBRIERUNG oktavfalsch — genau der
+                               Buehnenausfall, der von Hand aus den
+                               2:1-Verhaeltnissen im Protokoll
+                               zurueckgerechnet werden musste. Ab jetzt steht
+                               die Diagnose da, statt sie herzuleiten. */
+                            const drin = (f) =>
+                                f >= r.min / spielraum && f <= r.max * spielraum;
+                            const oktav = drin(hz / 2) || drin(hz * 2);
+                            Protokoll.schreib('AUFSCHLAG',
+                                `abgewiesen: ${Math.round(hz)} Hz liegt mehr als `
+                                + `${CONFIG.aufschlagToleranzHalbtoene} Halbtoene `
+                                + `${zuHoch ? 'UEBER' : 'UNTER'} dem Umfang `
+                                + `(${Math.round(r.min)}-${Math.round(r.max)} Hz)`
+                                + (oktav ? ' — eine Oktave versetzt laege er IM '
+                                    + 'Umfang: vermutlich Oktavfehler in der '
+                                    + 'Kalibrierung, Umfang pruefen (UMFANG-Zeile)!'
+                                    : ''));
+                        }
                     }
                     if (passt && ton.currentVolume >= CONFIG.serveVolume) {
                         this.serveCharge++;
@@ -2918,6 +2963,14 @@
      */
     Physics.MISS_MARGIN_MIN = 135;
     Physics.MISS_MARGIN_MAX = 320;
+
+    /**
+     * Wie lange die Abweisungszeile nach der letzten Abweisung stehen bleibt.
+     *
+     * Ohne Nachlauf flackert sie im Takt der Messung: ein Ton pendelt um die
+     * Toleranzgrenze, und die Zeile ginge Frame fuer Frame an und aus.
+     */
+    Physics.ABWEISUNG_NACHLAUF_MS = 1200;
 
     /** Reaktionsverzögerung des Gegners beim Fehlgriff, in Frames (60 = 1 s). */
     Physics.MISS_REACTION_MIN = 6;
@@ -4899,6 +4952,26 @@
             ctx.strokeText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
             ctx.fillStyle = ACCENT_YELLOW;
             ctx.fillText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
+
+            /* Wird der Ton abgewiesen, steht der Grund darunter.
+               Ohne diese Zeile sieht eine Tonhoehen-Abweisung exakt so aus wie
+               ein Spiel, das nicht reagiert — der teuerste Fehleindruck, den
+               dieses Spiel auf einer Buehne erzeugen kann, und schon einmal
+               genau so gemeldet worden. */
+            const ab = scene.abweisung;
+            if (ab && Uhr.jetzt() < ab.bis) {
+                ctx.globalAlpha = 1;
+                ctx.font = this.font(Renderer.ABWEISUNG_SIZE * p.scale, 'bold');
+                const grund = ab.zuHoch
+                    ? 'TON ZU HOCH — TIEFER SINGEN'
+                    : 'TON ZU TIEF — HÖHER SINGEN';
+                const y2 = p.y + offset + size * 0.75;
+                ctx.lineWidth = 6 * p.scale;
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+                ctx.strokeText(grund, p.x, y2);
+                ctx.fillStyle = Renderer.METER_BAD;
+                ctx.fillText(grund, p.x, y2);
+            }
             ctx.restore();
         }
 
@@ -5831,6 +5904,13 @@
      */
     Renderer.BANNER_Y = PLAETZE.HART.horizont + PLAETZE.HART.spanne;
 
+    /**
+     * Schriftgroesse der Abweisungszeile unter "AUFSCHLAG!".
+     * Deutlich kleiner als die Aufforderung selbst: sie erklaert, sie ruft
+     * nicht. Gross genug bleibt sie durch die Farbe.
+     */
+    Renderer.ABWEISUNG_SIZE = 34;
+
     Renderer.SERVE_PROMPT_TEXT = 'AUFSCHLAG!';
     Renderer.SERVE_PROMPT_SIZE = 96;
     /** Dauer eines Pulses in Millisekunden. */
@@ -6563,6 +6643,7 @@
                     }
 
                     this._scene.andreaX = this.physics.currentX;
+                    this._scene.abweisung = this.physics.abweisung;
                     this._scene.ruheHaengt = !!this.ruheHaengt;
                     this._scene.raumpegel = this.raumpegel();
                     this.renderer.render(this._scene);
