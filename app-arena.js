@@ -3214,7 +3214,7 @@
                für den Operator, kein Teil der Show. Standardmaessig AUS,
                siehe Renderer.SHOW_AUDIO_METER. */
             if (Renderer.SHOW_AUDIO_METER) {
-                this.drawAudioDebug(scene.audio, scene.match);
+                this.drawAudioDebug(scene.audio, scene.match, scene.audio2);
             }
 
             /* Ausblenden bewusst NACH dem Zeichnen — identische Optik zu V36. */
@@ -4827,7 +4827,7 @@
          * die Bauchbinde, beides übereinander wäre unlesbar gewesen.
          * @param {AudioEngine} [audio]
          */
-        drawAudioDebug(audio, match) {
+        drawAudioDebug(audio, match, audio2) {
             if (!audio) return;
 
             const ctx = this.ctx;
@@ -4909,6 +4909,38 @@
                 `VOL: ${audio.currentVolume.toFixed(3)}${hinweis ? '  ' + hinweis : ''}`,
                 p.x - pad, p.y - pad
             );
+
+            /* --- Spieler 2 im Duell ---------------------------------------
+             * Bis hierher las die Anzeige fest den ERSTEN Eingang und Andreas
+             * Umfang. Das Werkzeug existiert aber genau fuer Befunde wie
+             * "Spieler 2 bewegt sich nicht" — mit nur einem Kanal im Bild
+             * diagnostiziert der Operator am falschen Mikrofon.
+             *
+             * Bewusst nur die zwei Grundfragen (im Umfang? hoerbar?). Der
+             * zustandsabhaengige Hinweis (STILL / JETZT SINGEN) bleibt bei
+             * Spieler 1: er haengt am Aufschlaeger, und ihn hier zu doppeln
+             * hiesse, ihn bei einem der beiden falsch anzuschreiben. Wer das
+             * ausbauen will, haengt ihn an Physics.serverAudio().
+             * -------------------------------------------------------------- */
+            if (CONFIG.mode === MODE.VERSUS && audio2) {
+                const hz2 = audio2.stablePitch;
+                const umfang2 = Physics.voiceRange(PLAYER.ALEX);
+                const imUmfang2 = hz2 > 0 && hz2 >= umfang2.min && hz2 <= umfang2.max;
+
+                ctx.fillStyle = imUmfang2 ? Renderer.METER_OK : Renderer.METER_BAD;
+                ctx.fillText(
+                    `P2 PITCH: ${hz2 > 0 ? Math.round(hz2) : '--'} Hz`,
+                    p.x - pad, p.y - pad - lineHeight * 3
+                );
+
+                ctx.fillStyle = audio2.currentVolume > CONFIG.moveGate
+                    ? Renderer.METER_OK : Renderer.METER_BAD;
+                ctx.fillText(
+                    `P2 VOL: ${audio2.currentVolume.toFixed(3)}`,
+                    p.x - pad, p.y - pad - lineHeight * 2
+                );
+            }
+
             ctx.restore();
         }
 
@@ -6016,6 +6048,11 @@
             this.physics = physics;
             this._onKeyDown = this.handleKeyDown.bind(this);
             this._onKeyUp = this.handleKeyUp.bind(this);
+            /* Als Feld und nicht anonym in attach(): sonst kann detach() ihn
+               nicht wieder abhaengen, und genau den schleichenden Zustand
+               soll detach() ja verhindern. Auf der Buehne folgenlos, in den
+               Entwickler-Tests nicht. */
+            this._onBlur = () => this._down.clear();
             /**
              * Welche Tasten gerade gedrückt sind. Nötig, weil der Anpfiff auf
              * eine KOMBINATION reagiert und `keydown` immer nur eine Taste
@@ -6032,13 +6069,14 @@
             /* Beim Fokusverlust alles vergessen: sonst gilt eine Taste, die
                außerhalb des Fensters losgelassen wurde, ewig als gedrückt und
                ein späterer einzelner Tastendruck pfeift das Match an. */
-            window.addEventListener('blur', () => this._down.clear());
+            window.addEventListener('blur', this._onBlur);
         }
 
         /** Listener entfernen (für Tests / sauberen Teardown). */
         detach() {
             window.removeEventListener('keydown', this._onKeyDown);
             window.removeEventListener('keyup', this._onKeyUp);
+            window.removeEventListener('blur', this._onBlur);
         }
 
         /** @param {KeyboardEvent} e */
