@@ -52,6 +52,31 @@
     'use strict';
 
     /* =========================================================================
+     * UHR
+     *
+     * Alle DAUERN in diesem File laufen ueber performance.now(), nicht ueber
+     * Date.now().
+     *
+     * Date.now() folgt der Wanduhr. Ein NTP-Abgleich oder eine Zeitumstellung
+     * mitten in der Show springt um Sekunden — und mit ihr springen Countdown,
+     * Ruhepruefung, Haltespeicher der Tonhoehe und die Jingle-Blende. Ein
+     * Sprung nach hinten haelt den Countdown an, einer nach vorn schneidet ihn
+     * ab; beides sieht aus wie ein Fehler im Spiel.
+     *
+     * performance.now() ist monoton, hat Millisekundenaufloesung und teilt
+     * seine Zeitbasis mit den Zeitstempeln von requestAnimationFrame — genau
+     * die, die FEATURES.FIXED_TIMESTEP bereits benutzt.
+     *
+     * WANDZEIT braucht dieses File nirgends: das Protokoll zaehlt relativ zum
+     * Start, und ein Datum wird nirgends ausgegeben. Wer spaeter eines
+     * braucht, nimmt dafuer ausdruecklich Date und nicht diese Uhr.
+     * ====================================================================== */
+    const Uhr = {
+        /** @returns {number} Millisekunden seit dem Laden der Seite. */
+        jetzt: () => performance.now(),
+    };
+
+    /* =========================================================================
      * 1. KONFIGURATION
      * ====================================================================== */
 
@@ -1229,7 +1254,7 @@
          */
         get stablePitch() {
             if (this.livePitch > 0) return this.livePitch;
-            if (this.heldPitch > 0 && Date.now() - this.heldPitchAt <= CONFIG.pitchHoldMs) {
+            if (this.heldPitch > 0 && Uhr.jetzt() - this.heldPitchAt <= CONFIG.pitchHoldMs) {
                 return this.heldPitch;
             }
             return 0;
@@ -1313,7 +1338,7 @@
 
             this.livePitch = freq;
             this.heldPitch = freq;
-            this.heldPitchAt = Date.now();
+            this.heldPitchAt = Uhr.jetzt();
             this._result.freq = freq;
             this._result.volume = rms;
             return this._result;
@@ -1479,26 +1504,26 @@
         setState(next) {
             if (next !== this.state) Protokoll.schreib('ZUSTAND', `${this.state} -> ${next}`);
             this.state = next;
-            this.stateTimer = Date.now();
+            this.stateTimer = Uhr.jetzt();
         }
 
         /**
          * Millisekunden seit Beginn des aktuellen Zustands.
          * @returns {number}
          */
-        elapsed() { return Date.now() - this.stateTimer; }
+        elapsed() { return Uhr.jetzt() - this.stateTimer; }
 
         /**
          * ### GESCHÜTZT — 3-Sekunden-Stille ###
          * Setzt die Stille-Referenzzeit zurück (jedes Geräusch über dem Gate).
          */
-        resetSilenceTimer() { this.silenceTimerStart = Date.now(); }
+        resetSilenceTimer() { this.silenceTimerStart = Uhr.jetzt(); }
 
         /**
          * @returns {boolean} true, wenn 3000 ms ununterbrochene Ruhe erreicht sind.
          */
         isSilenceComplete() {
-            return Date.now() - this.silenceTimerStart >= TIMING.SILENCE_MS;
+            return Uhr.jetzt() - this.silenceTimerStart >= TIMING.SILENCE_MS;
         }
 
         /**
@@ -1506,7 +1531,7 @@
          * @returns {number}
          */
         silenceCountdown() {
-            const left = TIMING.SILENCE_MS - (Date.now() - this.silenceTimerStart);
+            const left = TIMING.SILENCE_MS - (Uhr.jetzt() - this.silenceTimerStart);
             return Math.max(1, Math.ceil(left / 1000));
         }
 
@@ -1522,7 +1547,7 @@
          * @returns {number} 0 im Moment des Wechsels, danach bis knapp 1000.
          */
         silenceDigitAge() {
-            const left = TIMING.SILENCE_MS - (Date.now() - this.silenceTimerStart);
+            const left = TIMING.SILENCE_MS - (Uhr.jetzt() - this.silenceTimerStart);
             const rest = ((left % 1000) + 1000) % 1000;
             return (1000 - rest) % 1000;
         }
@@ -6327,7 +6352,7 @@
 
         /** Frame-Loop starten (einmalig nach der Mikrofonfreigabe). */
         start() {
-            this._lastFrameTime = performance.now();
+            this._lastFrameTime = Uhr.jetzt();
             requestAnimationFrame(this._loop);
         }
 
@@ -6473,7 +6498,7 @@
                            nicht auf": jeder Ruecksetzer mit dem Pegel, der ihn
                            ausgeloest hat. Gedrosselt auf zehn pro Sekunde,
                            sonst stuenden hier 60 Zeilen je Sekunde. */
-                        const jetzt = Date.now();
+                        const jetzt = Uhr.jetzt();
                         if (jetzt - (this._letzterRuheLog || 0) > 100) {
                             this._letzterRuheLog = jetzt;
                             Protokoll.schreib('RUHE',
@@ -6699,13 +6724,13 @@
                Hinweis den Messwert und lief bei längeren Sätzen aus dem auf
                40 px fixierten Feld heraus, mitten in die Schrift darunter. */
             this.hintDiv.className = ok ? 'ok' : '';
-            this._hintUntil = Date.now() + Game.HINT_MS;
+            this._hintUntil = Uhr.jetzt() + Game.HINT_MS;
         }
 
         /** Abgelaufenen Hinweis wieder wegnehmen. */
         expireCalibrationHint() {
             if (!this.hintDiv || !this._hintUntil) return;
-            if (Date.now() < this._hintUntil) return;
+            if (Uhr.jetzt() < this._hintUntil) return;
             this.hintDiv.innerText = '';
             this._hintUntil = 0;
         }
@@ -6862,7 +6887,7 @@
         zeilen: [],
         /** Mehr braucht es nicht: rund eine Stunde Betrieb bei dieser Dichte. */
         MAX: 2000,
-        _start: Date.now(),
+        _start: Uhr.jetzt(),
 
         /**
          * Eine Zeile aufzeichnen.
@@ -6870,7 +6895,7 @@
          * @param {string} text
          */
         schreib(bereich, text) {
-            const s = ((Date.now() - this._start) / 1000).toFixed(1).padStart(7);
+            const s = ((Uhr.jetzt() - this._start) / 1000).toFixed(1).padStart(7);
             this.zeilen.push(`${s}s  ${bereich.padEnd(9)} ${text}`);
             if (this.zeilen.length > this.MAX) this.zeilen.shift();
         },
@@ -6909,6 +6934,15 @@
        Alt+Shift+L legt es als Datei ab. */
     game.protokoll = () => Protokoll.text();
     game.Protokoll = Protokoll;
+
+
+    /* Die Uhr, an der ALLE Dauern haengen.
+       Fuer die Diagnose auf der Buehne — und fuer test-browser.js, der den
+       Haltespeicher der Tonhoehe von aussen fuellt und dafuer dieselbe
+       Zeitbasis braucht wie das Spiel. Wer dort Date.now() einsetzt, liegt um
+       die halbe Systemzeit daneben; der Haltespeicher liefe dann nie ab, und
+       der Test waere gruen, ohne noch etwas zu pruefen. */
+    game.uhr = Uhr;
 
     /* Feldgrenzen in Weltkoordinaten — damit sich die Physikgrenzen zur
        Kontrolle ueber das Platzbild legen lassen, ohne im Renderer zu

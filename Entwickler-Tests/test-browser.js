@@ -427,8 +427,16 @@ class Browser {
             /* Der Haltespeicher wird direkt gefüllt: das Fake-Mikrofon von
                Chrome liefert nur einen festen Ton, wir brauchen aber zwei
                verschiedene für tief und hoch. */
+            /* Die Zeitbasis DER GELADENEN FASSUNG. app.js rechnet mit
+               Date.now(), app-arena.js seit ARENA-11 mit performance.now().
+               Wer hier fest Date.now() einsetzt, fuellt in der Arena-Fassung
+               einen Zeitstempel, der um die Systemzeit danebenliegt — der
+               Haltespeicher liefe dann nie ab, und der Test pruefte nichts
+               mehr. Deshalb ueber die Uhr des Spiels, mit Rueckfall auf die
+               Wanduhr fuer die eingefrorene Fassung. */
+            const jetzt = () => (K.uhr ? K.uhr.jetzt() : Date.now());
             const singe = (hz) => { K.audio.livePitch = 0; K.audio.heldPitch = hz;
-                                    K.audio.heldPitchAt = Date.now(); };
+                                    K.audio.heldPitchAt = jetzt(); };
             const sichtbar = (id) => {
                 const e = document.getElementById(id);
                 return !!e && e.offsetParent !== null;
@@ -823,7 +831,8 @@ class Browser {
                sie leuchtet nur die getroffene Taste. */
             K.audio.livePitch = 200;
             K.audio.heldPitch = 200;
-            K.audio.heldPitchAt = Date.now();
+            /* Zeitbasis der geladenen Fassung — siehe oben. */
+            K.audio.heldPitchAt = (K.uhr ? K.uhr.jetzt() : Date.now());
 
             let tasteGesehen = false;
             const echt = R.drawKeyboards.bind(R);
