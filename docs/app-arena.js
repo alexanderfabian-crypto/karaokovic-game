@@ -6238,6 +6238,42 @@
             /** @type {number} Bis wann eine Kalibrierungs-Rückmeldung stehen bleibt. */
             this._hintUntil = 0;
 
+            /**
+             * Ringspeicher der Raumpegel-Messungen.
+             *
+             * Fester Float64Array statt `push`/`shift` auf einem Array: das
+             * lief 60-mal je Sekunde und war zusammen mit dem `slice().sort()`
+             * in raumpegel() die letzte Allokation im Hot Path — in einem
+             * File, das sonst penibel allokationsfrei arbeitet (siehe die
+             * Scratch-Objekte in Viewport und Projection).
+             *
+             *   werte     Ringpuffer, `i` ist die naechste Schreibstelle
+             *   sortiert  Kratzfläche fuer das Perzentil, einmal allokiert
+             *   n         belegte Plaetze (waechst bis PEGEL_FENSTER)
+             *   wert      zuletzt berechnetes Perzentil (das, was gelesen wird)
+             *   seit      Messungen seit der letzten Berechnung
+             *
+             * `seit` startet auf dem vollen Takt, damit die erste Abfrage
+             * sofort rechnet statt eine Viertelsekunde lang 0 zu liefern.
+             */
+            this._pegel = {
+                werte: new Float64Array(Game.PEGEL_FENSTER),
+                sortiert: new Float64Array(Game.PEGEL_FENSTER),
+                n: 0, i: 0, wert: 0, seit: Game.PEGEL_TAKT,
+            };
+
+            /**
+             * Startdiagnose: Bildwiederholrate und Spitzenlast der Analyse.
+             *
+             *   deltas      Framedauern der ersten Sekunden (danach leer)
+             *   hzGemeldet  Bildrate steht im Protokoll, nicht mehr messen
+             *   analyseMax  laengste analyse() im laufenden Fenster
+             *   analyseSeit Beginn dieses Fensters
+             */
+            this._diag = {
+                deltas: [], hzGemeldet: false, analyseMax: 0, analyseSeit: 0,
+            };
+
             this._loop = this.loop.bind(this);
             /** @type {HTMLElement|null} */
             this.livePitchDiv = document.getElementById('livePitch');
@@ -6618,10 +6654,64 @@
          * @returns {number} RMS
          */
         raumpegel() {
-            const r = this._pegelRing;
-            if (!r || r.length < 30) return 0;
-            const s = r.slice().sort((a, b) => a - b);
-            return s[Math.floor(s.length * 0.2)];
+            const pg = this._pegel;
+            /* Neu gerechnet wird hoechstens alle PEGEL_TAKT Messungen. Der
+               Raum aendert sich nicht in 16 ms, die Sortierung aber kostet
+               jedes Mal — und raumpegel() wird pro Frame bis zu zweimal
+               abgefragt (Anzeige und Ruhepruefung).
+
+               Der Takt zaehlt MESSUNGEN, nicht Frames: waehrend durchgehend
+               gesungen wird, kommen gar keine Messungen dazu (siehe loop()),
+               und dann soll auch nichts neu gerechnet werden. */
+            if (pg.seit >= Game.PEGEL_TAKT) this.raumpegelNeuBerechnen();
+            return pg.wert;
+        }
+
+        /**
+         * Eine Pegelmessung in den Ringspeicher legen.
+         *
+         * Eigene Methode und nicht inline in loop(), damit die
+         * Entwickler-Tests den Raum befuellen koennen, ohne die interne
+         * Datenstruktur zu kennen — siehe test-ruhe-im-laerm.js.
+         *
+         * @param {number} rms
+         */
+        pegelMessen(rms) {
+            const pg = this._pegel;
+            pg.werte[pg.i] = rms;
+            pg.i = (pg.i + 1) % pg.werte.length;
+            if (pg.n < pg.werte.length) pg.n++;
+            pg.seit++;
+        }
+
+        /** Alle Messungen verwerfen (Raum neu kennenlernen). */
+        pegelVergessen() {
+            const pg = this._pegel;
+            pg.n = 0; pg.i = 0; pg.wert = 0;
+            pg.seit = Game.PEGEL_TAKT;
+        }
+
+        /**
+         * Das Perzentil neu bilden.
+         *
+         * Ohne Allokation: die Werte werden in eine feste Kratzfläche kopiert,
+         * der noch ungenutzte Rest auf Infinity gesetzt. Der wandert beim
+         * Sortieren garantiert ans Ende und stoert das Perzentil deshalb
+         * nicht — das erspart eine `subarray`-Sicht je Aufruf.
+         *
+         * `Float64Array.prototype.sort()` sortiert ohne Vergleichsfunktion
+         * numerisch aufsteigend; der `(a, b) => a - b`-Vergleicher von
+         * gewoehnlichen Arrays ist hier weder noetig noch erlaubt zu fehlen.
+         */
+        raumpegelNeuBerechnen() {
+            const pg = this._pegel;
+            pg.seit = 0;
+            if (pg.n < Game.PEGEL_MINDESTMESSUNGEN) { pg.wert = 0; return; }
+            const s = pg.sortiert;
+            for (let k = 0; k < pg.n; k++) s[k] = pg.werte[k];
+            for (let k = pg.n; k < s.length; k++) s[k] = Infinity;
+            s.sort();
+            pg.wert = s[Math.floor(pg.n * Game.PEGEL_PERZENTIL)];
         }
 
         /**
@@ -6685,10 +6775,8 @@
             try {
                 this.messeBildrate(now);
 
-                /* Raumpegel mitschreiben: 180 Messungen = drei Sekunden. */
-                if (!this._pegelRing) this._pegelRing = [];
-                this._pegelRing.push(this.loudestVolume());
-                if (this._pegelRing.length > 180) this._pegelRing.shift();
+                const t0 = Uhr.jetzt();
+                const result = this.audio.analyse();
 
                 /* Zweiter Eingang nur im Duell — im Arcade-Modus hat diese
                    Instanz keinen Audiograph, `analyse()` würde werfen. */
@@ -7211,6 +7299,35 @@
      * wurde, steht offensichtlich etwas Dauerhaftes im Raum.
      */
     Game.RUHE_WARNUNG_MS = 8000;
+
+    /* -------------------------------------------------------------------------
+     * Raumpegel-Messung (siehe Game.raumpegel)
+     * ---------------------------------------------------------------------- */
+
+    /** Laenge des Ringspeichers in Messungen. 180 = drei Sekunden bei 60 Hz. */
+    Game.PEGEL_FENSTER = 180;
+
+    /**
+     * So viele Messungen muessen mindestens vorliegen, bevor ein Perzentil
+     * gebildet wird. Darunter bleibt es bei 0 — und damit bei der festen
+     * Ruhegrenze aus CONFIG.volumeGate.
+     */
+    Game.PEGEL_MINDESTMESSUNGEN = 30;
+
+    /**
+     * Nach so vielen neuen Messungen wird das Perzentil neu gebildet.
+     * 15 sind eine Viertelsekunde; ein Raum aendert sich langsamer als das.
+     */
+    Game.PEGEL_TAKT = 15;
+
+    /**
+     * Welches Perzentil den Raumpegel beschreibt.
+     *
+     * Das untere Fuenftel und nicht Mittelwert oder Minimum: der Mittelwert
+     * wird von jedem Geraeusch hochgezogen, das Minimum von einer einzigen
+     * stillen Messung heruntergerissen.
+     */
+    Game.PEGEL_PERZENTIL = 0.2;
 
     /* -------------------------------------------------------------------------
      * Startdiagnose (siehe Game.messeBildrate / Game.messeAnalyse)
