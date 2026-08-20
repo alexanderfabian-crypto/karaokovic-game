@@ -1029,6 +1029,12 @@
                 const img = new Image();
                 img.onerror = () => {
                     this.failed.push(src);
+                    /* Auch ins Protokoll, nicht nur in die Konsole: eine
+                       fehlende Datei faellt im Bild still auf den gezeichneten
+                       Ersatz zurueck und faellt niemandem auf. Genau so blieb
+                       der Tippfehler .jpg statt .png bei den Verlierer-
+                       Gesichtern monatelang unbemerkt. */
+                    Protokoll.schreib('ASSET', `fehlt oder ist defekt: ${src}`);
                     console.warn(`[AssetManager] Datei fehlt oder ist defekt: ${src}`);
                 };
                 img.src = src;
@@ -1140,6 +1146,7 @@
                 : AudioEngine.constraintsFor(1);
 
             const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+            AudioEngine.protokolliereTrack(stream);
 
             this.audioCtx = new AudioContext();
             this.attachTo(this.audioCtx, this.audioCtx.createMediaStreamSource(stream));
@@ -1203,6 +1210,7 @@
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: AudioEngine.constraintsFor(2)
             });
+            AudioEngine.protokolliereTrack(stream);
 
             const ctx = new AudioContext();
             const source = ctx.createMediaStreamSource(stream);
@@ -1216,6 +1224,36 @@
 
             const settings = stream.getAudioTracks()[0].getSettings();
             return settings.channelCount || 1;
+        }
+
+        /**
+         * Den tatsaechlich geoeffneten Eingang ins Protokoll schreiben.
+         *
+         * Beantwortet hinterher drei Fragen, die bisher nur muendlich zu
+         * klaeren waren:
+         *   - Hat Chrome ueberhaupt den Dante-Feed genommen? (Label)
+         *   - Kamen zwei Kanaele an? (channelCount — der stille Spieler 2)
+         *   - Waren AGC, Rauschunterdrueckung und Echokompensation wirklich
+         *     aus? Ein heimlich normalisierter Pegel verstellt Volume-Gate
+         *     UND Schlagkraft, und man sieht es dem Bild nicht an.
+         *
+         * Wirft nicht: eine Diagnosezeile darf den Start nie verhindern.
+         *
+         * @param {MediaStream} stream
+         */
+        static protokolliereTrack(stream) {
+            try {
+                const t = stream.getAudioTracks()[0];
+                if (!t) { Protokoll.schreib('AUDIO', 'kein Audiokanal im Stream'); return; }
+                const s = t.getSettings ? t.getSettings() : {};
+                Protokoll.schreib('AUDIO',
+                    `Eingang "${t.label || 'ohne Namen'}" — `
+                    + `${s.sampleRate || '?'} Hz, ${s.channelCount || '?'} Kanal/Kanaele, `
+                    + `AGC=${s.autoGainControl} NS=${s.noiseSuppression} `
+                    + `EC=${s.echoCancellation}`);
+            } catch (err) {
+                Protokoll.schreib('AUDIO', `Eingang nicht auslesbar: ${err}`);
+            }
         }
 
         /**
@@ -6207,8 +6245,35 @@
             window.addEventListener('resize', () => this.handleResize());
             this.handleResize();
 
+            this.pruefeSkalierung();
             this.bindOnboarding();
             console.info('[Karaokovic] ARENA-12 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+        }
+
+        /**
+         * Anzeigeskalierung pruefen und im Protokoll festhalten.
+         *
+         * Der Canvas rechnet bewusst in CSS-Pixeln; `devicePixelRatio` wird
+         * NICHT eingerechnet. Das ist eine Entscheidung und kein Versehen: die
+         * Arena-Wand wird mit 9216x1296 bespielt, und den Canvas dort um
+         * Faktor 1.25 oder 1.5 mehr Pixel rechnen zu lassen kostet Fuellrate
+         * in einer Groessenordnung, die die 60 FPS sofort kosten kann.
+         *
+         * Der Preis dieser Entscheidung ist ein weiches Bild, sobald Windows
+         * auf 125 % oder 150 % steht — und das sieht man erst auf der Wand.
+         * Deshalb steht es hier im Protokoll, bevor jemand danach sucht.
+         * Behoben wird es in der Systemeinstellung, nicht im Code.
+         */
+        pruefeSkalierung() {
+            const dpr = window.devicePixelRatio || 1;
+            if (dpr === 1) return;
+            Protokoll.schreib('WARNUNG',
+                `Anzeigeskalierung ${Math.round(dpr * 100)} % `
+                + `(devicePixelRatio ${dpr}) — das Bild wird hochskaliert und `
+                + `wirkt auf der LED-Wand weich. Systemskalierung auf 100 % `
+                + `stellen.`);
+            console.warn(`[Karaokovic] Anzeigeskalierung ${Math.round(dpr * 100)} % `
+                + `— auf 100 % stellen, sonst ist das Bild weich.`);
         }
 
         /** Canvasgröße nachziehen; im Ruhezustand den Aufschlag neu aufbauen. */
@@ -6435,6 +6500,10 @@
             this.match.resetSilenceTimer();
             this.running = true;
 
+            Protokoll.schreib('MODUS', `${CONFIG.mode}, Start als `
+                + `${sofortMatch ? 'MATCH' : 'EINSPIELEN'}`);
+            umfangZeilen().forEach((z) => Protokoll.schreib('UMFANG', z));
+
             console.info(
                 `[Karaokovic] Start als ${sofortMatch ? 'MATCH' : 'EINSPIELEN'}`
                 + ` | Spieler 1: ${CONFIG.minFreq.toFixed(1)}`
@@ -6602,7 +6671,7 @@
          */
         loop(now) {
             try {
-                const result = this.audio.analyse();
+                this.messeBildrate(now);
 
                 /* Raumpegel mitschreiben: 180 Messungen = drei Sekunden. */
                 if (!this._pegelRing) this._pegelRing = [];
@@ -6618,6 +6687,34 @@
                         this.audio2.updateSmoothedPitch(result2.freq, result2.volume);
                     }
                 }
+
+                /* Spitzenlast der Tonerkennung. Die Autokorrelation ist
+                   O(n^2) und laeuft im Duell zweimal — ausgerechnet dann, wenn
+                   beide gleichzeitig singen. Erst diese Zahl entscheidet, ob
+                   an der geschuetzten Mathematik ueberhaupt etwas zu optimieren
+                   ist; ohne sie waere jede Optimierung eine Vermutung. */
+                this.messeAnalyse(Uhr.jetzt() - t0, now);
+
+                /* --- Raumpegel mitschreiben: 180 Messungen = drei Sekunden ---
+                 * NUR Frames OHNE erkannten Grundton. Gepitchte Frames sind
+                 * eine Stimme, kein Raum.
+                 *
+                 * Sonst lernt die adaptive Ruhegrenze vom Gesang und haebelt
+                 * sich selbst aus: drei Sekunden gehaltener Ton ziehen das
+                 * 20. Perzentil auf Gesangsniveau, stilleGrenze() steigt auf
+                 * das 1.6-Fache davon — und stures Summen zaehlt als Ruhe.
+                 * Genau das Gegenteil dessen, was "absolute Ruhe" heisst.
+                 *
+                 * Publikumsjubel und Klatschen haben keinen stabilen Grundton
+                 * und zaehlen weiter als Raum. Der Zweck der Grenze (kein
+                 * Stillstand in einem lauten Saal) bleibt also erhalten, nur
+                 * die Stimmen fallen heraus.
+                 *
+                 * Steht NACH der Auswertung des zweiten Eingangs: `livePitch`
+                 * von audio2 waere davor der Wert des vorigen Frames. */
+                const gesungen = this.audio.livePitch > 0
+                    || (result2 !== null && this.audio2.livePitch > 0);
+                if (!gesungen) this.pegelMessen(this.loudestVolume());
 
                 if (this.calibrating) {
                     /* Angezeigt wird der Kanal DESSEN, der gerade einsingt —
@@ -6678,6 +6775,75 @@
             if (rect.width <= 0) return;
             this.renderer.drawOnboardingKeyboards(
                 this.calibAudio(), rect, this.calibPlayer);
+        }
+
+        /**
+         * Bildwiederholrate einmalig messen und ins Protokoll schreiben.
+         *
+         * FEATURES.FIXED_TIMESTEP steht bewusst auf false, damit die Physik
+         * bit-identisch zu V36 laeuft. Der Preis: auf einer 120-Hz-Wand laeuft
+         * das ganze Spiel doppelt so schnell — Ball, Countdown, Blende. Das
+         * muss der Operator VOR dem Anpfiff wissen und nicht danach.
+         *
+         * Umgeschaltet wird ausdruecklich NICHT von selbst: der Vorgabewert
+         * ist eine bewusste Entscheidung, und ein Spiel, das seine eigene
+         * Physik heimlich umstellt, ist auf einer Buehne das groessere Risiko.
+         *
+         * Gemessen wird der Median und nicht der Mittelwert: ein einzelner
+         * langer Frame beim Laden der Platzbilder wuerde ihn sonst verziehen.
+         *
+         * @param {number} now Zeitstempel von requestAnimationFrame
+         */
+        messeBildrate(now) {
+            const d = this._diag;
+            if (d.hzGemeldet) return;
+
+            const delta = now - this._lastFrameTime;
+            /* Ausreisser weglassen: unter 2 ms ist kein echter Frame, ueber
+               100 ms ist ein Hänger beim Laden. */
+            if (delta > 2 && delta < 100) d.deltas.push(delta);
+            if (d.deltas.length < Game.BILDRATE_PROBEN) return;
+
+            d.hzGemeldet = true;
+            d.deltas.sort((a, b) => a - b);
+            const median = d.deltas[Math.floor(d.deltas.length / 2)];
+            d.deltas.length = 0;
+            const hz = Math.round(1000 / median);
+
+            Protokoll.schreib('DISPLAY',
+                `~${hz} Hz (Median ${median.toFixed(1)} ms je Frame)`);
+            if (hz >= Game.BILDRATE_WARNUNG_HZ && !FEATURES.FIXED_TIMESTEP) {
+                const zuSchnell = Math.round((hz / 60 - 1) * 100);
+                Protokoll.schreib('WARNUNG',
+                    `Display laeuft mit ~${hz} Hz — das Spiel laeuft ${zuSchnell} % `
+                    + `zu schnell. FEATURES.FIXED_TIMESTEP aktivieren.`);
+                console.warn(`[Karaokovic] Display ~${hz} Hz — das Spiel laeuft `
+                    + `${zuSchnell} % zu schnell. FEATURES.FIXED_TIMESTEP aktivieren.`);
+            }
+        }
+
+        /**
+         * Spitzenlast der Tonerkennung im Zehn-Sekunden-Fenster festhalten.
+         *
+         * Nur die SPITZE, nicht der Mittelwert: ein Aussetzer entsteht durch
+         * den einen langen Frame, nicht durch den Durchschnitt. Und nur, wenn
+         * sie ueber der Schwelle liegt — sonst stuende alle zehn Sekunden eine
+         * Zeile im Protokoll, die nichts sagt.
+         *
+         * @param {number} dauer Dauer der Analyse in Millisekunden
+         * @param {number} now   Zeitstempel von requestAnimationFrame
+         */
+        messeAnalyse(dauer, now) {
+            const d = this._diag;
+            if (dauer > d.analyseMax) d.analyseMax = dauer;
+            if (now - d.analyseSeit < Game.ANALYSE_FENSTER_MS) return;
+            if (d.analyseMax > Game.ANALYSE_WARNUNG_MS) {
+                Protokoll.schreib('PERF',
+                    `analyse() Spitze ${d.analyseMax.toFixed(1)} ms in `
+                    + `${Math.round(Game.ANALYSE_FENSTER_MS / 1000)} s`);
+            }
+            d.analyseMax = 0;
+            d.analyseSeit = now;
         }
 
         /**
@@ -7012,6 +7178,32 @@
     /** Anzeigedauer einer Kalibrierungs-Rückmeldung in Millisekunden. */
     Game.HINT_MS = 2500;
 
+    /* -------------------------------------------------------------------------
+     * Startdiagnose (siehe Game.messeBildrate / Game.messeAnalyse)
+     * ---------------------------------------------------------------------- */
+
+    /** So viele Frames werden fuer den Median der Bildrate gesammelt (~2 s). */
+    Game.BILDRATE_PROBEN = 120;
+
+    /**
+     * Ab dieser Bildrate wird gewarnt. 75 Hz liegt sicher ueber jedem
+     * 60-Hz-Panel samt Messrauschen und sicher unter 90/120/144 Hz.
+     */
+    Game.BILDRATE_WARNUNG_HZ = 75;
+
+    /** Laenge des Messfensters fuer die Spitzenlast der Analyse. */
+    Game.ANALYSE_FENSTER_MS = 10000;
+
+    /**
+     * Ab dieser Spitze ist die Analyse eine Meldung wert.
+     *
+     * Ein Frame bei 60 Hz dauert 16.7 ms; darin muessen Analyse, Physik UND
+     * das komplette Zeichnen unterkommen. 4 ms sind rund ein Viertel davon —
+     * bis dahin ist Luft, darueber lohnt die Messung aus Punkt 2.1 der
+     * Durchsicht.
+     */
+    Game.ANALYSE_WARNUNG_MS = 4;
+
     /** Beschriftungen der Kalibrierknöpfe im unbenutzten Zustand. */
     Game.LABEL_LOW = 'Tiefen Ton (Links) speichern';
     Game.LABEL_HIGH = 'Hohen Ton (Rechts) speichern';
@@ -7063,6 +7255,47 @@
      */
     Game.MIN_CALIBRATION_RATIO = 1.5;
 
+    /**
+     * Tatsaechlich benutzter Stimmumfang, eine Zeile je Spieler.
+     *
+     * Die Frage "mit welchem Umfang lief die Session eigentlich" stellt sich
+     * immer erst hinterher — und dann ist CONFIG ueberschrieben oder der
+     * Browser zu. Der Umfang steht deshalb beim Verlassen des Onboardings im
+     * Protokoll, direkt neben der Signalkette: Eingang und Umfang sind die
+     * zwei Groessen, an denen bisher JEDER Aufschlag-Befund hing.
+     *
+     * Liest ueber Physics.voiceRange() — die Stelle, die im Spiel
+     * entscheidet, welches Wertepaar gilt — statt direkt aus CONFIG, damit
+     * Anzeige und Spiel nicht auseinanderlaufen koennen.
+     *
+     * Zwei Warnmarken:
+     *   VORGABEWERT  Der Umfang steht noch auf den CONFIG-Vorgaben, es wurde
+     *                also gar nicht eingesungen. 100–300 Hz sind 19 Halbtoene
+     *                und sehen in einer reinen Hertz-Ausgabe wie ein voellig
+     *                gesunder Umfang aus; nur der Vergleich mit den
+     *                Onboarding-Vorgaben verraet es. Dasselbe Kriterium
+     *                benutzt die Klaviatur, um drei Oktaven statt des
+     *                Bereichs zu zeigen.
+     *   eng          Unter zwoelf Halbtoenen wird die Steuerung nervoes, weil
+     *                der halbe Platz auf wenige Hertz faellt.
+     *
+     * @returns {string[]}
+     */
+    function umfangZeilen() {
+        const wer = CONFIG.mode === MODE.VERSUS
+            ? [PLAYER.ANDREA, PLAYER.ALEX] : [PLAYER.ANDREA];
+        return wer.map((p) => {
+            const r = Physics.voiceRange(p);
+            const ht = 12 * Math.log2(r.max / r.min);
+            const frisch = r.min === Renderer.ONBOARDING_DEFAULT_MIN
+                        && r.max === Renderer.ONBOARDING_DEFAULT_MAX;
+            return `${p}: ${Math.round(r.min)}-${Math.round(r.max)} Hz `
+                + `(${Renderer.noteName(r.min)}-${Renderer.noteName(r.max)}), `
+                + `${ht.toFixed(1)} Halbtoene`
+                + (frisch ? '  <-- VORGABEWERT, nicht eingesungen!'
+                    : ht < 12 ? '  <-- eng, Steuerung wird nervoes' : '');
+        });
+    }
 
     /**
      * Platz wechseln.
@@ -7169,6 +7402,12 @@
     game.protokoll = () => Protokoll.text();
     game.Protokoll = Protokoll;
 
+    /* Diagnose auf der Buehne. Der bisherige Umweg ueber
+       KARAOKOVIC.physics.constructor bzw. .renderer.constructor funktioniert,
+       ist aber genau der Kniff, den man um drei Uhr nachts falsch tippt. */
+    game.Physics = Physics;
+    game.Renderer = Renderer;
+    game.umfang = () => { umfangZeilen().forEach((z) => console.log(z)); };
 
     /* Die Uhr, an der ALLE Dauern haengen.
        Fuer die Diagnose auf der Buehne — und fuer test-browser.js, der den

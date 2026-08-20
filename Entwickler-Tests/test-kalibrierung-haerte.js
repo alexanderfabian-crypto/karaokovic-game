@@ -99,4 +99,29 @@ btnHigh.click();
 check('Sieben Halbtoene und mehr gehen durch',
     Math.round(game.config.maxFreq) === 160, `${game.config.maxFreq}`);
 
+/* --- 5. Der benutzte Umfang steht im Protokoll -------------------------- */
+game.enterGame(false);
+const protokoll = game.protokoll();
+console.log(protokoll.split('\n').filter((z) => /UMFANG|MODUS/.test(z)).join('\n'));
+
+check('Der Umfang steht im Protokoll', /UMFANG/.test(protokoll));
+check('Mit Tonnamen, nicht nur in Hertz', /\(G2-D#3\)/.test(protokoll), protokoll
+    .split('\n').filter((z) => /UMFANG/.test(z)).join(''));
+check('Und mit der Warnung, dass 8.1 Halbtoene eng sind',
+    /eng, Steuerung wird nervoes/.test(protokoll));
+check('Der Modus steht daneben', /MODUS.*ARCADE/.test(protokoll));
+
+/* --- 6. Ein nicht eingesungener Umfang wird als solcher benannt ---------- */
+/* 19 Halbtoene sehen in einer reinen Hertz-Ausgabe voellig gesund aus — nur
+   der Vergleich mit den Vorgabewerten verraet, dass niemand gesungen hat. */
+game.setVoiceRange(game.PLAYER.ANDREA, 100, 300);
+const zeilen = [];
+const echt = console.log;
+console.log = (z) => zeilen.push(String(z));
+game.umfang();
+console.log = echt;
+console.log(zeilen.join('\n'));
+check('Vorgabewerte werden als "nicht eingesungen" gekennzeichnet',
+    /VORGABEWERT, nicht eingesungen/.test(zeilen.join('')), zeilen.join(''));
+
 summary();
