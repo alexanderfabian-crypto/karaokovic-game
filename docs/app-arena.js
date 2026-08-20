@@ -45,7 +45,7 @@
  *   - MatchState.SILENCE_CHECK (3000 ms) : Timing & Reset-Verhalten wie V36
  *   - Physics: Aufsprung-/Aus-/Doppelaufsprung-Regeln wie V36
  *   - Physics.freqToQuantizedX()         : KEIN Clamping von `percentage` (Overdrive)
- *   - InputHandler: Alt+Shift+U / Alt+Shift+X
+ *   - InputHandler: (Ctrl|Alt)+Shift+U / (Ctrl|Alt)+Shift+X
  * ========================================================================== */
 
 (() => {
@@ -1609,7 +1609,7 @@
         }
 
         /**
-         * Letzten Punkt zurücknehmen (Operator-Hotkey Alt+Shift+U).
+         * Letzten Punkt zurücknehmen (Operator-Hotkey Ctrl+Shift+U).
          * @returns {boolean} true, wenn etwas zurückgenommen wurde.
          */
         undo() {
@@ -1622,7 +1622,7 @@
             return true;
         }
 
-        /** Kompletter Reset auf 0:0 (Operator-Hotkey Alt+Shift+X). */
+        /** Kompletter Reset auf 0:0 (Operator-Hotkey Ctrl+Shift+X). */
         hardReset() {
             this.score = { andrea: 0, alex: 0 };
             this.warmupScore = { andrea: 0, alex: 0 };
@@ -4973,7 +4973,7 @@
                 ctx.font = this.font(20 * p.scale, 'normal');
                 ctx.fillText(
                     `Raumpegel ${(scene.raumpegel || 0).toFixed(3)}`
-                    + '   ·   Alt+Shift+A schlägt trotzdem auf',
+                    + '   ·   Ctrl+Shift+A schlägt trotzdem auf',
                     p.x, y + 30 * p.scale);
                 ctx.restore();
             }
@@ -5643,7 +5643,7 @@
      * beim Einpegeln vor der Show ist sie das einzige Mittel, den Pegel gegen
      * die Schwellen zu sehen.
      *
-     * Alt+Shift+M schaltet sie um. Die Einstellung ueberlebt kein Neuladen,
+     * Ctrl+Shift+M schaltet sie um. Die Einstellung ueberlebt kein Neuladen,
      * und das ist Absicht: so kann sie nach einer Probe nicht versehentlich
      * an bleiben.
      */
@@ -5741,13 +5741,19 @@
     /**
      * ### GESCHÜTZT — Tastenkombinationen ###
      *
-     * Es gibt bewusst nur zwei Eingaben, beide mit Alt+Shift, damit auf der
-     * Bühne nichts versehentlich ausgelöst werden kann:
-     *   Alt+Shift+U : letzten Punkt zurücknehmen
-     *   Alt+Shift+X : kompletter Reset auf 0:0
+     * Jede Eingabe braucht ZWEI Zusatztasten, damit auf der Buehne nichts
+     * versehentlich ausgeloest werden kann. Seit ARENA-12 gilt dabei
+     * `Ctrl+Shift` ODER `Alt+Shift` — auf dem Mac faengt das System die
+     * Option-Taste je nach Layout ab, dort ist Ctrl der zuverlaessige Weg:
      *
-     * Beide Aktionen führen zurück in SILENCE_CHECK, damit der Ablauf sauber
-     * neu startet.
+     *   Ctrl+Shift+U : letzten Punkt zurücknehmen
+     *   Ctrl+Shift+X : kompletter Reset auf 0:0
+     *   Ctrl+Shift+A : Aufschlag erzwingen (Notausgang)
+     *   Ctrl+Shift+M : Messanzeige ein/aus
+     *   Ctrl+Shift+L : Protokoll als Datei sichern
+     *
+     * U und X führen zurück in SILENCE_CHECK, damit der Ablauf sauber neu
+     * startet.
      */
     class InputHandler {
         /**
@@ -5806,7 +5812,16 @@
                 return;
             }
 
-            if (!e.altKey || !e.shiftKey) return;
+            /* Ctrl ODER Alt, jeweils mit Shift. Auf dem Mac-Buehnenrechner
+               ist Option (⌥) fuer Sonderzeichen belegt und wird je nach
+               Tastaturlayout vom System abgefangen — Ctrl+Shift ist dort der
+               zuverlaessige Weg. Alt+Shift bleibt als zweiter Weg bestehen,
+               damit eingeuebte Griffe und Windows-Rechner weiter gehen.
+
+               ACHTUNG: das ist eine Aenderung an einer als GESCHUETZT
+               markierten Stelle. Sie ERWEITERT nur — keine bisher gueltige
+               Kombination faellt weg. Freigegeben fuer ARENA-12. */
+            if (!(e.ctrlKey || e.altKey) || !e.shiftKey) return;
 
             if (e.code === 'KeyU') {
                 e.preventDefault();
@@ -5864,7 +5879,7 @@
         }
 
         /**
-         * Aufschlag von Hand ausloesen (Operator-Hotkey Alt+Shift+A).
+         * Aufschlag von Hand ausloesen (Operator-Hotkey Ctrl+Shift+A).
          *
          * Notausgang fuer einen zu lauten Raum: liegt das Geraeusch auf der
          * Hoehe des Gesangs, wird die Ruhepruefung nie fertig, und das Spiel
@@ -5992,7 +6007,7 @@
             this.handleResize();
 
             this.bindOnboarding();
-            console.info('[Karaokovic] ARENA-1 bereit. Hotkeys: Alt+Shift+U = Undo, Alt+Shift+X = Reset, Alt+Shift+A = Aufschlag erzwingen, Alt+Shift+M = Messanzeige, Alt+Shift+L = Protokoll.');
+            console.info('[Karaokovic] ARENA-12 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /** Canvasgröße nachziehen; im Ruhezustand den Aufschlag neu aufbauen. */
@@ -6694,7 +6709,7 @@
          *
          * Vergleicht die Zahl der entschiedenen Saetze mit dem zuletzt
          * gesehenen Stand. Bewusst ein Vergleich und keine Zaehlung: dann
-         * greift auch das Undo des Operators (Alt+Shift+U), das einen Satz
+         * greift auch das Undo des Operators (Ctrl+Shift+U), das einen Satz
          * zurueckdrehen kann — der Platz geht dann mit zurueck.
          */
         pruefePlatzwechsel() {
@@ -6872,7 +6887,7 @@
      * hinterher nur noch nachstellen, nicht nachlesen.
      *
      * Deshalb hier ein Ringspeicher im Arbeitsspeicher, den der Operator als
-     * Datei herausziehen kann (Alt+Shift+L). BEWUSST kein localStorage: auf der
+     * Datei herausziehen kann (Ctrl+Shift+L). BEWUSST kein localStorage: auf der
      * Buehnenmaschine will niemand wissen, ob der Browser gerade im privaten
      * Modus laeuft oder wann er aufraeumt.
      *
@@ -6931,7 +6946,7 @@
 
     /* Protokoll auch aus der Konsole erreichbar:
          copy(window.KARAOKOVIC.protokoll())   -> in die Zwischenablage
-       Alt+Shift+L legt es als Datei ab. */
+       Ctrl+Shift+L legt es als Datei ab. */
     game.protokoll = () => Protokoll.text();
     game.Protokoll = Protokoll;
 
