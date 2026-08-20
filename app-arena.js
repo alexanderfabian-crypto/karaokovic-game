@@ -1110,6 +1110,23 @@
              * @type {Float64Array|null}
              */
             this._corr = null;
+
+            /**
+             * Historie der akzeptierten Tonhoehen fuer calibrationPitch().
+             *
+             * Zwei Float64Arrays statt eines Arrays von Objekten: hier wird
+             * in JEDEM Frame geschrieben, und ein `{hz, t}` je Frame waeren
+             * 60 Allokationen je Sekunde ueber die ganze Show — genau das,
+             * was beim Pegelspeicher gerade beseitigt wurde.
+             *
+             * Bewusst NICHT in autoCorrelate() gefuellt: die Funktion ist
+             * geschuetzt und bleibt unberuehrt. Gefuellt wird in analyse().
+             */
+            this._calib = {
+                hz: new Float64Array(AudioEngine.CALIB_RING),
+                t: new Float64Array(AudioEngine.CALIB_RING),
+                n: 0, i: 0,
+            };
         }
 
         /**
@@ -1266,7 +1283,78 @@
          */
         analyse() {
             this.analyser.getFloatTimeDomainData(this.dataArray);
-            return this.autoCorrelate(this.dataArray, this.audioCtx.sampleRate);
+            const r = this.autoCorrelate(this.dataArray, this.audioCtx.sampleRate);
+            if (r.freq > 0) this.merkeKalibrierton(r.freq);
+            return r;
+        }
+
+        /**
+         * Eine akzeptierte Messung in die Kalibrier-Historie legen.
+         *
+         * Eigene Methode und nicht inline in analyse(): test-browser.js muss
+         * dieselbe Historie fuellen koennen, die auch analyse() fuellt.
+         * Chromes Fake-Mikrofon liefert einen festen Ton, der den vom Test
+         * eingespielten sonst ueberstimmt — der Test pruefte dann die
+         * Kalibrierung des Fake-Geraets statt der eingespielten Toene.
+         *
+         * @param {number} hz
+         */
+        merkeKalibrierton(hz) {
+            const c = this._calib;
+            c.hz[c.i] = hz;
+            c.t[c.i] = Uhr.jetzt();
+            c.i = (c.i + 1) % c.hz.length;
+            if (c.n < c.hz.length) c.n++;
+        }
+
+        /** Historie verwerfen (neuer Kalibrierdurchgang). */
+        vergissKalibriertoene() {
+            this._calib.n = 0;
+            this._calib.i = 0;
+        }
+
+        /**
+         * Kalibrierton: Median der letzten ~600 ms, Oktav-Ausreisser entfernt.
+         *
+         * ERSETZT DIE MOMENTAUFNAHME (`stablePitch`) BEIM SPEICHERN.
+         *
+         * BUEHNENAUSFALL, aus dem Protokoll zurueckgerechnet: gespeichert war
+         * ein Umfang von rund 95–125 Hz — knapp fuenf Halbtoene, und eine
+         * ganze Oktave unter der Stimme, die tatsaechlich sang. Akzeptierte
+         * und abgewiesene Aufschlaege standen durchweg im Verhaeltnis 2:1
+         * (155/87, 311/155, 220/100), die klassische Handschrift einer
+         * Oktavverwechslung der Autokorrelation. Die Kalibrierung uebernahm
+         * eine EINZELNE Messung — ein oktavfalscher Frame im Klickmoment legte
+         * den Umfang fuer die ganze Show fest.
+         *
+         * Der Median ist gegen einzelne Ausreisser immun. Zusaetzlich fliegt
+         * vor der zweiten Mittelung alles heraus, was mehr als sechs Halbtoene
+         * neben dem ersten Median liegt: beim Einsingen wird EIN Ton gehalten,
+         * was so weit daneben liegt, ist eine Oktavverwechslung und kein
+         * Vibrato.
+         *
+         * Faellt bei zu wenigen Messungen auf `stablePitch` zurueck — der
+         * Knopf darf nicht stummer werden als bisher. Live-Anzeige und
+         * Klaviatur lesen weiterhin `stablePitch`: die Anzeige soll dem Ton
+         * folgen, gemittelt wird nur der GESPEICHERTE Wert.
+         *
+         * @param   {number} [fensterMs]
+         * @returns {number} Hz, oder 0 wie stablePitch
+         */
+        calibrationPitch(fensterMs) {
+            const c = this._calib;
+            const seit = Uhr.jetzt() - (fensterMs || AudioEngine.CALIB_FENSTER_MS);
+            const werte = [];
+            for (let k = 0; k < c.n; k++) {
+                if (c.t[k] >= seit) werte.push(c.hz[k]);
+            }
+            if (werte.length < AudioEngine.CALIB_MIN_MESSUNGEN) return this.stablePitch;
+
+            const median = (arr) => arr.slice().sort((a, b) => a - b)[(arr.length / 2) | 0];
+            const m1 = median(werte);
+            const sauber = werte.filter((hz) =>
+                Math.abs(12 * Math.log2(hz / m1)) < AudioEngine.CALIB_AUSREISSER_HALBTOENE);
+            return sauber.length >= 3 ? median(sauber) : m1;
         }
 
         /**
@@ -1413,6 +1501,39 @@
             this._jumpFrames = 0;
         }
     }
+
+    /* -------------------------------------------------------------------------
+     * Kalibrier-Historie (siehe AudioEngine.calibrationPitch)
+     * ---------------------------------------------------------------------- */
+
+    /** Laenge des Ringspeichers in Messungen. 90 = 1,5 s bei 60 Hz. */
+    AudioEngine.CALIB_RING = 90;
+
+    /**
+     * Zeitfenster, ueber das gemittelt wird.
+     *
+     * 600 ms sind lang genug fuer eine belastbare Mehrheit (bis zu 36
+     * Messungen) und kurz genug, dass nur der Ton zaehlt, der beim Klick
+     * tatsaechlich anliegt — nicht der davor gesungene.
+     */
+    AudioEngine.CALIB_FENSTER_MS = 600;
+
+    /**
+     * So viele Messungen muessen im Fenster liegen, sonst wird auf
+     * `stablePitch` zurueckgefallen. Unter fuenf Werten ist ein Median keine
+     * Aussage, und der Knopf soll trotzdem etwas speichern.
+     */
+    AudioEngine.CALIB_MIN_MESSUNGEN = 5;
+
+    /**
+     * Ab wie vielen Halbtoenen Abstand vom ersten Median ein Wert als
+     * Ausreisser gilt.
+     *
+     * Sechs Halbtoene ist die Mitte zwischen "noch derselbe Ton" und
+     * "Oktave daneben": ein gehaltener Ton schwankt um Bruchteile eines
+     * Halbtons, eine Oktavverwechslung liegt bei zwoelf.
+     */
+    AudioEngine.CALIB_AUSREISSER_HALBTOENE = 6;
 
     /* =========================================================================
      * 6. MATCH STATE — Punkte, Sätze, Historie, State Machine
@@ -6131,7 +6252,8 @@
              * einfach nichts und das Onboarding wirkte kaputt.
              * -------------------------------------------------------------- */
             btnLow.addEventListener('click', () => {
-                const hz = this.calibAudio().stablePitch;
+                /* Median statt Momentaufnahme — siehe calibrationPitch(). */
+                const hz = this.calibAudio().calibrationPitch();
                 if (hz <= 0) {
                     this.showCalibrationHint('Kein Ton erkannt — singen und dabei klicken.');
                     return;
@@ -6148,7 +6270,7 @@
             });
 
             btnHigh.addEventListener('click', () => {
-                const hz = this.calibAudio().stablePitch;
+                const hz = this.calibAudio().calibrationPitch();
                 if (hz <= 0) {
                     this.showCalibrationHint('Kein Ton erkannt — singen und dabei klicken.');
                     return;
@@ -6158,9 +6280,13 @@
                    dicht beieinander, wird die Spielfigur später hypernervös,
                    weil der halbe Platz auf wenige Hertz abgebildet wird. */
                 if (hz < tief * Game.MIN_CALIBRATION_RATIO) {
+                    /* In HALBTOENEN, nicht in Hertz: "125 Hz ist zu nah an
+                       95 Hz" sagt niemandem, wie viel fehlt. "4.5 von 7
+                       Halbtoenen" schon. */
+                    const ht = 12 * Math.log2(hz / tief);
                     this.showCalibrationHint(
-                        `${Math.round(hz)} Hz ist zu nah am tiefen Ton `
-                        + `(${Math.round(tief)} Hz) — bitte höher singen.`
+                        `Nur ${ht.toFixed(1)} Halbtöne über dem tiefen Ton — `
+                        + `mindestens 7 nötig, bitte deutlich höher singen.`
                     );
                     return;
                 }
@@ -6251,6 +6377,10 @@
          */
         beginCalibration(player) {
             this.calibPlayer = player;
+            /* Sonst zaehlt der Ton des VORIGEN Durchgangs noch mit — beim
+               Verwerfen ("nochmal einsingen") und beim Wechsel auf Spieler 2
+               genau der Fall. */
+            this.calibAudio().vergissKalibriertoene();
             this.setVoiceRange(player,
                 Renderer.ONBOARDING_DEFAULT_MIN, Renderer.ONBOARDING_DEFAULT_MAX);
 
@@ -6840,10 +6970,18 @@
 
     /**
      * Mindestverhältnis zwischen hohem und tiefem Kalibrierton.
-     * 1.25 entspricht knapp einer kleinen Terz — weniger Abstand macht die
-     * Steuerung unspielbar zappelig.
+     *
+     * War 1.25, also knapp vier Halbtoene. GENAU DAMIT ist der oktavfalsch
+     * eingesungene Fuenf-Halbton-Umfang des Buehnenausfalls durchgekommen —
+     * die Pruefung sah keinen Grund, ihn abzuweisen. Und fuenf Halbtoene auf
+     * die volle Feldbreite abgebildet heisst: ein Viertelton schiebt die Figur
+     * um 130 px.
+     *
+     * 1.5 sind sieben Halbtoene (eine Quinte) und die Untergrenze der
+     * Spielbarkeit; komfortabel sind zwoelf und mehr.
      */
-    Game.MIN_CALIBRATION_RATIO = 1.25;
+    Game.MIN_CALIBRATION_RATIO = 1.5;
+
 
     /**
      * Platz wechseln.

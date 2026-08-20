@@ -25,6 +25,7 @@ const TESTS = [
     ['test-ruhige-figur.js', 'Figur steht still bei gehaltenem Ton (Arena)'],
     ['test-ruhe-im-laerm.js', 'Ruhepruefung im lauten Raum (Arena)'],
     ['test-hotkeys.js', 'Operator-Hotkeys, Ctrl und Alt (Arena)'],
+    ['test-kalibrierung-haerte.js', 'Kalibrierung gegen Oktavfehler (Arena)'],
     ['test-einspielen.js', 'Einspielen zaehlt getrennt vom Match (Arena)'],
     ['test-aufschlag-tonhoehe.js', 'Aufschlag nur im Tonumfang (Arena)'],
     ['test-netz-verdeckung.js', 'Netz verdeckt den Ball (Sandplatz)'],

@@ -435,8 +435,22 @@ class Browser {
                mehr. Deshalb ueber die Uhr des Spiels, mit Rueckfall auf die
                Wanduhr fuer die eingefrorene Fassung. */
             const jetzt = () => (K.uhr ? K.uhr.jetzt() : Date.now());
-            const singe = (hz) => { K.audio.livePitch = 0; K.audio.heldPitch = hz;
-                                    K.audio.heldPitchAt = jetzt(); };
+            const singe = (hz) => {
+                K.audio.livePitch = 0; K.audio.heldPitch = hz;
+                K.audio.heldPitchAt = jetzt();
+                /* Seit ARENA-12 speichert der Knopf den MEDIAN der letzten
+                   600 ms (calibrationPitch), nicht mehr die Momentaufnahme.
+                   Chromes Fake-Mikrofon liefert einen eigenen festen Ton und
+                   fuellt diese Historie in jedem Frame — ohne das Nachziehen
+                   hier wuerde der Test die Kalibrierung des FAKE-GERAETS
+                   pruefen statt der eingespielten Toene.
+                   Die alte Fassung (app.js) kennt die Methoden nicht; dort
+                   bleibt es bei der Momentaufnahme. */
+                if (K.audio.merkeKalibrierton) {
+                    K.audio.vergissKalibriertoene();
+                    for (let i = 0; i < 10; i++) K.audio.merkeKalibrierton(hz);
+                }
+            };
             const sichtbar = (id) => {
                 const e = document.getElementById(id);
                 return !!e && e.offsetParent !== null;
