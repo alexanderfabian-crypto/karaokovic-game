@@ -27,6 +27,7 @@ const TESTS = [
     ['test-notausgang.js', 'Notausgang und Haenger-Erkennung (Arena)'],
     ['test-hotkeys.js', 'Operator-Hotkeys, Ctrl und Alt (Arena)'],
     ['test-luecke.js', 'Pause der Bildkette (Arena)'],
+    ['test-audio-waechter.js', 'Toter Audioeingang wird erkannt (Arena)'],
     ['test-kalibrierung-haerte.js', 'Kalibrierung gegen Oktavfehler (Arena)'],
     ['test-einspielen.js', 'Einspielen zaehlt getrennt vom Match (Arena)'],
     ['test-aufschlag-tonhoehe.js', 'Aufschlag nur im Tonumfang (Arena)'],

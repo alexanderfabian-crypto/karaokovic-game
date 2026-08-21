@@ -1147,6 +1147,7 @@
 
             const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
             AudioEngine.protokolliereTrack(stream);
+            AudioEngine.bewacheTrack(stream);
 
             this.audioCtx = new AudioContext();
             this.attachTo(this.audioCtx, this.audioCtx.createMediaStreamSource(stream));
@@ -1211,6 +1212,7 @@
                 audio: AudioEngine.constraintsFor(2)
             });
             AudioEngine.protokolliereTrack(stream);
+            AudioEngine.bewacheTrack(stream);
 
             const ctx = new AudioContext();
             const source = ctx.createMediaStreamSource(stream);
@@ -1254,6 +1256,32 @@
             } catch (err) {
                 Protokoll.schreib('AUDIO', `Eingang nicht auslesbar: ${err}`);
             }
+        }
+
+        /**
+         * Track-Ereignisse ins Protokoll haengen.
+         *
+         * `ended` feuert, wenn das Geraet verschwindet (Dante Virtual
+         * Soundcard beendet, Geraetewechsel im System) — die Analyse liefert
+         * ab dann kommentarlos Stille, das Spiel saehe heil aus und waere
+         * tot. `mute`/`unmute` melden einen Treiber, der voruebergehend
+         * keine Daten liefert.
+         *
+         * Wirft nicht und aendert nichts am Signal: reine Meldung.
+         *
+         * @param {MediaStream} stream
+         */
+        static bewacheTrack(stream) {
+            const t = stream.getAudioTracks()[0];
+            if (!t) return;
+            t.addEventListener('ended', () => Protokoll.schreib('WARNUNG',
+                `Audioeingang "${t.label || 'ohne Namen'}" BEENDET `
+                + `(Geraet getrennt?) — KARAOKOVIC.audioNeustart() `
+                + `verbindet neu`));
+            t.addEventListener('mute', () => Protokoll.schreib('WARNUNG',
+                'Audioeingang stumm — Treiber liefert keine Daten'));
+            t.addEventListener('unmute', () => Protokoll.schreib('AUDIO',
+                'Audioeingang liefert wieder Daten'));
         }
 
         /**
@@ -3213,6 +3241,23 @@
                unter dem Bumper lesbar bleiben — sie sind ein Kontrollmittel
                für den Operator, kein Teil der Show. Standardmaessig AUS,
                siehe Renderer.SHOW_AUDIO_METER. */
+            /* Ein toter Audioeingang steht IMMER im Bild, unabhaengig von
+               der Messanzeige: die ist im Regelfall aus, und genau in der
+               Show muss der Operator das sehen, ohne vorher Ctrl+Shift+M
+               gedrueckt zu haben. Dieselbe Ecke wie die Ampel, oberhalb
+               ihrer vier Zeilen — die beiden ueberdecken sich nicht. */
+            if (scene.audioTot) {
+                const p = this.viewport.toScreen(VIRTUAL_WIDTH, VIRTUAL_HEIGHT, this._p1);
+                const ctx = this.ctx;
+                ctx.save();
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'alphabetic';
+                ctx.font = this.font(26 * p.scale, 'bold');
+                ctx.fillStyle = Renderer.METER_BAD;
+                ctx.fillText('AUDIOEINGANG TOT — KARAOKOVIC.audioNeustart()',
+                    p.x - 24 * p.scale, p.y - 128 * p.scale);
+                ctx.restore();
+            }
             if (Renderer.SHOW_AUDIO_METER) {
                 this.drawAudioDebug(scene.audio, scene.match, scene.audio2);
             }
@@ -6283,6 +6328,18 @@
 
             /** @type {number} Anzahl abgefangener Frame-Fehler (Diagnose). */
             this._errorCount = 0;
+
+            /**
+             * Audio-Waechter (siehe loop()).
+             *   _audioCheck  Zeitpunkt der letzten Pruefung (1x pro Sekunde)
+             *   _pulsZuvor   RMS-Summe der letzten Pruefung
+             *   _pulsGleich  wie oft in Folge die Summe BIT-IDENTISCH war
+             *   audioTot     Eingang liefert seit >= 3 s keine neuen Daten
+             */
+            this._audioCheck = 0;
+            this._pulsZuvor = -1;
+            this._pulsGleich = 0;
+            this.audioTot = false;
             /** @type {Error|null} Zuletzt abgefangener Fehler (Diagnose). */
             this._lastError = null;
 
@@ -6902,6 +6959,57 @@
                     || (result2 !== null && this.audio2.livePitch > 0);
                 if (!gesungen) this.pegelMessen(this.loudestVolume());
 
+                /* --- Audio-Waechter (1x pro Sekunde) -------------------------
+                 * getFloatTimeDomainData() wirft NIE: bei suspendiertem
+                 * Context liefert sie den eingefrorenen letzten Puffer, bei
+                 * beendetem Track Stille. Ein toter Eingang sieht deshalb
+                 * aus wie ein heiles Spiel, in dem niemand singt — von
+                 * aussen exakt das Symptom des Oktavfehler-Ausfalls, nur
+                 * ohne jede Protokollzeile.
+                 *
+                 * Der Kern der Erkennung ist physikalisch: ein lebendes
+                 * Mikrofon liefert nie ueber Sekunden bit-identisches RMS,
+                 * das Grundrauschen zittert immer in den hinteren
+                 * Nachkommastellen. Drei Pruefungen in Folge exakt derselbe
+                 * Wert heisst: der Graph verarbeitet nichts mehr. Das faengt
+                 * Suspension UND eingefrorene Treiber, ohne den Zustand des
+                 * Contexts kennen zu muessen. Im Duell geht die Summe beider
+                 * Eingaenge ein — ein einzelner toter Dante-Kanal beendet
+                 * den Track nicht.
+                 *
+                 * Vor der Erklaerung zum Toten steht die Selbstheilung: ein
+                 * suspendierter Context wird zuerst per resume() geweckt. */
+                if (this.audio.analyser && now - this._audioCheck > 1000) {
+                    this._audioCheck = now;
+                    const actx = this.audio.audioCtx;
+                    if (actx && actx.state !== 'running') {
+                        Protokoll.schreib('WARNUNG',
+                            `AudioContext "${actx.state}" — resume() angefordert`);
+                        actx.resume().catch(() => { /* tot bleibt tot — faengt der Waechter */ });
+                    }
+                    const puls = this.audio.currentVolume
+                        + (CONFIG.mode === MODE.VERSUS ? this.audio2.currentVolume : 0);
+                    if (puls === this._pulsZuvor) {
+                        this._pulsGleich++;
+                        if (this._pulsGleich >= 3 && !this.audioTot) {
+                            this.audioTot = true;
+                            Protokoll.schreib('WARNUNG',
+                                'AUDIOEINGANG EINGEFROREN — RMS seit 3 s '
+                                + 'bit-identisch. KARAOKOVIC.audioNeustart() '
+                                + 'verbindet neu, Spielstand und Kalibrierung '
+                                + 'bleiben.');
+                        }
+                    } else {
+                        this._pulsGleich = 0;
+                        if (this.audioTot) {
+                            this.audioTot = false;
+                            Protokoll.schreib('AUDIO',
+                                'Eingang liefert wieder Daten');
+                        }
+                    }
+                    this._pulsZuvor = puls;
+                }
+
                 if (this.calibrating) {
                     /* Angezeigt wird der Kanal DESSEN, der gerade einsingt —
                        sonst sieht Spieler 2 die Töne von Spieler 1. */
@@ -6929,6 +7037,7 @@
                     this._scene.abweisung = this.physics.abweisung;
                     this._scene.ruheHaengt = !!this.ruheHaengt;
                     this._scene.raumpegel = this.raumpegel();
+                    this._scene.audioTot = this.audioTot;
                     this.renderer.render(this._scene);
                 }
             } catch (err) {
@@ -7050,6 +7159,52 @@
                 this._lastError = err;
             } else if (this._errorCount === 6) {
                 console.error('[Karaokovic] Weitere Frame-Fehler werden nicht mehr einzeln gemeldet.');
+            }
+        }
+
+        /**
+         * Audio-Signalkette neu aufbauen — Spielstand und Kalibrierung
+         * bleiben unberuehrt.
+         *
+         * Rettungsanker fuer "Dante weg / Context tot": waehrend des Umbaus
+         * laeuft analyse() gefahrlos auf dem alten Analyser weiter
+         * (eingefrorene Werte fuer ein paar Frames, werfen kann sie nicht).
+         * Im Duell nimmt close() den gemeinsamen Context beider Kanaele mit;
+         * initPair() baut beide neu auf und meldet die Kanalzahl — ein
+         * einkanalig zurueckgekehrter Eingang ist der halbe Erfolg und
+         * steht deshalb ausdruecklich im Protokoll.
+         *
+         * Aufruf aus der Konsole: KARAOKOVIC.audioNeustart()
+         *
+         * @returns {Promise<boolean>} true, wenn die Kette wieder steht.
+         */
+        async audioNeustart() {
+            Protokoll.schreib('AUDIO', 'Neuverbindung angefordert');
+            try {
+                if (this.audio.audioCtx) await this.audio.audioCtx.close();
+            } catch (err) { /* bereits tot ist auch in Ordnung */ }
+            try {
+                if (CONFIG.mode === MODE.VERSUS) {
+                    const kanaele = await AudioEngine.initPair(this.audio, this.audio2);
+                    if (kanaele < 2) {
+                        Protokoll.schreib('WARNUNG', `Eingang liefert nur `
+                            + `${kanaele} Kanal — Spieler 2 bleibt stumm`);
+                    }
+                    this.audio2.applyCalibratedFilter(PLAYER.ALEX);
+                } else {
+                    await this.audio.init();
+                }
+                this.audio.applyCalibratedFilter(PLAYER.ANDREA);
+                this.audio.resetSmoothing();
+                this.audio2.resetSmoothing();
+                this.audioTot = false;
+                this._pulsZuvor = -1;
+                this._pulsGleich = 0;
+                Protokoll.schreib('AUDIO', 'Neuverbindung erfolgreich');
+                return true;
+            } catch (err) {
+                Protokoll.schreib('WARNUNG', `Neuverbindung fehlgeschlagen: ${err}`);
+                return false;
             }
         }
 
