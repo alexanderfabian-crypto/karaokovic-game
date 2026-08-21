@@ -7232,12 +7232,30 @@
                            ausgeloest hat. Gedrosselt auf zehn pro Sekunde,
                            sonst stuenden hier 60 Zeilen je Sekunde. */
                         const jetzt = Uhr.jetzt();
-                        if (jetzt - (this._letzterRuheLog || 0) > 100) {
+                        this._ruheResets = (this._ruheResets || 0) + 1;
+                        if (this._ruheResets <= Game.RUHE_EINZELN_BIS) {
+                            if (jetzt - (this._letzterRuheLog || 0) > 100) {
+                                this._letzterRuheLog = jetzt;
+                                Protokoll.schreib('RUHE',
+                                    `zurueckgesetzt, Pegel ${this.loudestVolume().toFixed(3)}`
+                                    + ` (Grenze ${grenze.toFixed(3)}, Raum `
+                                    + `${this.raumpegel().toFixed(3)})`);
+                            }
+                        } else if (jetzt - (this._letzterRuheLog || 0)
+                                   > Game.RUHE_SAMMEL_MS) {
+                            /* Eskalation statt Dauerfeuer: ein unruhiger Saal
+                               erzeugte sonst bis zu zehn Zeilen je Sekunde
+                               und rotierte in einem dreistuendigen Standby
+                               alles andere aus dem Ring. Ab hier eine
+                               Sammelzeile alle zehn Sekunden; Einzelzeilen
+                               gibt es erst wieder, wenn die Ruhe EINMAL
+                               erreicht war. */
                             this._letzterRuheLog = jetzt;
                             Protokoll.schreib('RUHE',
-                                `zurueckgesetzt, Pegel ${this.loudestVolume().toFixed(3)}`
-                                + ` (Grenze ${grenze.toFixed(3)}, Raum `
-                                + `${this.raumpegel().toFixed(3)})`);
+                                `weiterhin gestoert — ${this._ruheResets} `
+                                + `Ruecksetzer in Folge, Pegel zuletzt `
+                                + `${this.loudestVolume().toFixed(3)} (Grenze `
+                                + `${grenze.toFixed(3)})`);
                         }
                         match.resetSilenceTimer();
                     }
@@ -7275,6 +7293,9 @@
                         match.setState(STATE.SERVE_WAIT);
                         this.physics.serveCharge = 0;
                         this.ruheHaengt = false;
+                        /* Ruhe erreicht: die naechste Stoerung wird wieder
+                           einzeln gemeldet (siehe Eskalation oben). */
+                        this._ruheResets = 0;
                     }
                     break;
                 }
@@ -7551,6 +7572,17 @@
      */
     Game.FRAME_LUECKE_MS = 500;
 
+    /**
+     * RUHE-Protokoll: bis zu so vielen Ruecksetzern IN FOLGE wird jede
+     * Stoerung einzeln gemeldet (gedrosselt auf zehn je Sekunde), danach
+     * greift die Sammelzeile. 30 Ruecksetzer sind rund drei Sekunden
+     * Dauerstoerung — ein einzelner Huster ist da laengst vorbei.
+     */
+    Game.RUHE_EINZELN_BIS = 30;
+
+    /** Takt der Sammelzeile, solange die Stoerung anhaelt. */
+    Game.RUHE_SAMMEL_MS = 10000;
+
     /* -------------------------------------------------------------------------
      * Raumpegel-Messung (siehe Game.raumpegel)
      * ---------------------------------------------------------------------- */
@@ -7756,6 +7788,15 @@
         zeilen: [],
         /** Mehr braucht es nicht: rund eine Stunde Betrieb bei dieser Dichte. */
         MAX: 2000,
+        /**
+         * So viele Zeilen am ANFANG ueberleben jede Rotation.
+         *
+         * 50 deckt den kompletten Boot- und Soundcheck-Block ab: Platz,
+         * Skalierungswarnung, AUDIO-Eingang, DISPLAY-Takt, MODUS, UMFANG
+         * und die ersten Zustandswechsel. Alles danach ist Laufgeschehen —
+         * das darf rotieren, die Geburtsurkunde der Session nicht.
+         */
+        KOPF: 50,
         _start: Uhr.jetzt(),
 
         /**
@@ -7766,7 +7807,10 @@
         schreib(bereich, text) {
             const s = ((Uhr.jetzt() - this._start) / 1000).toFixed(1).padStart(7);
             this.zeilen.push(`${s}s  ${bereich.padEnd(9)} ${text}`);
-            if (this.zeilen.length > this.MAX) this.zeilen.shift();
+            /* Rotiert wird HINTER dem Kopf: die ersten KOPF Zeilen bleiben
+               stehen. splice() statt shift() kostet nur im Ueberlauf, und
+               dort hoechstens zehnmal je Sekunde (RUHE ist gedrosselt). */
+            if (this.zeilen.length > this.MAX) this.zeilen.splice(this.KOPF, 1);
         },
 
         /** @returns {string} Das gesamte Protokoll als Text. */
