@@ -133,4 +133,17 @@ game.input._onFocus();
 check('Die Rueckkehr des Fokus ebenfalls',
     /Tastaturfokus wieder/.test(seit(ab)));
 
+/* --- 6. WakeLock: das Display darf die Bildkette nicht beenden ----------- */
+/* Drei Stunden Standby ohne Eingabe heissen ohne Gegenmassnahme: Display
+   schlaeft — und ein schlafendes Display ist die garantierte Pause aus
+   Abschnitt 2. Im Test gibt es keine WakeLock-API; geprueft wird deshalb,
+   dass das SICHTBAR wird statt still zu scheitern. Denn genau darauf
+   verlaesst sich sonst die Betriebsregel im Runbook. */
+ab = zeilenAb();
+game.wachhalten();
+check('Fehlende WakeLock-API steht im Protokoll',
+    /WakeLock nicht verfuegbar/.test(seit(ab)), seit(ab));
+check('Und nennt die Gegenmassnahme',
+    /Display-Ruhezustand im System/.test(seit(ab)));
+
 summary();

@@ -6389,6 +6389,32 @@
             this.hintDiv = document.getElementById('calibHint');
         }
 
+        /**
+         * Display-Schlaf verhindern (Screen Wake Lock).
+         *
+         * Der Lock wird vom System freigegeben, sobald das Fenster verdeckt
+         * oder minimiert wird — deshalb fordert boot() ihn bei jeder
+         * Rueckkehr der Sichtbarkeit neu an; einmal anfordern schuetzte
+         * sonst genau eine Verdeckung lang.
+         *
+         * Scheitert der Aufruf, steht es im Protokoll und die Betriebsregel
+         * greift: Display-Ruhezustand in den Systemeinstellungen aus,
+         * zusaetzlich `caffeinate -dims` im Terminal (Mac).
+         */
+        async wachhalten() {
+            if (!('wakeLock' in navigator)) {
+                Protokoll.schreib('WARNUNG', 'WakeLock nicht verfuegbar — '
+                    + 'Display-Ruhezustand im System deaktivieren');
+                return;
+            }
+            try {
+                this._wakeLock = await navigator.wakeLock.request('screen');
+                Protokoll.schreib('INFO', 'WakeLock aktiv — Display schlaeft nicht');
+            } catch (err) {
+                Protokoll.schreib('WARNUNG', `WakeLock abgelehnt: ${err}`);
+            }
+        }
+
         /** Einmalige Initialisierung: Assets, Canvas, Hotkeys, UI. */
         boot() {
             /* Einmal setzen, bevor irgendetwas gezeichnet wird. HEAD_BOX steht
@@ -6414,7 +6440,13 @@
 
             this.pruefeSkalierung();
             this.bindOnboarding();
-            console.info('[Karaokovic] ARENA-12 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+
+            /* Das System gibt den WakeLock bei Verdeckung frei — bei
+               Rueckkehr der Sichtbarkeit wird er neu angefordert. */
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && this.running) this.wachhalten();
+            });
+            console.info('[Karaokovic] ARENA-13 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**
@@ -6666,6 +6698,8 @@
             this.match.setState(STATE.SILENCE_CHECK);
             this.match.resetSilenceTimer();
             this.running = true;
+            /* Ab jetzt haengt eine Show am Bild. */
+            this.wachhalten();
 
             Protokoll.schreib('MODUS', `${CONFIG.mode}, Start als `
                 + `${sofortMatch ? 'MATCH' : 'EINSPIELEN'}`);
