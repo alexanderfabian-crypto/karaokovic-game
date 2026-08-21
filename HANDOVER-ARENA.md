@@ -293,6 +293,36 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     19 Halbtöne sehen sonst wie ein gesunder Umfang aus) und **eng** (unter
     zwölf Halbtönen). Dazu eine `WARNUNG` beim Start, wenn die
     Anzeigeskalierung nicht auf 100 % steht.
+- **ARENA-13** — Stresstest gegen die verbleibende Fehlerklasse: **lautloses
+  Weiterlaufen im falschen Zustand.** Vier Bausteine, alle nach demselben
+  Muster — erkennen, ins Protokoll, dem Operator ins Bild, und ein
+  Rettungsgriff, der die Show weiterlaufen lässt.
+  - *Lücken-Wächter.* Bei Minimieren, vollständiger Verdeckung oder
+    schlafendem Display steht `requestAnimationFrame`. Die **Physik** übersteht
+    das von selbst — sie zählt Aufrufe, nicht Zeit. Die Zustandsuhren nicht:
+    nach der Lücke galt die Ruhe als erbracht, obwohl niemand gemessen hatte,
+    und `elapsed()` protokollierte eine Hänger-Warnung, die es nie gab. Der
+    Zustandsanker wandert jetzt um die Lücke mit, die Ruhe beginnt neu.
+    Dazu `visibilitychange` (markiert den **Anfang** der Unterbrechung — der
+    Wächter im Loop sieht nur ihr Ende) und der **Tastaturfokus**: die Tastatur
+    folgt dem Fokus, nicht der Sichtbarkeit, nach einem Klick in DevTools ist
+    der Notausgang tot und bisher zeigte das nichts.
+  - *Audio-Wächter.* `getFloatTimeDomainData()` wirft nie — bei suspendiertem
+    Context liefert sie den eingefrorenen letzten Puffer, bei beendetem Track
+    Stille. Ein toter Dante-Feed sah deshalb aus wie ein heiles Spiel, in dem
+    niemand singt: von außen exakt das Symptom des Oktavfehler-Ausfalls, nur
+    ohne jede Protokollzeile. Erkannt wird über **bit-identisches RMS** — ein
+    lebendes Mikrofon liefert das nie über Sekunden, das Grundrauschen zittert
+    immer in den hinteren Nachkommastellen. Dazu Track-Ereignisse, ein
+    `resume()` zur Selbstheilung und **`KARAOKOVIC.audioNeustart()`**: baut die
+    Signalkette neu auf, Spielstand und Kalibrierung bleiben stehen. Die
+    Warnung steht **immer** im Bild, unabhängig von der Messanzeige.
+  - *Protokoll hält drei Stunden durch.* Die ersten 50 Zeilen überleben jede
+    Rotation (Boot und Soundcheck), und eine anhaltende Störung eskaliert zur
+    Sammelzeile statt zu fluten. Vorher hätte ein unruhiger Soundcheck genau
+    die `AUDIO`- und `UMFANG`-Zeilen ausrotiert, für die ARENA-12 gebaut wurde.
+  - *WakeLock ab Spielstart*, neu angefordert bei jeder Rückkehr der
+    Sichtbarkeit — das System gibt ihn bei Verdeckung frei.
 
 ---
 
@@ -302,8 +332,8 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 20.08.2026: 226 Zusicherungen, alle grün, Exit 0.** 17 Testdateien in
-19 Läufen (zwei laufen doppelt, einmal je Fassung).
+**Stand 21.08.2026: 265 Zusicherungen, alle grün, Exit 0.** 20 Testdateien in
+22 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 | Zusicherungen | Test |
 |---:|---|
@@ -320,6 +350,9 @@ node Entwickler-Tests/alle-tests.js       # ~2 min
 | 10 | `test-ruhe-im-laerm.js` — Ruheprüfung im lauten Raum |
 | 14 | `test-kalibrierung-haerte.js` — Kalibrierung gegen Oktavfehler |
 | 13 | `test-hotkeys.js` — Operator-Hotkeys, Ctrl und Alt |
+| 13 | `test-luecke.js` — Pause der Bildkette |
+| 13 | `test-audio-waechter.js` — toter Audioeingang wird erkannt |
+| 13 | `test-protokoll.js` — Protokoll-Kopf und RUHE-Eskalation |
 | 10 | `test-notausgang.js` — Notausgang und Hänger-Erkennung |
 | 4 | `test-gegner.js` — Verhalten des Gegners |
 | 4 | `test-ruhige-figur.js` — Figur steht still bei gehaltenem Ton |
@@ -470,6 +503,27 @@ ein.
   bleibt anklickbar und erklärt das — ein toter Knopf lässt den Bediener
   zweifeln, ob er kaputt ist.
 
+### Betriebsregeln Show-Rechner (Mac)
+
+Bewusst **hier und nicht im Code**: das sind Einstellungen der Maschine, kein
+Verhalten des Spiels. Seit ARENA-13 meldet das Spiel jeden Verstoß im
+Protokoll — die Regeln verhindern ihn.
+
+1. **Chrome mit Flags starten** (Automator-App oder Terminal-Alias):
+   `open -na "Google Chrome" --args --disable-backgrounding-occluded-windows
+   --disable-background-timer-throttling --disable-renderer-backgrounding`
+2. **Energie:** Display-Ruhezustand „Nie", automatisches Sperren aus, aktive
+   Ecken aus, **Netzteil dran** (Chromes Energiesparmodus drosselt auf Akku).
+   Gürtel zum Hosenträger: `caffeinate -dims` in einem offenen Terminal.
+   Der WakeLock aus ARENA-13 ist die dritte Sicherung, nicht die einzige.
+3. **Vor jedem Cue einmal ins Spielfenster klicken.** Die Tastatur folgt dem
+   **Fokus**, nicht der Sichtbarkeit; nach einem Klick in DevTools oder auf den
+   zweiten Monitor kommt `Ctrl+Shift+A` nicht mehr an. Das Protokoll meldet den
+   Verlust — die Regel verhindert ihn.
+4. **Kein Fenster vollflächig über das Spielfenster legen**, auch nicht kurz.
+   Vollständige Verdeckung stoppt die Bildkette; der Lücken-Wächter rettet die
+   Timer, aber die Wand zeigt in dieser Zeit ein stehendes Bild.
+
 ### Vor der Aufzeichnung zu erledigen
 
 1. **Eingangspegel neu einstellen** (Abschnitt 10). Das ist der wichtigste
@@ -495,6 +549,21 @@ ein.
    rechts? Die `AUDIO`-Zeile im Protokoll nennt seit ARENA-11 Gerätenamen,
    Abtastrate, Kanalzahl und ob AGC/NS/EC wirklich aus sind — bei einem
    stummen Spieler 2 ist das die erste Zeile, die man liest.
+5. **Verdeckungstest.** Fenster mitten im Match minimieren, 10 s warten,
+   zurückholen: Protokoll zeigt Anfang (`WARNUNG` verdeckt), Lücke (`WARNUNG`
+   Frame-Lücke) und Ende (`INFO` sichtbar); der Countdown läuft danach
+   **vollständig neu**, und es steht keine Geister-Warnung „Ruhe seit 8 s" da.
+6. **Dante-Test.** DVS im Countdown beenden: binnen rund drei Sekunden rote
+   Zeile im Bild — **ohne** dass die Messanzeige an ist — und `WARNUNG`-Zeilen
+   im Protokoll. DVS starten, `KARAOKOVIC.audioNeustart()` in der Konsole:
+   „Neuverbindung erfolgreich", Spielstand und Kalibrierung unverändert,
+   danach normaler Aufschlag. Suspension isoliert prüfen:
+   `KARAOKOVIC.audio.audioCtx.suspend()` → binnen einer Sekunde Protokollzeile
+   und Selbstheilung per `resume()`.
+7. **Standby-Test.** 30 Minuten Leerlauf in der Aufschlagphase mit laufender
+   PA-Grundlast: Display bleibt an, das Protokoll enthält am **Anfang**
+   weiterhin die Boot- und Soundcheck-Zeilen, der RUHE-Bereich zeigt
+   Sammelzeilen statt einer Flut.
 
 ---
 
@@ -592,7 +661,9 @@ Sonderzeichen belegt und wird je nach Layout vom System abgefangen. Auf
 Windows sind beide gleichwertig.
 
 In der Konsole: `window.KARAOKOVIC` — `.config` (alle Stellschrauben, ohne
-Neuladen wirksam), `.protokoll()`, `.setzePlatz('SAND')`, `.grenzen`,
+Neuladen wirksam), `.protokoll()`, `.umfang()`, **`.audioNeustart()`**
+(Signalkette neu aufbauen, Spielstand und Kalibrierung bleiben),
+`.setzePlatz('SAND')`, `.grenzen`,
 `.match.scoreLine()`.
 
 Das **Protokoll** ist ein Ringspeicher im Arbeitsspeicher (2000 Zeilen),
@@ -616,6 +687,13 @@ Session liest:
 | `UMFANG` | benutzter Stimmumfang je Spieler, mit Tonnamen und Halbtönen |
 | `PERF` | Spitzenlast von `analyse()` über 4 ms im 10-s-Fenster |
 | `OPERATOR` | Eingriffe über die Hotkeys |
+| `INFO` | Fenster wieder sichtbar, Fokus zurück, WakeLock aktiv |
+
+Seit ARENA-13 melden zusätzlich `WARNUNG`-Zeilen die Fehlerklasse
+„läuft lautlos falsch weiter": Frame-Lücke, verdecktes Fenster, verlorener
+Tastaturfokus, eingefrorener oder beendeter Audioeingang, fehlgeschlagener
+WakeLock. Der Ring rotiert dabei **hinter** den ersten 50 Zeilen — Boot und
+Soundcheck stehen nach der Show noch da.
 
 `AUDIO`, `DISPLAY`, `ASSET` und `PERF` sind seit ARENA-11 dabei — die ersten
 drei stehen nach dem Start und beantworten die drei Fragen, die bisher nur
