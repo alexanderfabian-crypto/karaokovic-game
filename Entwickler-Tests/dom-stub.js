@@ -76,7 +76,15 @@ function defineGlobal(name, value) {
 
 defineGlobal('document', {
     getElementById: el,
-    createElement: (tag) => el(`<${tag}>`)
+    createElement: (tag) => el(`<${tag}>`),
+    /* Seit ARENA-13 haengt sich der Luecken-Waechter an
+       `visibilitychange`. Ohne diese beiden Methoden wirft boot() beim
+       Laden — und zwar in JEDEM Node-Test, nicht nur in einem. */
+    addEventListener: noop,
+    removeEventListener: noop,
+    /* Im Stub ist nie etwas verdeckt. Der Handler liest den Wert; dass ihn
+       hier niemand ausloest, aendert daran nichts. */
+    hidden: false
 });
 defineGlobal('window', {
     addEventListener: noop,

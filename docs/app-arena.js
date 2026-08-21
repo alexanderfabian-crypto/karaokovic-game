@@ -6052,7 +6052,18 @@
                nicht wieder abhaengen, und genau den schleichenden Zustand
                soll detach() ja verhindern. Auf der Buehne folgenlos, in den
                Entwickler-Tests nicht. */
-            this._onBlur = () => this._down.clear();
+            this._onBlur = () => {
+                this._down.clear();
+                /* Der eigentliche Buehnenwert dieser Zeile: die Tastatur
+                   folgt dem FOKUS, nicht der Sichtbarkeit. Nach einem Klick
+                   in DevTools oder auf den zweiten Monitor kommt
+                   Ctrl+Shift+A hier nie an — der Notausgang ist tot, und
+                   ohne diese Zeile zeigt das nichts. */
+                Protokoll.schreib('WARNUNG', 'Tastaturfokus verloren — '
+                    + 'Hotkeys kommen nicht an; ins Spielfenster klicken');
+            };
+            this._onFocus = () => Protokoll.schreib('INFO',
+                'Tastaturfokus wieder im Spielfenster');
             /**
              * Welche Tasten gerade gedrückt sind. Nötig, weil der Anpfiff auf
              * eine KOMBINATION reagiert und `keydown` immer nur eine Taste
@@ -6070,6 +6081,7 @@
                außerhalb des Fensters losgelassen wurde, ewig als gedrückt und
                ein späterer einzelner Tastendruck pfeift das Match an. */
             window.addEventListener('blur', this._onBlur);
+            window.addEventListener('focus', this._onFocus);
         }
 
         /** Listener entfernen (für Tests / sauberen Teardown). */
@@ -6077,6 +6089,7 @@
             window.removeEventListener('keydown', this._onKeyDown);
             window.removeEventListener('keyup', this._onKeyUp);
             window.removeEventListener('blur', this._onBlur);
+            window.removeEventListener('focus', this._onFocus);
         }
 
         /** @param {KeyboardEvent} e */
@@ -6330,6 +6343,17 @@
 
             window.addEventListener('resize', () => this.handleResize());
             this.handleResize();
+
+            /* Verdeckung ins Protokoll: der Luecken-Waechter im Loop sieht
+               nur das ENDE einer Unterbrechung — waehrenddessen laeuft kein
+               Frame. Dieses Ereignis markiert den ANFANG; zusammen ergeben
+               beide Zeilen die Dauer. */
+            document.addEventListener('visibilitychange', () => {
+                Protokoll.schreib(document.hidden ? 'WARNUNG' : 'INFO',
+                    document.hidden
+                        ? 'Fenster verdeckt/minimiert — Bildkette steht'
+                        : 'Fenster wieder sichtbar');
+            });
 
             this.pruefeSkalierung();
             this.bindOnboarding();
@@ -6812,6 +6836,30 @@
         loop(now) {
             try {
                 this.messeBildrate(now);
+
+                /* --- Luecken-Waechter ----------------------------------------
+                 * rAF steht bei Minimieren, vollstaendiger Verdeckung oder
+                 * schlafendem Display. Die Physik uebersteht das von selbst —
+                 * sie zaehlt Aufrufe, nicht Zeit, und glideStep() kennt kein
+                 * Delta. Die Zustands-Uhren laufen aber weiter: nach der
+                 * Luecke gaelte die Ruhe als erbracht, obwohl niemand
+                 * gemessen hat, Ablaeufe springen ans Ende, und elapsed()
+                 * ueber 8 s protokollierte eine unberechtigte
+                 * "Ruhe seit 8 s"-Warnung.
+                 *
+                 * Deshalb: Zustandsanker um die Luecke verschieben (fuer die
+                 * Zustandsmaschine ist keine Zeit vergangen) und die Ruhe
+                 * konservativ NEU beginnen — was waehrend der Luecke im Raum
+                 * war, hat niemand gehoert, und ungehoert ist ungeprueft. */
+                const luecke = now - this._lastFrameTime;
+                if (this.running && this._lastFrameTime > 0
+                    && luecke > Game.FRAME_LUECKE_MS) {
+                    this.match.stateTimer += luecke;
+                    this.match.resetSilenceTimer();
+                    Protokoll.schreib('WARNUNG',
+                        `Frame-Luecke ${Math.round(luecke)} ms (Fenster `
+                        + `verdeckt? Display aus?) — Timer neu verankert`);
+                }
 
                 const t0 = Uhr.jetzt();
                 const result = this.audio.analyse();
@@ -7337,6 +7385,16 @@
      * wurde, steht offensichtlich etwas Dauerhaftes im Raum.
      */
     Game.RUHE_WARNUNG_MS = 8000;
+
+    /**
+     * Ab so vielen Millisekunden zwischen zwei Frames gilt die Bildkette als
+     * unterbrochen (Fenster minimiert, vollstaendig verdeckt, Display aus).
+     *
+     * 500 ms sind das Zwanzigfache eines normalen Frames und das Doppelte
+     * der 250-ms-Klemme des Fixed-Timestep-Notnagels: kein regulaerer
+     * Haenger kommt hier hinein, jede echte Unterbrechung schon.
+     */
+    Game.FRAME_LUECKE_MS = 500;
 
     /* -------------------------------------------------------------------------
      * Raumpegel-Messung (siehe Game.raumpegel)
