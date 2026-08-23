@@ -1,27 +1,30 @@
 /* =============================================================================
- * TEST: Wessen Stimme lenkt den Aufschlag? (nur Arena-Fassung)
+ * TEST: Wessen Stimme gibt den Aufschlag frei? (nur Arena-Fassung)
  *
- * Der Fehler, der diesen Test veranlasst hat: `triggerServe()` las die Tonhöhe
- * fest aus Spieler 1s Eingang. Solange Alex eine KI war, gab es nur eine Stimme
- * im Raum und das fiel nicht auf. Im Duell schlug Alex dagegen mit ANDREAS
- * letztem Ton auf — sein Ball flog dorthin, wohin sie zuletzt gesungen hatte.
+ * Der Fehler, der diesen Test veranlasst hat: die Aufschlagslogik las die
+ * Tonhoehe fest aus Spieler 1s Eingang. Solange Alex eine KI war, gab es nur
+ * eine Stimme im Raum und das fiel nicht auf. Im Duell wurde Alex' Aufschlag
+ * dagegen von ANDREAS Ton gesteuert.
  *
- * Der Fehler hatte zwei Hälften, und dieser Test prüft beide getrennt:
+ * Der Fehler hatte zwei Haelften, und dieser Test prueft beide:
  *
  *   1. Falscher EINGANG    — `audio` statt `audio2`.
- *   2. Falscher STIMMUMFANG — die Abbildung Ton -> Feldposition ist je Spieler
- *      kalibriert. Ohne den zweiten Parameter wurde Alex' Tonhöhe durch Andreas
- *      Umfang gerechnet; der Ball wäre selbst bei richtigem Eingang schief
- *      geflogen.
+ *   2. Falscher STIMMUMFANG — die Abbildung Ton -> Anteil ist je Spieler
+ *      kalibriert. Ohne den zweiten Parameter wurde Alex' Tonhoehe durch
+ *      Andreas Umfang gerechnet.
  *
- * Damit beide Hälften sichtbar werden, bekommen die Spieler ABSICHTLICH
- * verschiedene Stimmumfänge UND verschiedene anliegende Töne. Jede der vier
- * Kombinationen (richtiger/falscher Eingang x richtiger/falscher Umfang) ergibt
- * dann eine andere Zielposition.
+ * WAS SICH MIT ARENA-14 GEAENDERT HAT: Bis dahin lenkte der Ton die
+ * FLUGRICHTUNG des Aufschlags, und der Test rechnete sie aus `vx`/`vy`
+ * zurueck. Seit "Relative Pitch" wird die Richtung gewuerfelt — der Ton
+ * entscheidet stattdessen, OB ueberhaupt aufgeschlagen wird (er muss in der
+ * mittleren Zuendzone des eigenen Umfangs liegen).
  *
- * Geprüft wird die tatsächliche Flugrichtung des Balles, nicht ein Zwischen-
- * wert: aus `vx`/`vy` lässt sich der Zielpunkt exakt zurückrechnen, weil
- * triggerServe() die Geschwindigkeit genau auf diesen Punkt ausrichtet.
+ * Die beiden Haelften des alten Fehlers sind damit NICHT erledigt, sie sind
+ * umgezogen: sie entscheiden jetzt, wessen Umfang die Zuendzone misst. Genau
+ * dort prueft dieser Test sie — und zwar schaerfer als zuvor, weil ein
+ * einziges Flag beide Haelften zugleich beantwortet: die Toene sind so
+ * gewaehlt, dass `zentriert` nur bei richtigem Eingang UND richtigem Umfang
+ * wahr werden kann.
  *
  * Start: node Entwickler-Tests/test-duell-aufschlag.js
  * ========================================================================== */
@@ -31,129 +34,99 @@
 const { loadGame, check, summary } = require('./dom-stub.js');
 const game = loadGame('../app-arena.js');
 const { audio, audio2, match, physics, PLAYER, MODE } = game;
+const Physics = game.Physics;
 
-const G = game.grenzen;
-const COURT_HEIGHT = G.bottom - G.top;
-
-/* Duell-Modus: nur so greift die Fallunterscheidung in serverAudio(). */
-game.config.mode = MODE.VERSUS;
-
-/* Deutlich verschiedene Umfänge. Derselbe Ton landet dadurch je nach
-   Kalibrierung an ganz anderer Stelle im Feld. */
-game.setVoiceRange(PLAYER.ANDREA, 110, 330);
-game.setVoiceRange(PLAYER.ALEX, 80, 240);
-
-const TON_ANDREA = 190;   // liegt an Spieler 1s Eingang
-const TON_ALEX = 150;     // liegt an Spieler 2s Eingang
+/* Absichtlich WEIT auseinanderliegende Umfaenge: nur so ergibt jede
+   Verwechslung von Eingang oder Umfang ein anderes Ergebnis. */
+game.config.minFreq = 100;  game.config.maxFreq = 300;   // Andrea
+game.config.minFreq2 = 400; game.config.maxFreq2 = 900;  // Alex
 
 /**
- * Zielpunkt des Aufschlags, wie ihn triggerServe() berechnen SOLLTE.
- * Spiegelt die Klemmung auf das Feld aus triggerServe() wider.
- * @param   {number} freq
- * @param   {string} player Wert aus PLAYER
- * @returns {number} X in Weltkoordinaten
+ * Die Frequenz, die fuer `player` genau bei Anteil `p` liegt.
+ * Umkehrung von Physics.aufschlagProzent().
  */
-function erwartetesZiel(freq, player) {
-    const tx = physics.freqToQuantizedX(freq, player);
-    return Math.max(G.left + G.alley + 20, Math.min(G.right - G.alley - 20, tx));
+function tonBei(p, player) {
+    const r = Physics.voiceRange(player);
+    const minMidi = 12 * Math.log2(r.min / 440) + 69;
+    const maxMidi = 12 * Math.log2(r.max / 440) + 69;
+    return 440 * Math.pow(2, (minMidi + p * (maxMidi - minMidi) - 69) / 12);
 }
 
+/* Jeder Eingang liegt in der MITTE SEINES EIGENEN Umfangs — und damit weit
+   ausserhalb des jeweils anderen. */
+const TON_ANDREA = tonBei(0.5, PLAYER.ANDREA);
+const TON_ALEX = tonBei(0.5, PLAYER.ALEX);
+audio.smoothedPitch = TON_ANDREA;
+audio2.smoothedPitch = TON_ALEX;
+audio.currentVolume = 0;
+audio2.currentVolume = 0;
+
+console.log(`Toene: Andrea ${TON_ANDREA.toFixed(1)} Hz (Mitte 100–300),`
+    + ` Alex ${TON_ALEX.toFixed(1)} Hz (Mitte 400–900)`);
+
 /**
- * Einen Aufschlag ausführen und den Zielpunkt aus der Flugrichtung zurück-
- * rechnen.
- *
- * `triggerServe()` richtet (vx, vy) exakt auf (tx, ty) aus, also gilt
- * tx = x + (vx / vy) * (ty - y). Die Rückrechnung ist damit exakt und nicht
- * etwa eine Näherung über simulierte Frames.
- *
+ * Einen Frame in der Aufschlagphase fahren und die Anzeige zurueckgeben.
  * @param   {string} server Wert aus PLAYER
- * @returns {number} Tatsächlicher Zielpunkt in X
+ * @returns {{prozent:number, zentriert:boolean}}
  */
-function aufschlagZiel(server) {
+function aufschlagAnzeige(server) {
     match.server = server;
-    physics.prepareServe();          // setzt beide smoothedPitch auf -1
-
-    /* ERST danach die Töne anlegen — prepareServe() räumt sie weg. */
-    audio.smoothedPitch = TON_ANDREA;
-    audio2.smoothedPitch = TON_ALEX;
-
-    physics.triggerServe();
-
-    const b = physics.ball;
-    const ty = server === PLAYER.ANDREA
-        ? G.top + COURT_HEIGHT * 0.35
-        : G.bottom - COURT_HEIGHT * 0.35;
-    return b.x + (b.vx / b.vy) * (ty - b.y);
+    match.state = 'SERVE_WAIT';
+    physics.update();
+    return physics.aufschlagAnzeige;
 }
 
-/* --- 1. Spieler 2 schlägt auf — der eigentliche Fehlerfall ---------------- */
-const zielAlex = aufschlagZiel(PLAYER.ALEX);
+/* Vorbedingung: der jeweils FALSCHE Umfang muss ein deutlich anderes
+   Ergebnis liefern, sonst bewiese ein gruener Lauf nichts. */
+const falschUmfang = Physics.aufschlagProzent(TON_ALEX, PLAYER.ANDREA);
+const falschEingang = Physics.aufschlagProzent(TON_ANDREA, PLAYER.ALEX);
+console.log(`Gegenrechnung: Alex' Ton durch Andreas Umfang = `
+    + `${(falschUmfang * 100).toFixed(0)} %, Andreas Ton durch Alex' Umfang = `
+    + `${(falschEingang * 100).toFixed(0)} %`);
+check('Testaufbau taugt: beide Verwechslungen liegen weit ausserhalb der Zone',
+    Math.abs(falschUmfang - 0.5) > 0.4 && Math.abs(falschEingang - 0.5) > 0.4,
+    `${(falschUmfang * 100).toFixed(0)} % / ${(falschEingang * 100).toFixed(0)} %`);
 
-const richtig = erwartetesZiel(TON_ALEX, PLAYER.ALEX);
-const falscherEingang = erwartetesZiel(TON_ANDREA, PLAYER.ALEX);
-const falscherUmfang = erwartetesZiel(TON_ALEX, PLAYER.ANDREA);
-const beidesFalsch = erwartetesZiel(TON_ANDREA, PLAYER.ANDREA);   // Stand vor dem Fix
+/* --- 1. Spieler 2 schlaegt auf — der eigentliche Fehlerfall -------------- */
+game.config.mode = MODE.VERSUS;
+const alex = aufschlagAnzeige(PLAYER.ALEX);
+console.log(`\nAufschlag Spieler 2 (Alex): ${(alex.prozent * 100).toFixed(1)} %`);
 
-console.log('\nAufschlag Spieler 2 (Alex), Ziel-X im Feld:');
-console.log(`  richtig (Ton ${TON_ALEX} Hz, Umfang Alex)        ${richtig.toFixed(1)}`);
-console.log(`  nur Eingang falsch                              ${falscherEingang.toFixed(1)}`);
-console.log(`  nur Umfang falsch                               ${falscherUmfang.toFixed(1)}`);
-console.log(`  beides falsch (Stand vor dem Fix)               ${beidesFalsch.toFixed(1)}`);
-console.log(`  TATSÄCHLICH geflogen                            ${zielAlex.toFixed(1)}`);
+check('Spieler 2 wird an der EIGENEN Stimme gemessen — Eingang UND Umfang',
+    alex.zentriert === true, `${(alex.prozent * 100).toFixed(1)} %`);
+check('Und liegt damit genau in der Mitte',
+    Math.abs(alex.prozent - 0.5) < 0.01, `${alex.prozent.toFixed(4)}`);
 
-/* Vorbedingung des Tests: die vier Fälle müssen unterscheidbar sein, sonst
-   bewiese ein grüner Lauf gar nichts. */
-const spanne = [richtig, falscherEingang, falscherUmfang, beidesFalsch];
-const alleVerschieden = new Set(spanne.map(v => v.toFixed(1))).size === 4;
-check('Testaufbau taugt: alle vier Fälle liegen an verschiedenen Stellen',
-    alleVerschieden, spanne.map(v => v.toFixed(1)).join(' / '));
+/* --- 2. Spieler 1 schlaegt auf — darf sich nicht veraendert haben -------- */
+const andrea = aufschlagAnzeige(PLAYER.ANDREA);
+console.log(`Aufschlag Spieler 1 (Andrea): ${(andrea.prozent * 100).toFixed(1)} %`);
+check('Spieler 1 unveraendert an der eigenen Stimme',
+    andrea.zentriert === true && Math.abs(andrea.prozent - 0.5) < 0.01,
+    `${(andrea.prozent * 100).toFixed(1)} %`);
 
-check('Spieler 2 schlägt mit der EIGENEN Stimme auf',
-    Math.abs(zielAlex - richtig) < 0.5,
-    `${zielAlex.toFixed(1)} statt ${richtig.toFixed(1)}`);
-check('Nicht mehr mit Spieler 1s Ton (der ursprüngliche Fehler)',
-    Math.abs(zielAlex - beidesFalsch) > 1,
-    `Abstand ${Math.abs(zielAlex - beidesFalsch).toFixed(1)} px`);
-check('Und durch den eigenen Stimmumfang gerechnet',
-    Math.abs(zielAlex - falscherUmfang) > 1,
-    `Abstand ${Math.abs(zielAlex - falscherUmfang).toFixed(1)} px`);
-
-/* --- 2. Spieler 1 schlägt auf — darf sich nicht verändert haben ----------- */
-const zielAndrea = aufschlagZiel(PLAYER.ANDREA);
-const richtigAndrea = erwartetesZiel(TON_ANDREA, PLAYER.ANDREA);
-
-console.log('\nAufschlag Spieler 1 (Andrea), Ziel-X im Feld:');
-console.log(`  richtig (Ton ${TON_ANDREA} Hz, Umfang Andrea)    ${richtigAndrea.toFixed(1)}`);
-console.log(`  TATSÄCHLICH geflogen                            ${zielAndrea.toFixed(1)}`);
-
-check('Spieler 1 schlägt unverändert mit der eigenen Stimme auf',
-    Math.abs(zielAndrea - richtigAndrea) < 0.5,
-    `${zielAndrea.toFixed(1)} statt ${richtigAndrea.toFixed(1)}`);
-
-/* --- 3. Arcade-Modus: die KI hat keine Stimme ----------------------------- *
- * Schlägt Alex im Arcade-Modus auf, muss weiterhin die einzige Stimme im Raum
- * den Ball lenken — sonst stünde der Aufschlag still, weil an audio2 nie etwas
- * anliegt. Genau diese Ausnahme steht in serverAudio().
- *
- * Und sie zieht den Stimmumfang mit: gelesen wird Andreas Mikrofon, also muss
- * auch ANDREAS Kalibrierung gelten, obwohl Alex aufschlägt. Alex' Umfang wird
- * im Arcade-Modus nie eingesungen und stünde auf seinen Vorgabewerten.
- * ------------------------------------------------------------------------- */
+/* --- 3. Arcade-Modus: die KI hat keine Stimme ---------------------------- *
+ * Schlaegt Alex im Arcade-Modus auf, muss weiterhin die einzige Stimme im
+ * Raum zaehlen — sonst stuende der Aufschlag still, weil an audio2 nie etwas
+ * anliegt. Und sie zieht den Umfang mit: gelesen wird Andreas Mikrofon, also
+ * gilt auch ANDREAS Kalibrierung, obwohl Alex aufschlaegt. Alex' Umfang wird
+ * im Arcade-Modus nie eingesungen.
+ * ------------------------------------------------------------------------ */
 game.config.mode = MODE.ARCADE;
-const zielArcade = aufschlagZiel(PLAYER.ALEX);
-const arcadeErwartet = erwartetesZiel(TON_ANDREA, PLAYER.ANDREA);
-const arcadeFalscherUmfang = erwartetesZiel(TON_ANDREA, PLAYER.ALEX);
+const arcade = aufschlagAnzeige(PLAYER.ALEX);
+console.log(`Aufschlag Alex im Arcade-Modus: ${(arcade.prozent * 100).toFixed(1)} %`);
+check('Im Arcade-Modus zaehlt die einzige Stimme im Raum',
+    arcade.zentriert === true, `${(arcade.prozent * 100).toFixed(1)} %`);
+check('Und wird durch DEREN Umfang gerechnet, nicht durch den des Aufschlaegers',
+    Math.abs(arcade.prozent - 0.5) < 0.01
+    && Math.abs(arcade.prozent - falschEingang) > 0.4,
+    `${arcade.prozent.toFixed(4)} vs. falsch ${falschEingang.toFixed(4)}`);
 
-console.log('\nAufschlag Alex im Arcade-Modus (KI, keine eigene Stimme):');
-console.log(`  erwartet (Stimme im Raum, Umfang Andrea)        ${arcadeErwartet.toFixed(1)}`);
-console.log(`  falsch (Umfang des Aufschlägers)                ${arcadeFalscherUmfang.toFixed(1)}`);
-console.log(`  TATSÄCHLICH geflogen                            ${zielArcade.toFixed(1)}`);
-
-check('Im Arcade-Modus lenkt weiterhin die einzige Stimme den Aufschlag',
-    Math.abs(zielArcade - arcadeErwartet) < 0.5,
-    `${zielArcade.toFixed(1)} statt ${arcadeErwartet.toFixed(1)}`);
-check('Und wird durch DEREN Umfang gerechnet, nicht durch den des Aufschlägers',
-    Math.abs(zielArcade - arcadeFalscherUmfang) > 1,
-    `Abstand ${Math.abs(zielArcade - arcadeFalscherUmfang).toFixed(1)} px`);
+/* --- 4. Ein Ton ausserhalb der Zone gibt NICHT frei ---------------------- */
+game.config.mode = MODE.VERSUS;
+audio2.smoothedPitch = tonBei(0.85, PLAYER.ALEX);
+const daneben = aufschlagAnzeige(PLAYER.ALEX);
+check('Ein Ton am oberen Rand des eigenen Umfangs gibt nicht frei',
+    daneben.zentriert === false, `${(daneben.prozent * 100).toFixed(1)} %`);
+audio2.smoothedPitch = TON_ALEX;
 
 summary();

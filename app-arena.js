@@ -171,6 +171,16 @@
         serveVolume: 0.022,
 
         /**
+         * OHNE WIRKUNG SEIT ARENA-14 — KEIN AUFRUFER MEHR.
+         *
+         * Gelesen wird dieser Wert nur noch von Physics.aufschlagTonPasst(),
+         * und die ruft seit dem Sprint "Relative Pitch" niemand mehr auf: der
+         * Aufschlag haengt jetzt an der Zuendzone in der Stimmmitte, nicht
+         * mehr an einer Toleranz um den ganzen Umfang. Beides steht noch da,
+         * weil das Entfernen ein eigener Durchgang mit eigenem Testlauf ist —
+         * NICHT, weil es noch etwas tut. Wer hier dreht, aendert nichts.
+         * Der lebende Regler heisst Physics.AUFSCHLAG_MITTE_BREITE.
+         *
          * Wie weit der Aufschlagton ausserhalb des eingesungenen Umfangs
          * liegen darf, in Halbtoenen nach oben wie nach unten.
          *
@@ -2042,6 +2052,16 @@
             this.serveCharge = 0;
 
             /**
+             * Feldhaelfte des letzten Aufschlags je Spieler: -1 links,
+             * +1 rechts, 0 = noch keiner. Reine Anti-Wiederholung fuer den
+             * randomisierten Aufschlag (siehe triggerServe()) — verhindert
+             * eine zufaellige Serie "immer dieselbe Ecke", die sich fuer das
+             * Publikum wie ein Muster liest, obwohl der Wuerfel bloss so
+             * gefallen ist.
+             */
+            this._aufschlagSeite = { andrea: 0, alex: 0 };
+
+            /**
              * @type {boolean} Sperrt die Seitwärtsbewegung nach dem Aufschlag.
              *
              * Der Aufschlag wird durch den GESUNGENEN Ton ausgelöst — im Moment
@@ -2068,7 +2088,21 @@
              * je Sekunde. Dieselbe Ueberlegung wie beim Pegel- und beim
              * Kalibrier-Ringspeicher.
              */
-            this.abweisung = { bis: 0, zuHoch: false };
+            this.abweisung = { bis: 0, richtung: 'kein' };
+
+            /**
+             * Live-Anzeige fuer den Zielzonen-Meter im Zustand SERVE_WAIT
+             * (siehe Renderer.drawServePrompt). Laeuft JEDEN Frame mit
+             * erkanntem Ton mit, nicht nur bei einem Ausloeseversuch — das
+             * ist die Antwort auf die "UI-Falle": die Zone ist sichtbar,
+             * bevor man ueberhaupt laut genug ist, um es zu versuchen.
+             *   prozent    Position im kalibrierten Umfang, 0..1
+             *              (Overdrive: kann auch ausserhalb liegen)
+             *   zentriert  true, wenn prozent in der mittleren Zuendzone
+             *              liegt (siehe AUFSCHLAG_MITTE_BREITE)
+             *   aktiv      false, solange kein Ton erkannt wird
+             */
+            this.aufschlagAnzeige = { prozent: 0.5, zentriert: false, aktiv: false };
             /** @type {number} Schläge von Andrea im laufenden Ballwechsel. */
             this.rallyShots = 0;
 
@@ -2106,12 +2140,7 @@
          * @returns {number} X-Position in Weltkoordinaten
          */
         freqToQuantizedX(freq, player) {
-            const range = Physics.voiceRange(player);
-            const minMidi = 12 * Math.log2(range.min / 440) + 69;
-            const maxMidi = 12 * Math.log2(range.max / 440) + 69;
-            const midiNote = 12 * Math.log2(freq / 440) + 69;
-
-            const percentage = (midiNote - minMidi) / (maxMidi - minMidi);
+            const percentage = Physics.aufschlagProzent(freq, player);
             const target = COURT_LEFT + percentage * COURT_WIDTH;
 
             return Math.max(
@@ -2252,6 +2281,14 @@
         }
 
         /**
+         * OHNE AUFRUFER SEIT ARENA-14 — siehe CONFIG.aufschlagToleranzHalbtoene.
+         *
+         * Ersetzt durch die Zuendzone in der Stimmmitte (update(), Block
+         * SERVE_WAIT, Physics.AUFSCHLAG_MITTE_BREITE). Steht noch da, weil
+         * das Entfernen ein eigener Durchgang ist; geprueft wird sie von
+         * nichts mehr, ihr frueherer Test ist test-aufschlag-mitte.js
+         * gewichen.
+         *
          * Taugt der anliegende Ton zum Ausloesen eines Aufschlags?
          *
          * Nur die Tonhoehe wird geprueft, nicht die Lautstaerke — die haengt
@@ -2342,42 +2379,47 @@
 
             /* ACHTUNG: `tx` ist der Zielpunkt des BALLES und bewusst eine rein
                lokale Größe. Sie darf niemals nach `this.targetX` geschrieben
-               werden — das ist die Zielposition der FIGUR. Beides aus derselben
-               Tonhöhe abzuleiten ist richtig, sie zu koppeln nicht: der Ball
-               soll dorthin fliegen, wohin gesungen wurde, die Aufschlägerin
-               aber stehen bleiben. */
-            /* Gelesen wird der Eingang DES AUFSCHLÄGERS, nicht fest Spieler 1.
-               Solange Alex eine KI war, gab es nur eine Stimme im Raum und die
-               Unterscheidung war folgenlos. Im Duell schlug Alex dagegen mit
-               Andreas letztem Ton auf: sein Ball flog dorthin, wohin SIE zuletzt
-               gesungen hatte. Dieselbe Fallunterscheidung wie beim Auslösen des
-               Aufschlags — dort steht sie seit jeher in serverAudio().
+               werden — das ist die Zielposition der FIGUR. Seit der Ball
+               gewuerfelt wird, waere das doppelt falsch: die Aufschlaegerin
+               spraenge dann an eine Stelle, die mit ihrem Ton gar nichts zu
+               tun hat. */
+            /* ZUFALLSAUFSCHLAG statt gezielter Ton (Sprint "Relative Pitch").
+               Der Ton, der ausloest, ist jetzt IMMER die Mitte der eigenen
+               Stimme (siehe update(), Physics.AUFSCHLAG_MITTE_BREITE) — er
+               taugt deshalb nicht mehr als Zielangabe, und genau das ist der
+               Punkt: die Spielerin zentriert sich vor jedem Ballwechsel
+               zwangsweise klanglich, statt den inneren Nullpunkt beim
+               naechsten Return zu verlieren.
 
-               Der Stimmumfang muss mitwandern: die Abbildung Ton -> Feldposition
-               ist je Spieler kalibriert. Ohne den zweiten Parameter wäre Alex'
-               Tonhöhe durch Andreas Umfang gerechnet worden — der Ball wäre
-               selbst bei richtigem Eingang schief geflogen.
+               WOHIN DIE ALTE BEGRUENDUNG GEWANDERT IST: hier stand bis
+               ARENA-13 der Hinweis, dass Eingang UND Stimmumfang vom
+               AUFSCHLAEGER kommen muessen und dass dabei der EINGANG
+               massgeblich ist, nicht `match.server` (im Arcade-Modus liest
+               serverAudio() bei Alex' Aufschlag Andreas Mikrofon, weil die KI
+               keine Stimme hat). Das gilt unveraendert — es entscheidet jetzt
+               nur nicht mehr ueber die Flugrichtung, sondern darueber, wessen
+               Umfang die Zuendzone misst. Die Stelle steht in update(),
+               Block SERVE_WAIT.
 
-               Maßgeblich ist dabei der EINGANG, nicht der Aufschläger. Der
-               Unterschied zählt nur im Arcade-Modus, dort aber sofort: schlägt
-               die KI auf, liefert serverAudio() Andreas Mikrofon, weil die KI
-               keine Stimme hat. Mit `match.server` als Umfang wäre ihr Ton dann
-               durch Alex' Kalibrierung gerechnet worden — die im Arcade-Modus
-               nie eingesungen wird und auf ihren Vorgabewerten steht. Deshalb
-               wird der Umfang aus dem gewählten Eingang abgeleitet und nicht aus
-               der Bedingung in serverAudio() nachgebaut: so können die beiden
-               gar nicht erst auseinanderlaufen. */
-            const aufschlagTon = this.serverAudio();
-            const tonUmfang = (aufschlagTon === this.audio2) ? PLAYER.ALEX : PLAYER.ANDREA;
-            let tx = (aufschlagTon.smoothedPitch !== -1)
-                ? this.freqToQuantizedX(aufschlagTon.smoothedPitch, tonUmfang)
-                : (VIRTUAL_WIDTH / 2);
+               Leichte Anti-Wiederholung: dieselbe Feldhaelfte wie beim
+               letzten eigenen Aufschlag wird mit 60% Wahrscheinlichkeit
+               verworfen — nicht ausgeschlossen, sonst waere die Serie selbst
+               wieder ein erkennbares Muster ("nie zweimal rechts"). */
+            const minX = COURT_LEFT + ALLEY_WIDTH + 20;
+            const maxX = COURT_RIGHT - ALLEY_WIDTH - 20;
+            const mitteX = (minX + maxX) / 2;
+            const spanne = (maxX - minX) / 2;
 
-            /* Der Aufschlag selbst muss im Feld landen -> hier wird geklemmt. */
-            tx = Math.max(
-                COURT_LEFT + ALLEY_WIDTH + 20,
-                Math.min(COURT_RIGHT - ALLEY_WIDTH - 20, tx)
-            );
+            let seite = Math.random() < 0.5 ? -1 : 1;
+            const zuvor = this._aufschlagSeite[this.match.server] || 0;
+            if (seite === zuvor && Math.random() < 0.6) seite *= -1;
+            this._aufschlagSeite[this.match.server] = seite;
+
+            /* 30-100% der halben Feldbreite von der Mitte weg — nie exakt
+               mittig (das saehe wie ein misslungener Aufschlag aus), nie ganz
+               am Rand (das waere unmoeglich zu erreichen). */
+            let tx = mitteX + seite * (0.3 + Math.random() * 0.7) * spanne;
+            tx = Math.max(minX, Math.min(maxX, tx));
             /* Aufschlagrichtung: immer in die gegnerische Hälfte. */
             const ty = servedByAndrea
                 ? COURT_TOP + (COURT_HEIGHT * 0.35)
@@ -2607,49 +2649,58 @@
 
                 if (match.state === STATE.SERVE_WAIT) {
                     const ton = this.serverAudio();
-                    const passt = this.aufschlagTonPasst(ton);
-                    if (!passt && ton.currentVolume >= CONFIG.serveVolume) {
-                        /* Sichtbar machen, sonst sieht es aus wie ein Aufschlag,
-                           der einfach nicht reagiert — genau der Befund, den
-                           die Ampel schon einmal ausgeloest hat. */
-                        const spieler = (ton === this.audio2)
-                            ? PLAYER.ALEX : PLAYER.ANDREA;
-                        const r = Physics.voiceRange(spieler);
-                        const spielraum =
-                            Math.pow(2, CONFIG.aufschlagToleranzHalbtoene / 12);
-                        const hz = ton.smoothedPitch;
-                        const zuHoch = hz > r.max * spielraum;
+                    const spieler = (ton === this.audio2) ? PLAYER.ALEX : PLAYER.ANDREA;
+                    const halb = Physics.AUFSCHLAG_MITTE_BREITE / 2;
 
-                        /* Fuer das Bild: der Grund steht unter "AUFSCHLAG!"
-                           (siehe Renderer.drawServePrompt), solange abgewiesen
-                           wird, plus Nachlauf gegen Flackern. */
+                    /* --- Ambient-Anzeige: JEDEN Frame, unabhaengig von der
+                       Lautstaerke. Das ist die Antwort auf die UI-Falle: die
+                       Zone ist sichtbar, bevor ueberhaupt ein Versuch moeglich
+                       ist. Ohne erkannten Ton bleibt der Marker auf der
+                       letzten Position stehen, aber gedimmt (siehe Renderer).
+
+                       Der UMFANG kommt vom EINGANG, nicht vom Aufschlaeger —
+                       dieselbe Unterscheidung wie seit jeher in serverAudio():
+                       im Arcade-Modus liest sie bei Alex' Aufschlag Andreas
+                       Mikrofon, weil die KI keine Stimme hat. Mit
+                       `match.server` als Umfang waere ihr Ton durch Alex'
+                       nie eingesungene Kalibrierung gerechnet worden. */
+                    if (ton.smoothedPitch > 0) {
+                        this.aufschlagAnzeige.prozent =
+                            Physics.aufschlagProzent(ton.smoothedPitch, spieler);
+                        this.aufschlagAnzeige.aktiv = true;
+                    } else {
+                        this.aufschlagAnzeige.aktiv = false;
+                    }
+                    const zentriert = this.aufschlagAnzeige.aktiv
+                        && this.aufschlagAnzeige.prozent >= 0.5 - halb
+                        && this.aufschlagAnzeige.prozent <= 0.5 + halb;
+                    this.aufschlagAnzeige.zentriert = zentriert;
+
+                    if (!zentriert && ton.currentVolume >= CONFIG.serveVolume) {
+                        /* Sichtbar machen, sonst sieht es aus wie ein Aufschlag,
+                           der einfach nicht reagiert. Unter dem neuen Modus ist
+                           "noch nicht zentriert" der NORMALFALL am Anfang jedes
+                           Aufschlags — die alte Oktav-Diagnose an dieser Stelle
+                           ist deshalb entfallen, sie deutete auf einen
+                           Kalibrierfehler, wo jetzt schlicht noch gesucht wird. */
                         this.abweisung.bis = Uhr.jetzt() + Physics.ABWEISUNG_NACHLAUF_MS;
-                        this.abweisung.zuHoch = zuHoch;
+                        this.abweisung.richtung = !this.aufschlagAnzeige.aktiv ? 'kein'
+                            : (this.aufschlagAnzeige.prozent > 0.5 + halb ? 'hoch' : 'tief');
 
                         if (Uhr.jetzt() - (this._tonAbgewiesen || 0) > 700) {
                             this._tonAbgewiesen = Uhr.jetzt();
-                            /* OKTAV-DIAGNOSE. Laege der Ton eine Oktave
-                               versetzt IM Umfang, ist mit hoher Sicherheit
-                               die KALIBRIERUNG oktavfalsch — genau der
-                               Buehnenausfall, der von Hand aus den
-                               2:1-Verhaeltnissen im Protokoll
-                               zurueckgerechnet werden musste. Ab jetzt steht
-                               die Diagnose da, statt sie herzuleiten. */
-                            const drin = (f) =>
-                                f >= r.min / spielraum && f <= r.max * spielraum;
-                            const oktav = drin(hz / 2) || drin(hz * 2);
+                            /* Gedrosselt protokolliert — nuetzlich, um
+                               AUFSCHLAG_MITTE_BREITE nach den ersten Proben
+                               nachzujustieren, ohne bei jedem Versuch zu
+                               fluten. */
                             Protokoll.schreib('AUFSCHLAG',
-                                `abgewiesen: ${Math.round(hz)} Hz liegt mehr als `
-                                + `${CONFIG.aufschlagToleranzHalbtoene} Halbtoene `
-                                + `${zuHoch ? 'UEBER' : 'UNTER'} dem Umfang `
-                                + `(${Math.round(r.min)}-${Math.round(r.max)} Hz)`
-                                + (oktav ? ' — eine Oktave versetzt laege er IM '
-                                    + 'Umfang: vermutlich Oktavfehler in der '
-                                    + 'Kalibrierung, Umfang pruefen (UMFANG-Zeile)!'
-                                    : ''));
+                                `nicht zentriert: ${(this.aufschlagAnzeige.prozent * 100).toFixed(0)} % `
+                                + `(Zone ${Math.round((0.5 - halb) * 100)}-`
+                                + `${Math.round((0.5 + halb) * 100)} %)`);
                         }
                     }
-                    if (passt && ton.currentVolume >= CONFIG.serveVolume) {
+
+                    if (zentriert && ton.currentVolume >= CONFIG.serveVolume) {
                         this.serveCharge++;
                         /* Siehe Physics.SERVE_CHARGE_FRAMES — nur eine Sperre
                            gegen einzelne Messspitzen, kein Durchhaltetest. */
@@ -2657,7 +2708,8 @@
                             Protokoll.schreib('AUFSCHLAG',
                                 `${this.match.server}, Pegel `
                                 + `${this.serverAudio().currentVolume.toFixed(3)}`
-                                + `, Ton ${Math.round(this.serverAudio().smoothedPitch)} Hz`);
+                                + `, Ton ${Math.round(this.serverAudio().smoothedPitch)} Hz `
+                                + `(zentriert)`);
                             this.triggerServe();
                             this.serveCharge = 0;
                         }
@@ -2957,6 +3009,28 @@
     };
 
     /**
+     * ### GESCHÜTZT — Overdrive-Bewegung ###
+     *
+     * Wo ein Ton im kalibrierten Umfang liegt, als Anteil 0..1 — bewusst
+     * NICHT begrenzt (Overdrive, siehe freqToQuantizedX). EINZIGE Stelle,
+     * die diese Rechnung durchfuehrt: freqToQuantizedX() und die
+     * Aufschlag-Mittenpruefung (update(), Renderer-Meter) lesen beide von
+     * hier — "Mitte" kann dadurch zwischen Anzeige und Ausloeser nicht
+     * auseinanderlaufen.
+     *
+     * @param   {number} freq   Tonhoehe in Hz
+     * @param   {string} [player] Wert aus PLAYER; ohne Angabe Andrea.
+     * @returns {number} Anteil am kalibrierten Umfang, 0..1 (unbegrenzt)
+     */
+    Physics.aufschlagProzent = function (freq, player) {
+        const range = Physics.voiceRange(player);
+        const minMidi = 12 * Math.log2(range.min / 440) + 69;
+        const maxMidi = 12 * Math.log2(range.max / 440) + 69;
+        const midiNote = 12 * Math.log2(freq / 440) + 69;
+        return (midiNote - minMidi) / (maxMidi - minMidi);
+    };
+
+    /**
      * Totzone der Zielposition, in HALBTÖNEN.
      *
      * Bewusst musikalisch bemessen und nicht in Pixeln: derselbe Wert soll für
@@ -3019,6 +3093,27 @@
      * @readonly
      */
     Physics.SERVE_CHARGE_FRAMES = 3;
+
+    /**
+     * Breite der Zuendzone beim Aufschlag, als Anteil des kalibrierten
+     * Umfangs — mittig um 0.5 (Zone reicht von 0.5-BREITE/2 bis
+     * 0.5+BREITE/2).
+     *
+     * HINTERGRUND: Tonhoehen-Wahrnehmung ist relativ, nicht absolut. Nach
+     * einem extremen Zielton (scharf links/rechts) verschiebt sich der
+     * innere Nullpunkt kurzzeitig — der naechste Return misslingt, obwohl
+     * "richtig" gesungen wurde. Der Aufschlag zielt deshalb nicht mehr
+     * selbst (siehe triggerServe()); er verlangt stattdessen die Mitte der
+     * eigenen Stimme und setzt den inneren Kompass damit vor jedem
+     * Ballwechsel zwangsweise zurueck.
+     *
+     * 0.20 ist ein Startwert, keine austarierte Zahl — je enger, desto
+     * praezisionslastiger fuer die Spielerin; je weiter, desto naeher am
+     * alten Gefuehl. Die gedrosselte Abweisungs-Protokollzeile (siehe
+     * update()) ist die Grundlage, diesen Wert nach den ersten Proben
+     * nachzujustieren.
+     */
+    Physics.AUFSCHLAG_MITTE_BREITE = 0.20;
 
     /** Anteil der Vertikalgeschwindigkeit, der beim Aufsprung erhalten bleibt. */
     Physics.BOUNCE_RESTITUTION = 0.6;
@@ -5080,19 +5175,72 @@
             ctx.fillStyle = ACCENT_YELLOW;
             ctx.fillText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
 
-            /* Wird der Ton abgewiesen, steht der Grund darunter.
-               Ohne diese Zeile sieht eine Tonhoehen-Abweisung exakt so aus wie
-               ein Spiel, das nicht reagiert — der teuerste Fehleindruck, den
-               dieses Spiel auf einer Buehne erzeugen kann, und schon einmal
-               genau so gemeldet worden. */
+            /* --- Zielzonen-Meter ------------------------------------------
+             * Laeuft bei JEDEM Aufschlag mit, nicht nur bei einem
+             * misslungenen Versuch — das ist die eigentliche Antwort auf
+             * die "UI-Falle": ohne ihn saehe ein knapp danebenliegender Ton
+             * exakt so aus wie ein Aufschlag, der einfach nicht reagiert.
+             * -------------------------------------------------------------- */
+            ctx.globalAlpha = 1;
+            const barY = p.y + offset + size * Renderer.ZIELZONE_OFFSET;
+            const barW = Renderer.ZIELZONE_BREITE * p.scale;
+            const barH = Renderer.ZIELZONE_HOEHE * p.scale;
+            const barX = p.x - barW / 2;
+            const halb = Physics.AUFSCHLAG_MITTE_BREITE / 2;
+            const anz = scene.aufschlagAnzeige;
+            const zentriert = !!(anz && anz.zentriert);
+
+            /* Aussenrahmen: der volle kalibrierte Umfang. */
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            ctx.lineWidth = Math.max(1, 1.5 * p.scale);
+            ctx.strokeRect(barX, barY, barW, barH);
+
+            /* Zuendzone: die mittleren AUFSCHLAG_MITTE_BREITE, leuchtet auf,
+               sobald der Ton darin liegt — dieselbe Cyan-Sprache wie die
+               getroffenen Pitch-Marker und die leuchtende Klaviertaste. */
+            const zoneX = barX + (0.5 - halb) * barW;
+            const zoneW = halb * 2 * barW;
+            ctx.fillStyle = zentriert ? 'rgba(0, 255, 204, 0.35)' : 'rgba(255, 255, 255, 0.06)';
+            ctx.fillRect(zoneX, barY, zoneW, barH);
+            ctx.strokeStyle = zentriert ? Renderer.PITCH_HIT_COLOR : 'rgba(0, 255, 204, 0.35)';
+            ctx.lineWidth = Math.max(1, 2 * p.scale);
+            if (zentriert) {
+                ctx.shadowColor = Renderer.PITCH_HIT_COLOR;
+                ctx.shadowBlur = Renderer.PITCH_HIT_GLOW * p.scale * 0.6;
+            }
+            ctx.strokeRect(zoneX, barY, zoneW, barH);
+            ctx.shadowBlur = 0;
+
+            /* Tracer: folgt der Live-Tonhoehe stetig, auch AUSSERHALB der
+               Zone — er verschwindet nie, er wandert nur. Gelb (Vorwarnung)
+               ausserhalb, Cyan (Treffer) innerhalb; ohne Ton gar nicht. */
+            if (anz && anz.aktiv) {
+                const clamped = Math.max(-0.15, Math.min(1.15, anz.prozent));
+                const tx = barX + clamped * barW;
+                const farbe = zentriert ? Renderer.PITCH_HIT_COLOR : ACCENT_YELLOW;
+                ctx.fillStyle = farbe;
+                ctx.shadowColor = farbe;
+                ctx.shadowBlur = 10 * p.scale;
+                ctx.beginPath();
+                ctx.moveTo(tx, barY - 4 * p.scale);
+                ctx.lineTo(tx - 6 * p.scale, barY - 13 * p.scale);
+                ctx.lineTo(tx + 6 * p.scale, barY - 13 * p.scale);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            /* Reaktive Zeile darunter: nur bei einem tatsaechlich lauten,
+               aber danebenliegenden Versuch — die Ambient-Anzeige oben lief
+               schon vorher, das hier ist die kurze Bestaetigung "ja, das war
+               ein Versuch, und er hat nicht gereicht". */
             const ab = scene.abweisung;
             if (ab && Uhr.jetzt() < ab.bis) {
-                ctx.globalAlpha = 1;
                 ctx.font = this.font(Renderer.ABWEISUNG_SIZE * p.scale, 'bold');
-                const grund = ab.zuHoch
-                    ? 'TON ZU HOCH — TIEFER SINGEN'
-                    : 'TON ZU TIEF — HÖHER SINGEN';
-                const y2 = p.y + offset + size * 0.75;
+                const grund = ab.richtung === 'hoch' ? 'NÄHER ZUR MITTE — TIEFER SINGEN'
+                    : ab.richtung === 'tief' ? 'NÄHER ZUR MITTE — HÖHER SINGEN'
+                    : 'TON NICHT ERKANNT — DEUTLICHER SINGEN';
+                const y2 = barY + barH + 30 * p.scale;
                 ctx.lineWidth = 6 * p.scale;
                 ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
                 ctx.strokeText(grund, p.x, y2);
@@ -6038,6 +6186,12 @@
      */
     Renderer.ABWEISUNG_SIZE = 34;
 
+    /** Breite/Hoehe des Zielzonen-Meters unter "AUFSCHLAG!", in virtuellen Pixeln. */
+    Renderer.ZIELZONE_BREITE = 240;
+    Renderer.ZIELZONE_HOEHE = 16;
+    /** Vertikaler Abstand des Meters von der Aufschlag-Aufforderung. */
+    Renderer.ZIELZONE_OFFSET = 0.60;
+
     Renderer.SERVE_PROMPT_TEXT = 'AUFSCHLAG!';
     Renderer.SERVE_PROMPT_SIZE = 96;
     /** Dauer eines Pulses in Millisekunden. */
@@ -6446,7 +6600,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-13 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-14 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**
@@ -7069,6 +7223,7 @@
 
                     this._scene.andreaX = this.physics.currentX;
                     this._scene.abweisung = this.physics.abweisung;
+                    this._scene.aufschlagAnzeige = this.physics.aufschlagAnzeige;
                     this._scene.ruheHaengt = !!this.ruheHaengt;
                     this._scene.raumpegel = this.raumpegel();
                     this._scene.audioTot = this.audioTot;

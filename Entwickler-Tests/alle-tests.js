@@ -31,7 +31,7 @@ const TESTS = [
     ['test-protokoll.js', 'Protokoll-Kopf und RUHE-Eskalation (Arena)'],
     ['test-kalibrierung-haerte.js', 'Kalibrierung gegen Oktavfehler (Arena)'],
     ['test-einspielen.js', 'Einspielen zaehlt getrennt vom Match (Arena)'],
-    ['test-aufschlag-tonhoehe.js', 'Aufschlag nur im Tonumfang (Arena)'],
+    ['test-aufschlag-mitte.js', 'Aufschlag nur aus der Stimmmitte (Arena)'],
     ['test-netz-verdeckung.js', 'Netz verdeckt den Ball (Sandplatz)'],
     ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz: V41'],
     /* Das Balltempo weicht seit ARENA-3 zwischen den Fassungen ab. Die
