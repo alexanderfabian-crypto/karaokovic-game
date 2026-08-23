@@ -323,6 +323,30 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     die `AUDIO`- und `UMFANG`-Zeilen ausrotiert, für die ARENA-12 gebaut wurde.
   - *WakeLock ab Spielstart*, neu angefordert bei jeder Rückkehr der
     Sichtbarkeit — das System gibt ihn bei Verdeckung frei.
+- **ARENA-14** — Sprint „Relative Pitch". **Der Aufschlag zielt nicht mehr.**
+  Tonhöhen-Wahrnehmung ist relativ, nicht absolut: nach einem extremen Zielton
+  verschiebt sich der innere Nullpunkt kurzzeitig, und der nächste Return
+  misslingt, obwohl „richtig" gesungen wurde. Ausgelöst wird jetzt nur noch aus
+  der **Mitte des eigenen Umfangs** (mittlere 20 %,
+  `Physics.AUFSCHLAG_MITTE_BREITE`) — das setzt den inneren Kompass vor jedem
+  Ballwechsel zwangsweise zurück. Die Richtung wird **gewürfelt**, mit leichter
+  Anti-Wiederholung (dieselbe Hälfte wie zuletzt zu 60 % verworfen, nicht
+  ausgeschlossen — sonst wäre „nie zweimal rechts" selbst wieder ein Muster).
+  Gemessen: 400 Aufschläge mit identischem Ton ergeben 200/200 und 23 %
+  Wiederholung bei erwarteten 20 %.
+  - *Gegen die UI-Falle* läuft ein **Zielzonen-Meter** unter „AUFSCHLAG!"
+    durchgehend mit, nicht erst bei einem misslungenen Versuch. Ohne ihn sähe
+    ein knapp danebenliegender Ton exakt so aus wie ein Aufschlag, der nicht
+    reagiert.
+  - *`Physics.aufschlagProzent()`* ist herausgezogen und die **einzige** Stelle,
+    die „wo im Umfang liegt dieser Ton" rechnet — Anzeige und Auslöser können
+    nicht auseinanderlaufen. `freqToQuantizedX()` liefert bit-identische
+    Ergebnisse; die geschützte Stelle ist ein reiner Refaktor.
+  - *Zwei Tests sind mitgezogen statt zu verschwinden.* `test-duell-aufschlag`
+    prüft beide Hälften des alten Duell-Fehlers weiterhin — sie sind nicht
+    erledigt, sondern **umgezogen**: sie entscheiden jetzt, wessen Umfang die
+    Zündzone misst. `test-aufschlag-tonhoehe` ist `test-aufschlag-mitte`
+    gewichen; der alte hätte ab diesem Commit toten Code grün gemeldet.
 
 ---
 
@@ -332,7 +356,7 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 21.08.2026: 265 Zusicherungen, alle grün, Exit 0.** 20 Testdateien in
+**Stand 23.08.2026: 271 Zusicherungen, alle grün, Exit 0.** 20 Testdateien in
 22 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 | Zusicherungen | Test |
@@ -341,7 +365,7 @@ node Entwickler-Tests/alle-tests.js       # ~2 min
 | 32 | `test-browser.js` — V41 (`index.html`) |
 | 24 | `test-kalibrierung.js` — Onboarding / Stimm-Profiler |
 | 12 | `test-einspielen.js` — Einspielen zählt getrennt vom Match |
-| 12 | `test-aufschlag-tonhoehe.js` — Aufschlag nur im Tonumfang |
+| 18 | `test-aufschlag-mitte.js` — Zündzone und gewürfelte Richtung |
 | 8 | `test-regeln.js` — Tennisregeln |
 | 8 | `test-netz-verdeckung.js` — Netz verdeckt den Ball (Sand) |
 | 7 | `test-aufschlag.js` — Auslösen des Aufschlags |
@@ -462,6 +486,13 @@ ein.
   und die Figuren stehen.
 - **10,7 MB Bilder**, davon 7,5 MB für drei Platzbilder. Für einen Ferntester
   spürbar (siehe Abschnitt 9).
+- **`Physics.aufschlagTonPasst()` und `CONFIG.aufschlagToleranzHalbtoene` sind
+  seit ARENA-14 ohne Aufrufer.** Nachgeprüft, nicht vermutet: der einzige
+  Lesezugriff auf die Konstante steht *innerhalb* der Funktion, und die ruft
+  niemand mehr. Beide sind im Code ausdrücklich als wirkungslos markiert —
+  sonst dreht irgendwann jemand an einer Zahl, die nichts mehr tut. Das
+  Entfernen ist ein eigener Durchgang mit eigenem Testlauf; der lebende Regler
+  heißt `Physics.AUFSCHLAG_MITTE_BREITE`.
 - **Zwei Optimierungen sind bewusst zurückgestellt, bis gemessen ist.** Beide
   aus der Durchsicht zu ARENA-11, beide mit einem klaren Auslöser:
   - *Countdown-Glow vorrendern.* `gothicText()` zeichnet in jedem Frame der
@@ -654,6 +685,13 @@ okay!" → „Einspielen starten" oder „Match starten".
 | `Ctrl+Shift+A` | **Aufschlag von Hand erzwingen** (Notausgang) |
 | `Ctrl+Shift+M` | Messanzeige unten rechts ein/aus |
 | `Ctrl+Shift+L` | Protokoll als Datei sichern |
+
+**Aufschlagen seit ARENA-14:** nicht mehr dorthin singen, wo der Ball hin
+soll — der Ball fliegt zufällig. Verlangt wird die **Mitte der eigenen
+Stimme**; der Balken unter „AUFSCHLAG!" zeigt sie durchgehend an, die Zone
+leuchtet cyan, sobald der Ton darin liegt. Ist sie zu eng oder zu weit, ist
+`Physics.AUFSCHLAG_MITTE_BREITE` der Regler — die gedrosselten
+`AUFSCHLAG nicht zentriert`-Zeilen im Protokoll sind die Grundlage dafür.
 
 `Alt+Shift` tut seit ARENA-12 **dasselbe** — beide Modifier gelten. Auf dem
 Mac ist `Ctrl` der zuverlässige Weg: die Option-Taste ist dort für
