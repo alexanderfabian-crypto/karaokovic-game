@@ -710,8 +710,53 @@
      */
     const ALLEY_WIDTH = 85;
 
-    /** Maße des (unsichtbaren) Schlägerbereichs beider Spieler. */
-    const PADDLE = { width: 150, height: 30, hitPadding: 25, screenMargin: 20 };
+    /**
+     * Maße des (unsichtbaren) Schlägerbereichs beider Spieler.
+     *
+     * `width` ist NICHT die Trefferbreite, auch wenn sie es einmal war: sie
+     * normiert den Auftreffpunkt auf dem Schlaeger und bestimmt damit den
+     * SCHLAGWINKEL (siehe calculateHit, `offset`). Das ist eine eingespielte
+     * Zahl und bleibt unangetastet.
+     *
+     * Wie weit ein Ball daneben liegen darf, steht seit ARENA-16 getrennt in
+     * `hitHalf` — vorher waren beide Bedeutungen in einer Zahl verschraubt,
+     * und die Trefferzone liess sich nicht verkleinern, ohne den Schlagwinkel
+     * mitzuverstellen.
+     */
+    const PADDLE = {
+        width: 150, height: 30, screenMargin: 20,
+
+        /**
+         * Halbe Breite der Trefferzone in WELTpixeln.
+         *
+         * BUEHNENBEFUND (Mitschnitt 24.08.): "Baelle, die klar neben der Figur
+         * vorbeiziehen, gelten als Treffer."
+         *
+         * Nachgemessen — sichtbare Figurenbreite in Weltpixeln, aus dem
+         * Alphakanal der Sprites und durch Projektion und Tiefendaempfung
+         * zurueckgerechnet:
+         *
+         *   Platz   Andrea   Alex     halbe Breite (Andrea)
+         *   HART     84.1     80.6     42.0     <- Referenzplatz
+         *   RASEN    73.3     63.5     36.7
+         *   SAND     56.9     47.9     28.4     (figur 0.80, absichtlich klein)
+         *
+         * Die Zone war 100 px halb — auf dem Hartplatz also 58 px LEERE
+         * FLAECHE je Seite, mehr als eine halbe Figurenbreite. Genau das war
+         * im Video zu sehen.
+         *
+         * 71 halbiert dieses Polster auf 29 px. Ein Rest bleibt bewusst:
+         * pixelgenaues Treffen waere auf der Buehne frustrierend, und der
+         * Ball hat selbst 10.8 px Radius — bei 71 px Mittenabstand klafft
+         * zwischen Ballrand und Figur noch rund 18 px.
+         *
+         * WELTKONSTANT, nicht je Platz. Die Welt ist auf allen drei Plaetzen
+         * dieselbe (siehe Dateikopf); nur die Kamera wechselt. Auf dem
+         * Sandplatz wirkt das Polster dadurch groesser, weil die Figuren dort
+         * absichtlich kleiner gezeichnet werden — das ist Optik, keine Regel.
+         */
+        hitHalf: 71,
+    };
 
     /** Dauer der Zustände in Millisekunden. GESCHÜTZT. */
     const TIMING = {
@@ -1905,7 +1950,7 @@
                Aufschlag. Deshalb hier ändern und nicht im Renderer — ein
                kleiner gezeichneter Ball mit unveränderter Trefferzone wäre
                genau die stille Unstimmigkeit, die später niemand mehr findet.
-               Wirkung aufs Spiel: 1,2 px, gegenüber PADDLE.hitPadding
+               Wirkung aufs Spiel: 1,2 px, gegenüber PADDLE.hitHalf
                vernachlässigbar. */
             this.radius = 10.8;
             /** @type {number} Aufsprünge seit dem letzten Schlag. */
@@ -2846,8 +2891,8 @@
              * Ball hinein und traf ihn trotzdem nicht. Der klassische
              * Tunneleffekt, hier nur waagerecht statt senkrecht.
              * ------------------------------------------------------------------ */
-            const aLeft = Math.min(this.currentX, prevAndreaX) - PADDLE.width / 2 - PADDLE.hitPadding;
-            const aRight = Math.max(this.currentX, prevAndreaX) + PADDLE.width / 2 + PADDLE.hitPadding;
+            const aLeft = Math.min(this.currentX, prevAndreaX) - PADDLE.hitHalf;
+            const aRight = Math.max(this.currentX, prevAndreaX) + PADDLE.hitHalf;
             if (b.vy > 0 && prevY < this.paddleAndrea.y && b.y + b.radius > this.paddleAndrea.y) {
                 if (b.x >= aLeft && b.x <= aRight) {
                     b.y = this.paddleAndrea.y - b.radius;
@@ -2863,10 +2908,10 @@
              * aber die Regel muss für beide Seiten gleich sein — sonst
              * entscheidet die Bildwiederholrate darüber, wer im Grenzfall
              * trifft. Der absichtliche Fehler bleibt davon unberührt: er hält
-             * mit MISS_MARGIN_MIN = 135 px sicheren Abstand zur Zone.
+             * mit MISS_MARGIN_MIN = 135 px sicheren Abstand zur Zone (71 px).
              * ------------------------------------------------------------------ */
-            const pLeft = Math.min(this.paddleAlex.x, prevAlexX) - this.paddleAlex.width / 2 - PADDLE.hitPadding;
-            const pRight = Math.max(this.paddleAlex.x, prevAlexX) + this.paddleAlex.width / 2 + PADDLE.hitPadding;
+            const pLeft = Math.min(this.paddleAlex.x, prevAlexX) - PADDLE.hitHalf;
+            const pRight = Math.max(this.paddleAlex.x, prevAlexX) + PADDLE.hitHalf;
             if (b.vy < 0 && prevY > this.paddleAlex.y && b.y - b.radius < this.paddleAlex.y) {
                 if (b.x >= pLeft && b.x <= pRight) {
                     b.y = this.paddleAlex.y + b.radius;
@@ -3142,7 +3187,7 @@
      * Spanne, um die Alex bei einem absichtlichen Fehler danebentippt.
      *
      * MIN muss über der halben Trefferzone liegen
-     * (PADDLE.width / 2 + PADDLE.hitPadding = 100), sonst trifft er zufällig
+     * (PADDLE.hitHalf = 71), sonst trifft er zufällig
      * doch und der Ballwechsel läuft weiter. MAX bestimmt, wie deutlich der
      * Fehlgriff aussieht. Der konkrete Wert wird pro Fehler ausgewürfelt —
      * ein fester Abstand (früher 210) wirkte auf der Bühne wie Absicht.
@@ -8196,6 +8241,11 @@
     /* Feldgrenzen in Weltkoordinaten — damit sich die Physikgrenzen zur
        Kontrolle ueber das Platzbild legen lassen, ohne im Renderer zu
        suchen. Genau diese Probe hat den Hartplatz auf unter 1 px abgesichert. */
+    /* Schlaegermasse fuer die Diagnose auf der Buehne: `hitHalf` ist der
+       Regler, wenn sich die Trefferzone in der Probe zu eng oder zu weit
+       anfuehlt — ohne Neuladen wirksam. */
+    game.PADDLE = PADDLE;
+
     game.grenzen = {
         left: COURT_LEFT, right: COURT_RIGHT,
         top: COURT_TOP, bottom: COURT_BOTTOM,

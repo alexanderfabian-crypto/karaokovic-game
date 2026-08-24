@@ -22,7 +22,11 @@ const { loadGame, check, summary } = require('./dom-stub.js');
 const game = loadGame();
 const { physics, match, ball, paddleAlex, audio } = game;
 
-const HIT_ZONE = 100;          // PADDLE.width / 2 + hitPadding
+/* Wert der EINGEFRORENEN Fassung V41 (PADDLE.width / 2 + hitPadding), die
+   dieser Test prueft — loadGame() ohne Argument laedt app.js. Die
+   Arena-Fassung hat die Zone mit ARENA-16 auf 71 verkleinert und die beiden
+   Bedeutungen getrennt; dort deckt test-ballwechsel.js den Ballwechsel ab. */
+const HIT_ZONE = 100;
 const ALEX_FENSTER_Y = 182;    // Grundlinie 170 + Ballradius 12
 
 let absichtlich = 0, unabsichtlich = 0;
