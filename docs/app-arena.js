@@ -3974,7 +3974,11 @@
             const img = this.assets.get(this.resolveSchiriKopf(match));
             const p = this.viewport.toScreen(stuhl.x, stuhl.schulterY, this._p1);
 
-            const h = stuhl.kopfHoehe * Renderer.UMPIRE_SCALE * p.scale;
+            /* Aus HEAD_BOX abgeleitet statt eingemessen — siehe
+               Renderer.UMPIRE_HEAD_RATIO. HEAD_BOX.height traegt bereits
+               PLATZ.figur und HEAD_SCALE, das Verhaeltnis stimmt damit auf
+               allen drei Plaetzen ohne Nachmessen. */
+            const h = HEAD_BOX.height * Renderer.UMPIRE_HEAD_RATIO * p.scale;
             const w = h * (img.naturalWidth / img.naturalHeight);
 
             ctx.save();
@@ -5743,7 +5747,44 @@
      * auf den gemalten Stuhl eingemessen, ihr VERHAELTNIS zueinander stimmt
      * also. Wer an einer einzelnen Zahl dreht, zerlegt genau das.
      */
-    Renderer.UMPIRE_SCALE = 1.5;
+    /**
+     * Bennis Kopf im Verhaeltnis zu den SPIELERkoepfen.
+     *
+     * Frueher ein fester Faktor auf drei je Platz eingemessene
+     * `kopfHoehe`-Werte — voellig entkoppelt von HEAD_BOX, das die
+     * Spielerkoepfe bestimmt. Das Verhaeltnis stimmte damit auf keinem
+     * Platz, und jede Aenderung an HEAD_SCALE oder PLATZ.figur haette es
+     * erneut verschoben.
+     *
+     * Jetzt abgeleitet: 0.8 mal die Hoehe eines Spielerkopfes. Da HEAD_BOX
+     * von setzePlatz() je Platz gesetzt wird, stimmt das Verhaeltnis
+     * automatisch ueberall — die eingemessenen `kopfHoehe`-Werte in PLAETZE
+     * werden dadurch gegenstandslos (x und schulterY bleiben noetig).
+     *
+     * NACHGEMESSEN GEGEN DIE KULISSE, Kopfbreite in virtuellen Pixeln:
+     *
+     *   Platz   vorher    nachher   Bezugsmass der Kulisse
+     *   HART    33 px     62 px     Pultblock 36 px breit  (0.92 -> 1.73)
+     *   SAND    54 px     50 px     gemalter Kopf 30 px    (1.81 -> 1.66)
+     *   RASEN   52 px     62 px     gemalter Kopf 28 px    (1.86 -> 2.23)
+     *
+     * AUF DEM HARTPLATZ IST DAS EIN RUECKSCHRITT: Benni sitzt dort am
+     * einzigen LEEREN Stuhl, sein Kopf steht auf einem 36 px breiten Pult —
+     * mit 62 px ist er fast doppelt so breit wie das Pult. Genau dieser
+     * Zustand steht bei PLAETZE.HART als schon einmal behoben dokumentiert
+     * ("kopfHoehe war zuerst 36 — damit war der Kopf so breit wie das ganze
+     * Pult. 28 passt zur Entfernung.").
+     *
+     * Die Ursache ist perspektivisch und nicht wegzuparametrieren: der Stuhl
+     * steht auf den drei Bildern unterschiedlich weit weg, die Spielerfiguren
+     * nicht. EIN gemeinsames Verhaeltnis kann deshalb hoechstens auf einem
+     * Platz stimmen. Wer die Kopplung an HEAD_BOX behalten und trotzdem die
+     * Entfernung abbilden will, nimmt ein Verhaeltnis JE PLATZ — aus den
+     * bisherigen Messungen waeren das 0.43 (Hart), 0.87 (Sand), 0.67
+     * (Rasen); der Vorteil der Kopplung (HEAD_SCALE zieht automatisch mit)
+     * bliebe dabei erhalten.
+     */
+    Renderer.UMPIRE_HEAD_RATIO = 0.8;
 
     /**
      * Fester Groessenfaktor auf die Koepfe BEIDER Spielfiguren.
