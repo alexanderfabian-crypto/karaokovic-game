@@ -152,4 +152,53 @@ function summary() {
     }
 }
 
-module.exports = { el, loadGame, check, summary, fakeCtx };
+/**
+ * Ein MITSCHREIBENDER Zeichenkontext.
+ *
+ * `fakeCtx` schluckt jeden Befehl — gut genug, um app.js ueberhaupt laufen zu
+ * lassen, aber blind. Wer pruefen will, WAS gezeichnet wurde (und nicht nur,
+ * dass es nicht geworfen hat), setzt diesen hier an `renderer.ctx`.
+ *
+ * Aufgenommen wird nur, was sich sinnvoll pruefen laesst; Transformationen
+ * werden NICHT nachgerechnet, die Winkel aber protokolliert. Farbe, Schrift
+ * und Deckkraft werden zum Zeitpunkt des Befehls mitgeschrieben — hinterher
+ * stehen sie schon auf dem naechsten Wert.
+ *
+ * @returns {{ctx: Object, log: Object}}
+ */
+function zeichenprotokoll() {
+    const log = { rechtecke: [], schnitte: [], winkel: [], texte: [], bilder: [] };
+    const ctx = {
+        fillStyle: '', strokeStyle: '', font: '', globalAlpha: 1, lineWidth: 1,
+        textAlign: '', textBaseline: '', lineJoin: '', shadowBlur: 0,
+        shadowColor: '', globalCompositeOperation: 'source-over',
+        save: noop, restore: noop, beginPath: noop, closePath: noop, clip: noop,
+        translate: noop, scale: noop, setTransform: noop, resetTransform: noop,
+        moveTo: noop, lineTo: noop, arc: noop, ellipse: noop, stroke: noop,
+        fill: noop, quadraticCurveTo: noop, bezierCurveTo: noop,
+        strokeRect: noop, clearRect: noop, roundRect: noop,
+        createLinearGradient: () => ({ addColorStop: noop }),
+        createRadialGradient: () => ({ addColorStop: noop }),
+        /* Grobe Schaetzung: im Stub gibt es keine Schriftmasse. Fuer
+           Mittigkeit und Groessenverhaeltnisse reicht ein fester Faktor. */
+        measureText(t) { return { width: String(t).length * 40 }; },
+        fillRect(x, y, w, h) {
+            log.rechtecke.push({ x, y, w, h, stil: this.fillStyle,
+                alpha: this.globalAlpha });
+        },
+        rect(x, y, w, h) { log.schnitte.push({ x, y, w, h }); },
+        rotate(winkel) { log.winkel.push(winkel); },
+        drawImage(bild, ...rest) { log.bilder.push({ bild, rest }); },
+        fillText(text, x, y) {
+            log.texte.push({ text: String(text), x, y, font: this.font,
+                stil: this.fillStyle, alpha: this.globalAlpha });
+        },
+        strokeText(text, x, y) {
+            log.texte.push({ text: String(text), x, y, font: this.font,
+                kontur: true, alpha: this.globalAlpha });
+        },
+    };
+    return { ctx, log };
+}
+
+module.exports = { el, loadGame, check, summary, fakeCtx, zeichenprotokoll };

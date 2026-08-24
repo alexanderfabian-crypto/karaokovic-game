@@ -4399,48 +4399,34 @@
             let andreaEmotion = 'neutral', alexEmotion = 'neutral';
             let andreaY = 0, alexY = 0;
 
-            /* Der Ausdruck haelt bis zum naechsten Aufschlag, nicht nur bis
-               zum Bumper: mit dem Wechsel nach TRANSITION fiel er vorher auf
-               neutral zurueck, also mitten in der Blende. In SILENCE_CHECK
-               steht das Ergebnis noch im Gesicht, mit dem Eintritt in
-               SERVE_WAIT ist es Geschichte.
+            /* Wer gerade als Sieger im Bild steht, entscheidet
+               Renderer.ergebnisZeigt() — dieselbe Stelle, aus der auch Bennis
+               Reaktion kommt. Sonst koennten die beiden auseinanderlaufen.
 
-               `ease` steht in den spaeteren Zustaenden auf 1: die Verliererin
-               BLEIBT eingesackt, die Bewegung laeuft aber nicht neu an. Das
-               ist der Punkt — `elapsed()` beginnt bei jedem Zustandswechsel
-               von vorn, eine erneute 0->1-Kurve saehe aus, als saecke sie ein
-               zweites und drittes Mal ein.
-
-               `lastWinner` wird nie geloescht; vor dem ALLERERSTEN Punkt
-               einer Session ist es leer, danach nie wieder — deshalb die
-               zusaetzliche Bedingung. */
-            const zeigtErgebnis = match.state === STATE.POINT_SCORED
-                || match.state === STATE.TRANSITION
-                || match.state === STATE.SILENCE_CHECK;
-            if (zeigtErgebnis && match.lastWinner) {
-                const elapsed = match.elapsed();
-                const ease = match.state === STATE.POINT_SCORED
-                    ? Math.min(1, elapsed / 500) : 1;
-                const showEmotion = match.state !== STATE.POINT_SCORED || elapsed > 300;
+               Der Ausdruck endet mit der PUNKTPHASE. Bis ARENA-15 hielt er
+               bis in den Countdown; mit der Blende aus ARENA-16 ist ab der
+               Schwarzblende ohnehin nichts mehr zu sehen, und beim Aufblenden
+               steht bereits der naechste Ballwechsel. */
+            const sieger = Renderer.ergebnisZeigt(match);
+            if (sieger) {
                 /* Das Einsacken der Verliererin bleibt: es ist eine POSITION,
                    keine Groesse, und traegt die Enttaeuschung, seit das
                    Schrumpfen weg ist. */
-                if (match.lastWinner === PLAYER.ANDREA) {
-                    andreaEmotion = showEmotion ? 'win' : 'neutral';
-                    alexEmotion = showEmotion ? 'lose' : 'neutral';
-                    alexY = 20 * ease;
+                const ease = Math.min(1, match.elapsed() / 500);
+                if (sieger === PLAYER.ANDREA) {
+                    andreaEmotion = 'win'; alexEmotion = 'lose'; alexY = 20 * ease;
                 } else {
-                    alexEmotion = showEmotion ? 'win' : 'neutral';
-                    andreaEmotion = showEmotion ? 'lose' : 'neutral';
-                    andreaY = 20 * ease;
+                    alexEmotion = 'win'; andreaEmotion = 'lose'; andreaY = 20 * ease;
                 }
             }
 
-            /* Im Bumper blinken die Figuren kurz weg. */
-            if (match.state === STATE.TRANSITION) {
-                const p = match.elapsed() / TIMING.TRANSITION_MS;
-                if (p > 0.1 && p < 0.3) return;
-            }
+            /* KEIN Wegblinken mehr in der Blende. Bis ARENA-15 verschwanden
+               die Figuren zwischen 10 und 30 % hart aus dem Bild, weil die
+               Abdunkelung unter ihnen lag und sie sonst hell vor dem
+               schwarzen Bild gestanden haetten. Seit die Blende ihr Schwarz
+               selbst ueber alles legt (drawTransition), erledigt sich das:
+               die Figuren gehen im Schwarz unter und kommen mit dem Platz
+               zurueck — ohne Sprung. */
 
             /* Z-Sortierung: kleineres Y = weiter hinten = zuerst zeichnen. */
             if (scene.paddleAlex.y < scene.paddleAndrea.y) {
@@ -5223,13 +5209,14 @@
                 case STATE.POINT_SCORED:
                     alpha = 0.6 * Math.min(1, match.elapsed() / 500);
                     break;
-                case STATE.TRANSITION: {
-                    const prog = match.elapsed() / TIMING.TRANSITION_MS;
-                    if (prog < 0.2) alpha = 0.6 + (0.4 * (prog / 0.2));
-                    else if (prog < 0.4) alpha = 1.0 - (0.4 * ((prog - 0.2) / 0.2));
-                    else alpha = 0.6;
+                /* Die Blende zeichnet ihr Schwarz seit ARENA-16 SELBST —
+                   und zwar ueber ALLES, auch ueber die Figuren. Hier waere es
+                   zu frueh: diese Ebene liegt unter den Spielern, die sonst
+                   hell vor dem schwarzen Bild staenden. Genau daran hing das
+                   frueher noetige Wegblinken der Figuren. */
+                case STATE.TRANSITION:
+                    alpha = 0;
                     break;
-                }
                 /* Ab dem Countdown ist der Platz voll ausgeleuchtet.
                    Vorher lag hier 0.6 — das Bild blieb also die kompletten
                    drei Sekunden der Ruhephase UND den Aufschlag über
@@ -5460,62 +5447,119 @@
         }
 
         /**
-         * Bumper zwischen den Punkten: "KARAOKOVIC"-Zoom, danach das
-         * umherfliegende Gamification-Wort.
+         * Uebergangsblende zwischen zwei Ballwechseln (ARENA-16).
+         *
+         * DREI SCHRITTE, in Anteilen der Blendendauer:
+         *
+         *   0.00 - 0.25   Blende auf Schwarz, gleichzeitig wischt das Logo
+         *                 von links nach rechts ins Bild.
+         *   0.25 - 0.75   Das Logo dreht sich einmal ganz um sich selbst,
+         *                 Hintergrund schwarz.
+         *   0.75 - 1.00   Aufblende aus Schwarz auf den voll beleuchteten
+         *                 Platz. Die Figuren stehen dann bereits fest, der
+         *                 Ball liegt ruhig am Schlaeger.
+         *
+         * Bei 2000 ms sind das 0.5 / 1.0 / 0.5 Sekunden.
+         *
+         * DAS SCHWARZ WIRD HIER GEZEICHNET, nicht in drawDimOverlay(). Der
+         * Unterschied ist der ganze Punkt: jene Ebene liegt UNTER den
+         * Spielfiguren (damit sie in den Pausen hell vor dem dunklen Platz
+         * stehen), diese hier liegt darueber. Bis ARENA-15 mussten die
+         * Figuren deshalb zwischendurch hart weggeblendet werden, sonst
+         * haetten sie vor dem schwarzen Bild geleuchtet. Jetzt deckt EIN
+         * Rechteck alles zu — Platz, Ball, Bauchbinde, Figuren — und nichts
+         * muss mehr einzeln verschwinden.
+         *
+         * Anschlussbedingungen, beide gerechnet und nicht geschaetzt: die
+         * Punktphase davor steht auf Abdunkelung 0.6, dort beginnt Schritt 1;
+         * die Ruhephase danach steht auf 0, dort endet Schritt 3. Es gibt
+         * keinen Sprung an den Raendern.
+         *
          * @param {MatchState} match
-         * @param {DvdLogo}    dvd
-         * @param {string}     scoreLine
+         * @param {DvdLogo}    dvd       (unbenutzt, siehe SHOW_GAMIFICATION_WORD)
+         * @param {string}     scoreLine (unbenutzt, siehe drawPointBanner)
          */
         drawTransition(match, dvd, scoreLine) {
             const ctx = this.ctx;
-            const prog = match.elapsed() / TIMING.TRANSITION_MS;
-            const center = this.viewport.toScreen(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2, this._p1);
+            const prog = Math.min(1, match.elapsed() / TIMING.TRANSITION_MS);
+            const A = Renderer.TRANS_WISCH_BIS;
+            const B = Renderer.TRANS_DREH_BIS;
 
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+            let schwarz, wisch, dreh;
+            if (prog < A) {
+                /* Weiter von der Abdunkelung der Punktphase (0.6) aus. */
+                schwarz = 0.6 + 0.4 * (prog / A);
+                wisch = prog / A;
+                dreh = 0;
+            } else if (prog < B) {
+                schwarz = 1;
+                wisch = 1;
+                dreh = (prog - A) / (B - A);
+            } else {
+                schwarz = 1 - (prog - B) / (1 - B);
+                wisch = 1;
+                dreh = 1;
+            }
 
-            if (prog < Renderer.BUMPER_ANTEIL) {
-                /* EIN kraeftiger Bumper statt eines linearen Zooms: der
-                   Schriftzug schiesst ueber seine Endgroesse hinaus und
-                   federt zurueck. Bewusst dieselbe Kurve wie der Countdown
-                   (countdownBounce, "ease out back") — eine zweite Art von
-                   Animation im selben Bild waere ein Stilbruch.
-                   Das Ausblenden setzt erst in der zweiten Haelfte ein,
-                   damit der Schriftzug im Moment des Federns voll steht. */
-                const t = prog / Renderer.BUMPER_ANTEIL;
-                const zoom = Renderer.BUMPER_ZOOM
-                    * Renderer.countdownBounce(t * Renderer.COUNTDOWN_BOUNCE_MS);
-                const alpha = t < 0.5 ? 1 : 1 - (t - 0.5) / 0.5;
-                ctx.save();
-                ctx.translate(center.x, center.y);
-                ctx.scale(zoom, zoom);
-                ctx.fillStyle = `rgba(255, 0, 127, ${alpha})`;
-                ctx.font = this.font(110 * center.scale);
+            ctx.save();
+            ctx.fillStyle = `rgba(0, 0, 0, ${schwarz})`;
+            ctx.fillRect(0, 0, this.viewport.width, this.viewport.height);
+
+            /* In Schritt 3 ist das Logo weg: dort blendet der Platz auf, und
+               ein mitverblassendes Logo davor waere ein zweiter Vorgang im
+               selben Moment. Weil das Bild am Ende von Schritt 2 vollstaendig
+               schwarz ist, sieht man sein Verschwinden nicht. */
+            if (prog < B) this.drawTransitionLogo(wisch, dreh);
+            ctx.restore();
+        }
+
+        /**
+         * Das Logo der Blende: einwischend, danach drehend.
+         *
+         * @param {number} wisch 0..1 — wie weit es von links eingewischt ist
+         * @param {number} dreh  0..1 — Anteil der einen vollen Umdrehung
+         */
+        drawTransitionLogo(wisch, dreh) {
+            const ctx = this.ctx;
+            const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2, this._p1);
+            const breite = Renderer.TRANS_LOGO_BREITE * p.scale;
+
+            /* Weicher An- und Auslauf, und nach genau einer Umdrehung exakt
+               wieder in Ausgangslage: smoothstep laeuft von 0 auf 1 mit
+               waagerechter Tangente an beiden Enden. */
+            const s = dreh * dreh * (3 - 2 * dreh);
+            const winkel = 2 * Math.PI * s;
+
+            const img = this.assets.isReady('transition_logo')
+                ? this.assets.get('transition_logo') : null;
+            const hoehe = img ? breite * (img.naturalHeight / img.naturalWidth)
+                : Renderer.TRANS_LOGO_BREITE * 0.22 * p.scale;
+
+            ctx.save();
+            /* Der Wisch ist ein Beschnitt im BILDraum und liegt deshalb vor
+               der Drehung — waehrend gewischt wird, steht das Logo ohnehin
+               gerade (dreh = 0). */
+            const links = p.x - breite / 2;
+            ctx.beginPath();
+            ctx.rect(links, p.y - hoehe, breite * wisch, hoehe * 2);
+            ctx.clip();
+
+            ctx.translate(p.x, p.y);
+            ctx.rotate(winkel);
+
+            if (img) {
+                ctx.drawImage(img, -breite / 2, -hoehe / 2, breite, hoehe);
+            } else {
+                /* Fallback ohne Datei: derselbe Schriftzug wie frueher, mit
+                   identischer Zeitfuehrung — Wisch und Drehung gelten auch
+                   fuer ihn. */
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = this.font(110 * p.scale);
+                ctx.fillStyle = ACCENT_PINK;
                 ctx.fillText('KARAOKOVIC', 0, 0);
-                ctx.restore();
-                return;
             }
-
-            if (FEATURES.SHOW_GAMIFICATION_WORD) {
-                /* Harter Farbwechsel im festen 500-ms-Takt. Bezugsgröße ist
-                   match.elapsed(), nicht die Framezahl — dadurch ist der Takt
-                   unabhängig von der Bildwiederholrate der LED-Wand. */
-                const colorIndex =
-                    Math.floor(match.elapsed() / Renderer.WORD_COLOR_MS) % RETRO_WORD_COLORS.length;
-                ctx.fillStyle = RETRO_WORD_COLORS[colorIndex];
-                ctx.font = this.font(120 * center.scale, 'italic bold');
-                const wordPos = this.viewport.toScreen(dvd.x, dvd.y, this._p2);
-                ctx.fillText(`"${match.currentWord()}"`, wordPos.x, wordPos.y);
-            }
-
-            /* WAEHREND DER BLENDE STEHT KEIN PUNKTESTAND MEHR.
-               Hier lag der Stand in 90 px quer ueber dem Platz. Der Bumper ist
-               der Moment, in dem das Bild atmet und der naechste Ballwechsel
-               vorbereitet wird — die Zahl gehoert in die Bauchbinde, wo sie
-               ohnehin durchgehend steht, und nicht zusaetzlich hierher.
-               `scoreLine` bleibt als Parameter erhalten: drawPointBanner()
-               benutzt denselben Wert, und die Signatur ist Teil der
-               Aufrufkette in render(). */
+            ctx.restore();
         }
 
         /**
@@ -6373,18 +6417,29 @@
      * @param   {number} alterMs Alter der Ziffer (siehe silenceDigitAge)
      * @returns {number} Faktor auf die Schriftgröße
      */
-    /**
-     * Anteil der Blende, den der KARAOKOVIC-Schriftzug einnimmt.
+    /* -------------------------------------------------------------------------
+     * Uebergangsblende (siehe Renderer.drawTransition)
      *
-     * 0.35 von 2000 ms sind 700 ms — lang genug fuer einen sichtbaren
-     * Bumper, kurz genug, dass danach noch Blende bleibt. Der Wert war
-     * vorher 0.2 bei 3000 ms (600 ms); der Schriftzug bekommt also etwas
-     * mehr Raum, obwohl die Blende kuerzer wird.
-     */
-    Renderer.BUMPER_ANTEIL = 0.35;
+     * Anteile der Blendendauer. Bei TIMING.TRANSITION_MS = 2000 ergeben sie
+     * die abgenommene Choreografie 0.5 s Wisch / 1.0 s Drehung / 0.5 s
+     * Aufblende. Wird die Dauer geaendert, bleiben die Verhaeltnisse.
+     * ---------------------------------------------------------------------- */
 
-    /** Endgroesse des Schriftzugs als Vielfaches (der Bumper federt darum). */
-    Renderer.BUMPER_ZOOM = 2.2;
+    /** Ende von Schritt 1 (Schwarzblende + Einwischen). */
+    Renderer.TRANS_WISCH_BIS = 0.25;
+    /** Ende von Schritt 2 (eine volle Umdrehung). */
+    Renderer.TRANS_DREH_BIS = 0.75;
+    /** Breite des Logos in virtuellen Pixeln. */
+    Renderer.TRANS_LOGO_BREITE = 620;
+
+    /**
+     * Ab wann das Bild vollstaendig schwarz ist.
+     *
+     * Ab hier duerfen Figuren versetzt, der Aufschlag aufgebaut und der Platz
+     * gewechselt werden — nichts davon ist zu sehen. Bewusst etwas nach dem
+     * Ende des Wischs (0.25) und weit vor der Aufblende (0.75).
+     */
+    Renderer.TRANS_SCHWARZ_AB = 0.35;
 
     Renderer.countdownBounce = function (alterMs) {
         const t = Math.min(1, Math.max(0, alterMs / Renderer.COUNTDOWN_BOUNCE_MS));
@@ -7865,16 +7920,16 @@
 
                 case STATE.TRANSITION: {
                     const prog = match.elapsed() / TIMING.TRANSITION_MS;
-                    if (prog > 0.2 && !match.transitionResetDone) {
+                    if (prog > Renderer.TRANS_SCHWARZ_AB && !match.transitionResetDone) {
                         /* HIER, und nur hier, gehen beide Figuren zurueck in
-                           die Mitte — im dunkelsten Frame der Jingle-Blende.
-                           Zwei Dinge treffen an dieser Stelle zusammen, beide
-                           nachgerechnet und nicht geschaetzt:
-                             - drawPlayers() zeichnet die Figuren zwischen
-                               prog 0.1 und 0.3 ueberhaupt nicht (300..900 ms),
-                             - drawDimOverlay() ist bei prog 0.2 auf alpha 1.0,
-                               das Bild ist also vollstaendig schwarz.
-                           Das Zuruecksetzen ist damit doppelt unsichtbar.
+                           die Mitte — waehrend das Bild schwarz ist.
+                           TRANS_SCHWARZ_AB = 0.35 liegt hinter dem Ende des
+                           Wischs (TRANS_WISCH_BIS = 0.25): ab dort deckt
+                           drawTransition() die volle Flaeche mit alpha 1.0 zu,
+                           und zwar UEBER den Figuren. Das Zuruecksetzen ist
+                           damit nicht nur unauffaellig, sondern unsichtbar.
+                           Wer eine der beiden Zahlen aendert, muss die
+                           Reihenfolge pruefen — test-blende.js tut das.
 
                            Vorgeschichte in zwei Schritten: erst sprang die
                            Figur hier sichtbar (ARENA-4 nahm den Sprung ganz
@@ -7889,9 +7944,15 @@
                         this.physics.haltAt();
                         this.physics.haltAlexAt();
                         this.physics.prepareServe();
+                        /* Auch der Belagwechsel gehoert hierher. Bis ARENA-15
+                           lief er unmittelbar mit dem Satzpunkt — also
+                           mitten in der Punktanzeige, im vollen Bild. Jetzt
+                           wechselt der Platz, waehrend nichts zu sehen ist,
+                           und steht beim Aufblenden fertig da. */
+                        this.pruefePlatzwechsel();
                         match.transitionResetDone = true;
                     }
-                    if (prog > 0.2) this.dvd.update();
+                    if (prog > Renderer.TRANS_SCHWARZ_AB) this.dvd.update();
                     if (prog >= 1.0) {
                         match.setState(STATE.SILENCE_CHECK);
                         match.resetSilenceTimer();
@@ -7910,7 +7971,15 @@
 
             this.physics.update();
 
-            this.pruefePlatzwechsel();
+            /* Waehrend Punktanzeige und Blende NICHT hier: der Belagwechsel
+               wuerde sonst im Bild passieren. Innerhalb dieses Zyklus
+               uebernimmt ihn der Block oben, im Schwarz der Blende. Ausserhalb
+               (Undo, Reset des Operators) bleibt es beim sofortigen Wechsel —
+               dort ist der Schnitt gewollt und der Operator weiss davon. */
+            if (match.state !== STATE.POINT_SCORED
+                && match.state !== STATE.TRANSITION) {
+                this.pruefePlatzwechsel();
+            }
         }
 
         /**
