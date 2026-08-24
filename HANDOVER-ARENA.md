@@ -361,9 +361,25 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     Gleiche Ursache wie damals im Bumper, siehe `haltWoSieSind()`.
   - *Messbare Folge der kürzeren Blende:* die Pause zwischen zwei Ballwechseln
     sinkt von 8 s auf 7 s, 20 Punkte in sieben Minuten (Bedarf ≥ 12).
-  - *Bennis Kopf* kommt aus `HEAD_BOX` statt aus drei eingemessenen Werten —
-    **eigener Commit, weil auf dem Hartplatz ein Rückschritt.** Siehe unten
-    unter „Inhaltlich offen".
+  - *Bennis Kopf* kommt aus `HEAD_BOX` statt aus drei eingemessenen
+    Absolutwerten — **mit einem Anteil je Platz**: 0,43 (Hart), 0,87 (Sand),
+    0,67 (Rasen). Ein gemeinsames Verhältnis konnte nicht stimmen, weil der
+    Stuhl auf den drei Bildern unterschiedlich weit weg steht, die
+    Spielerfiguren aber nicht — mit einheitlich 0,8 wäre sein Kopf auf dem
+    Hartplatz 62 px breit geworden, bei einem 36 px breiten Pult. Die drei
+    Anteile reproduzieren die von Hand gefundenen Größen aufs Pixel (42,5 /
+    68,8 / 66,2 px) und behalten den Gewinn der Kopplung: `HEAD_BOX` trägt
+    `PLATZ.figur` und `HEAD_SCALE` bereits, eine spätere Änderung der
+    Spielerköpfe zieht Benni automatisch mit. `Renderer.umpireKopfHoehe()`
+    ist die einzige Stelle, die das rechnet — auch der Browsertest zielt
+    darüber ins Gesicht, statt die Formel nachzubauen.
+  - *„SINNER / ALCARAZ" ist aus dem Hartplatzbild retuschiert.* Sie stand nur
+    dort, und ausgerechnet genau unter der eigenen Bauchbinde — im Match
+    verdeckt, sichtbar nur im Einspielen. Die Retusche steht **im Skript**
+    (`logos-entfernen.py`, Verfahren `klon`), nicht im Bild: das Skript
+    erzeugt `Vorgabe_Platz.png` bei jedem Lauf neu aus dem Original, eine
+    Retusche am Bild wäre spurlos verschwunden. Nachgeprüft: 34 947 geänderte
+    Pixel, Bounding-Box exakt das vorgesehene Loch, sonst nichts im Bild.
 
 ---
 
@@ -542,27 +558,13 @@ ein.
   `head_benni_ernst` stehen leer im Manifest; `resolveSchiriKopf()` greift sie
   von selbst ab, sobald Dateinamen eingetragen sind. **Es fehlen die Bilder**
   und die Ansage, welcher Ausdruck wann kommt.
-- **Bennis Kopfgröße auf dem Hartplatz** (seit ARENA-15). Nachgemessen:
-  seine Kopfbreite steigt dort von 33 px auf 62 px, bei einem **36 px breiten
-  Pult** — fast doppelt so breit wie das Pult, an dem er sitzt. Genau dieser
-  Zustand steht bei `PLAETZE.HART` als schon einmal behoben dokumentiert.
-  Die Ursache ist perspektivisch und nicht mit einer Zahl zu lösen: der Stuhl
-  steht auf den drei Bildern unterschiedlich weit weg, die Spielerfiguren
-  nicht. Ein gemeinsames Verhältnis kann höchstens auf einem Platz stimmen.
-  **Zwei Wege:** Commit `c99d58f` einzeln zurücknehmen (er ist genau dafür
-  getrennt), oder ein Verhältnis je Platz — aus den bisherigen Messungen
-  0,43 (Hart) / 0,87 (Sand) / 0,67 (Rasen), womit die Kopplung an `HEAD_BOX`
-  erhalten bliebe. Sand wird durch die Änderung übrigens leicht besser,
-  Rasen leicht schlechter.
-- **„SINNER / ALCARAZ" steht NUR im Hartplatzbild** (`Vorgabe_Platz.png`),
-  unten links — und zwar **exakt dort, wo die eigene Bauchbinde liegt**
-  (HUD 84–446 / 742–818). Im Match deckt sie die Grafik vollständig ab; zu
-  sehen ist sie deshalb ausschließlich im **Einspielen**, seit die Bauchbinde
-  dort nicht mehr gezeichnet wird (ARENA-10). Sand und Rasen sind sauber.
-  Die Fläche darunter ist glatter Außenbereich, eine Retusche also unkritisch.
 - **WIMBLEDON-Schriftzug** unten rechts im Rasenbild steht noch, ebenso die
-  kleine **Uhr auf der Rückwand** im Sandbild — und eine zweite Uhr oben
-  rechts im Rasenbild.
+  kleine **Uhr auf der Rückwand** im Sandbild und eine zweite **Uhr oben
+  rechts im Rasenbild**. Alle drei wären mit `logos-entfernen.py` in derselben
+  Art zu erledigen wie „SINNER / ALCARAZ" — für Sand und Rasen bräuchte es
+  dafür je ein eigenes Skript, es gibt bisher nur eines für den Hartplatz
+  (`logos-entfernen-sand.py` und `-rasen.py` liegen daneben und decken andere
+  Stellen ab).
 - **`MODE.ONLINE` ist reserviert und wird nirgends gesetzt.** Es gibt keinen
   Netzwerkcode. Ein Fernduell bräuchte einen vermittelnden Server (die Seite
   ist statisch), *einen* rechnenden Rechner statt zwei (die Physik zählt
