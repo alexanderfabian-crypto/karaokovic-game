@@ -5247,8 +5247,11 @@
          * Der Unterschied ist jetzt sichtbar: Countdown = still sein,
          * diese Aufforderung = singen.
          *
-         * Sie pulsiert, damit sie sich vom stehenden Countdown unterscheidet,
-         * und weicht denselben Köpfen aus wie er.
+         * Sie springt zweimal an und ist dann weg — anders als der stehende
+         * Countdown, und anders als bis ARENA-15, wo sie endlos pulsierte und
+         * damit zur Tapete wurde. Der Zielzonen-Meter darunter bleibt
+         * unabhaengig davon stehen. Ausgewichen wird denselben Köpfen wie
+         * beim Countdown.
          *
          * @param {Object} scene
          */
@@ -5257,20 +5260,19 @@
             const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_MID_Y, this._p1);
             const size = Renderer.SERVE_PROMPT_SIZE * p.scale;
 
-            /* Puls aus der verstrichenen Zeit im Zustand — kein eigener
-               Zähler, der bei einem Reset aus dem Tritt geraten könnte. */
-            const t = (scene.match.elapsed() % Renderer.SERVE_PROMPT_PULSE_MS)
-                / Renderer.SERVE_PROMPT_PULSE_MS;
-            let puls = 0.72 + 0.28 * Math.sin(t * Math.PI * 2);
-
-            /* Nach SERVE_PROMPT_PULSE_MAX Pulsen ausblenden — siehe dort.
-               Der Meter weiter unten bleibt davon UNBERUEHRT. */
-            const promptEnde = Renderer.SERVE_PROMPT_PULSE_MS
-                * Renderer.SERVE_PROMPT_PULSE_MAX;
-            const seitEnde = scene.match.elapsed() - promptEnde;
-            const promptSichtbar = seitEnde < Renderer.SERVE_PROMPT_FADE_MS;
-            if (seitEnde > 0) {
-                puls *= Math.max(0, 1 - seitEnde / Renderer.SERVE_PROMPT_FADE_MS);
+            /* Zwei Bounces, dann weg. Gerechnet aus der Zeit IM ZUSTAND —
+               kein eigener Zaehler, der bei einem Reset aus dem Tritt geraten
+               koennte. Der Meter weiter unten bleibt davon UNBERUEHRT. */
+            const el = scene.match.elapsed();
+            const bounceMs = Renderer.SERVE_PROMPT_BOUNCE_MS;
+            const nummer = Math.floor(el / bounceMs);
+            let promptScale = 1, promptAlpha = 1, promptSichtbar = true;
+            if (nummer < Renderer.SERVE_PROMPT_BOUNCES) {
+                promptScale = Renderer.countdownBounce(el - nummer * bounceMs);
+            } else {
+                const seit = el - Renderer.SERVE_PROMPT_BOUNCES * bounceMs;
+                promptAlpha = 1 - seit / Renderer.SERVE_PROMPT_FADE_MS;
+                promptSichtbar = promptAlpha > 0;
             }
 
             ctx.save();
@@ -5278,10 +5280,13 @@
             ctx.textBaseline = 'middle';
             ctx.font = this.font(size, 'normal', Renderer.GOTHIC_FONT);
 
-            const half = ctx.measureText(Renderer.SERVE_PROMPT_TEXT).width / 2;
+            /* Gegen den GROESSTEN Moment geprueft, nicht gegen die
+               Ruhegroesse — dieselbe Ueberlegung wie beim Countdown. */
+            const spitze = Renderer.COUNTDOWN_SPITZE;
+            const half = ctx.measureText(Renderer.SERVE_PROMPT_TEXT).width * spitze / 2;
             const box = {
                 left: p.x - half, right: p.x + half,
-                top: p.y - size * 0.5, bottom: p.y + size * 0.5
+                top: p.y - size * spitze * 0.5, bottom: p.y + size * spitze * 0.5
             };
             const offset = this.dodgeHeads(box, [
                 this.headBox(scene.andreaX, scene.paddleAndrea.y),
@@ -5294,8 +5299,14 @@
                dieselbe Farbe wie die Punkte in der Bauchbinde und hebt sich
                von Platz UND Rasen ab. */
             if (promptSichtbar) {
-                ctx.globalAlpha = puls;
-                ctx.lineWidth = size * 0.16;
+                /* Groesse federt, Deckkraft NICHT — bis auf die
+                   Kurzausblende am Ende. Kontur und Schrift federn zusammen,
+                   sonst behielte eine kleine Schrift die Strichstaerke einer
+                   grossen. */
+                const gefedert = size * promptScale;
+                ctx.font = this.font(gefedert, 'normal', Renderer.GOTHIC_FONT);
+                ctx.globalAlpha = Math.max(0, Math.min(1, promptAlpha));
+                ctx.lineWidth = gefedert * 0.16;
                 ctx.lineJoin = 'round';
                 ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
                 ctx.strokeText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
@@ -5603,12 +5614,21 @@
                     scale: this.viewport.scale }
                 : this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_MID_Y, this._p1);
 
-            /* Zwei Größen, und der Unterschied ist wesentlich:
-               `size` ist die RUHIGE Endgröße und dient der Kollisionsprüfung —
-               würde die federnde Größe die Box bestimmen, spränge die Ziffer
-               bei jedem Wechsel kurz zur Seite, weil die Box mitatmet.
-               Gezeichnet wird dagegen mit `gefedert`. */
+            /* Drei Größen, und die Unterschiede sind wesentlich:
+               `size`     ruhige Endgröße,
+               `gefedert` was in DIESEM Frame gezeichnet wird,
+               `spitze`   die GRÖSSTE Größe, die im Verlauf vorkommt.
+
+               Geprüft wird gegen `spitze`, gezeichnet mit `gefedert`. Beides
+               hat seinen Grund: die Box darf nicht mitatmen (sonst spränge
+               die Ziffer bei jedem Wechsel zur Seite), sie muss aber den
+               größten Moment abdecken — sonst schiebt sich die Ziffer genau
+               im Einsprung über einen Kopf, und das ist der Moment, in dem
+               alle hinsehen. Bis ARENA-15 stand hier die ruhige Größe; bei
+               einem Überschwinger von 28 % fiel das nicht auf, bei 51 %
+               schon. */
             const size = Renderer.COUNTDOWN_SIZE * p.scale;
+            const spitze = size * Renderer.COUNTDOWN_SPITZE;
             const bounce = Renderer.countdownBounce(match.silenceDigitAge());
             const gefedert = size * bounce;
             ctx.font = this.font(gefedert, 'normal', Renderer.GOTHIC_FONT);
@@ -5619,10 +5639,10 @@
              * Statt sie fest zu verschieben (und dann vielleicht Alex zu
              * treffen) wird geprüft und ausgewichen.
              * ------------------------------------------------------------------ */
-            const half = size * 0.4;   // halbe Ziffernbreite, grob
+            const half = spitze * 0.4;   // halbe Ziffernbreite, grob
             const box = {
                 left: p.x - half, right: p.x + half,
-                top: p.y - size * 0.4, bottom: p.y + size * 0.4
+                top: p.y - spitze * 0.4, bottom: p.y + spitze * 0.4
             };
             let offset = 0;
             if (scene) {
@@ -5885,6 +5905,37 @@
     Renderer.UMPIRE_KOPF_UEBERLAPP = 4;
 
     /**
+     * Verzoegerung, bis nach einem Punkt die Mienen wechseln.
+     *
+     * Der Moment des Punktes gehoert dem Ball; erst danach reagieren die
+     * Gesichter. 300 ms sind kurz genug, dass es als Reaktion gelesen wird,
+     * und lang genug, dass es nicht mit dem Aufsprung verschmilzt.
+     */
+    Renderer.ERGEBNIS_VERZUG = 300;
+
+    /**
+     * Wer gerade als Sieger im Bild steht — oder '', wenn kein Ergebnis
+     * angezeigt wird.
+     *
+     * EINZIGE Stelle, die das entscheidet. Spielermienen (drawPlayers) und
+     * Bennis Reaktion (resolveSchiriKopf) lesen beide von hier; sonst
+     * koennten sie auseinanderlaufen, und der Schiedsrichter jubelte noch,
+     * waehrend die Spieler schon neutral stehen.
+     *
+     * ENDET MIT DER PUNKTPHASE. Bis ARENA-15 hielt der Ausdruck bis in den
+     * Countdown; mit der neuen Transition (ARENA-16) ist er ab der
+     * Schwarzblende Geschichte — dort ist ohnehin nichts mehr zu sehen, und
+     * beim Aufblenden steht der naechste Ballwechsel.
+     *
+     * @param   {MatchState} match
+     * @returns {string} Wert aus PLAYER oder ''
+     */
+    Renderer.ergebnisZeigt = function (match) {
+        if (!match || match.state !== STATE.POINT_SCORED || !match.lastWinner) return '';
+        return match.elapsed() > Renderer.ERGEBNIS_VERZUG ? match.lastWinner : '';
+    };
+
+    /**
      * Gemeinsamer Groessenfaktor auf Bennis Kopf, ueber alle drei Plaetze.
      *
      * Als EIN Wert und nicht dreimal von Hand: die drei Koepfe wurden je Platz
@@ -5949,37 +6000,6 @@
      * Gemeint ist die SICHTBARE Höhe, nicht die Bildhöhe — siehe BODY_PADDING.
      */
     Renderer.BODY_HEIGHT = 118;
-
-    /**
-     * Verzoegerung, bis nach einem Punkt die Mienen wechseln.
-     *
-     * Der Moment des Punktes gehoert dem Ball; erst danach reagieren die
-     * Gesichter. 300 ms sind kurz genug, dass es als Reaktion gelesen wird,
-     * und lang genug, dass es nicht mit dem Aufsprung verschmilzt.
-     */
-    Renderer.ERGEBNIS_VERZUG = 300;
-
-    /**
-     * Wer gerade als Sieger im Bild steht — oder '', wenn kein Ergebnis
-     * angezeigt wird.
-     *
-     * EINZIGE Stelle, die das entscheidet. Spielermienen (drawPlayers) und
-     * Bennis Reaktion (resolveSchiriKopf) lesen beide von hier; sonst
-     * koennten sie auseinanderlaufen, und der Schiedsrichter jubelte noch,
-     * waehrend die Spieler schon neutral stehen.
-     *
-     * ENDET MIT DER PUNKTPHASE. Bis ARENA-15 hielt der Ausdruck bis in den
-     * Countdown; mit der neuen Transition (ARENA-16) ist er ab der
-     * Schwarzblende Geschichte — dort ist ohnehin nichts mehr zu sehen, und
-     * beim Aufblenden steht der naechste Ballwechsel.
-     *
-     * @param   {MatchState} match
-     * @returns {string} Wert aus PLAYER oder ''
-     */
-    Renderer.ergebnisZeigt = function (match) {
-        if (!match || match.state !== STATE.POINT_SCORED || !match.lastWinner) return '';
-        return match.elapsed() > Renderer.ERGEBNIS_VERZUG ? match.lastWinner : '';
-    };
 
     /**
      * Transparenter Rand der Körper-Sprites, als Anteil der Bildhöhe.
@@ -6401,11 +6421,22 @@
     Renderer.COUNTDOWN_BOUNCE_MS = 380;
 
     /**
-     * Stärke des Überschwingens. 1.7 ist der Lehrbuchwert für "ease out back";
-     * hier steht bewusst deutlich mehr, weil der Einsprung übertrieben wirken
-     * soll und nicht dezent.
+     * Stärke des Überschwingens.
+     *
+     * Wegmarken: 1.7 ist der Lehrbuchwert für "ease out back"; 3.2 war der
+     * erste Bühnenwert (Spitze 1.28); 5.0 seit ARENA-16 (Spitze 1.51) —
+     * aus Saalentfernung soll der Einsprung als SCHLAG lesbar sein, nicht
+     * als Zittern.
+     *
+     * NACH OBEN BEGRENZT DURCH DIE KOEPFE, und zwar gerechnet: die Ziffer
+     * darf im groessten Moment keinen Kopf verdecken (siehe
+     * COUNTDOWN_SPITZE und drawSilenceCheck). Zwischen Alex' Kopf (endet bei
+     * y 138) und Andreas (beginnt bei 507) liegen 369 px. Bei Groesse 280
+     * belegt die Ziffer 0.8 ihrer Schrifthoehe, mal Spitze 1.51 sind das
+     * 339 px — es passt, mit 30 px Luft. Bei 6.0 (Spitze 1.65) waeren es
+     * 370 px, und sie passte nicht mehr dazwischen.
      */
-    Renderer.COUNTDOWN_OVERSHOOT = 3.2;
+    Renderer.COUNTDOWN_OVERSHOOT = 5.0;
 
     /**
      * Größenfaktor der Countdown-Ziffer über ihre Lebensdauer.
@@ -6448,6 +6479,27 @@
         const k = t - 1;
         return 1 + c3 * k * k * k + c1 * k * k;
     };
+
+    /**
+     * Groesster Faktor, den countdownBounce() ueberhaupt erreicht.
+     *
+     * ABGELEITET, nicht abgeschrieben: wer am Ueberschwinger dreht, aendert
+     * damit automatisch auch die Kollisionspruefung gegen die Koepfe. Genau
+     * die Kopplung, die sonst beim naechsten Feintuning vergessen wird.
+     *
+     * Gerechnet wird sie einmal beim Laden ueber die Kurve selbst — die
+     * geschlossene Loesung waere kuerzer, aber sie muesste bei jeder
+     * Aenderung der Kurve mitgezogen werden.
+     */
+    Renderer.COUNTDOWN_SPITZE = (function () {
+        let max = 1;
+        for (let i = 0; i <= 200; i++) {
+            max = Math.max(max, Renderer.countdownBounce(
+                (i / 200) * Renderer.COUNTDOWN_BOUNCE_MS));
+        }
+        return max;
+    })();
+
 
     /* -------------------------------------------------------------------------
      * Aufforderung im Zustand SERVE_WAIT (siehe Renderer.drawServePrompt)
@@ -6498,22 +6550,29 @@
 
     Renderer.SERVE_PROMPT_TEXT = 'AUFSCHLAG!';
     Renderer.SERVE_PROMPT_SIZE = 96;
-    /** Dauer eines Pulses in Millisekunden. */
-    Renderer.SERVE_PROMPT_PULSE_MS = 900;
+    /**
+     * Dauer EINES Bounces der Aufschlag-Aufforderung.
+     *
+     * Bewusst derselbe Wert wie beim Countdown und dieselbe Kurve
+     * (countdownBounce): eine zweite Art von Animation im selben Bild waere
+     * ein Stilbruch. Was den Saal zum Hinsehen bringt, soll ueberall gleich
+     * aussehen.
+     */
+    Renderer.SERVE_PROMPT_BOUNCE_MS = 380;
 
     /**
-     * Nach so vielen Pulsen blendet der Schriftzug "AUFSCHLAG!" aus.
+     * So oft bounct "AUFSCHLAG!", dann ist es weg.
      *
-     * Zwei Pulse (1.8 s) reichen, um die Aufforderung zu setzen; danach
-     * steht sie nur noch im Weg. Der ZIELZONEN-METER bleibt ausdruecklich
-     * stehen — er ist die Antwort auf die UI-Falle und wird gerade dann
-     * gebraucht, wenn jemand laenger als zwei Sekunden nach seiner Mitte
-     * sucht.
+     * Zwei Schlaege setzen die Aufforderung; danach steht sie nur noch im
+     * Weg. Bis ARENA-15 pulsierte sie in der DECKKRAFT und lief endlos —
+     * beides ist entfallen: kein Pulsieren, kein Loop, keine Restanimation.
+     * Der ZIELZONEN-METER bleibt davon vollstaendig unberuehrt; er ist die
+     * Daueranzeige, der Schriftzug nur der Auftakt.
      */
-    Renderer.SERVE_PROMPT_PULSE_MAX = 2;
+    Renderer.SERVE_PROMPT_BOUNCES = 2;
 
-    /** Ausblendzeit des Schriftzugs am Ende in Millisekunden. */
-    Renderer.SERVE_PROMPT_FADE_MS = 350;
+    /** Kurzausblende nach dem letzten Bounce. Mehr als das waere Nachhall. */
+    Renderer.SERVE_PROMPT_FADE_MS = 150;
     /**
      * Radius des Neon-Scheins in virtuellen Pixeln, VOR der Letterbox-
      * Skalierung. Wird in neonText() mit `scale` multipliziert, damit der
