@@ -6742,7 +6742,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-14 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-15 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**

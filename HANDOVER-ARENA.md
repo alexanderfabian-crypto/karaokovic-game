@@ -347,6 +347,23 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     erledigt, sondern **umgezogen**: sie entscheiden jetzt, wessen Umfang die
     Zündzone misst. `test-aufschlag-tonhoehe` ist `test-aufschlag-mitte`
     gewichen; der alte hätte ab diesem Commit toten Code grün gemeldet.
+- **ARENA-15** — Showschliff. Fünf Stellen, die im Bild störten:
+  „AUFSCHLAG!" blendet nach zwei Pulsen aus (**der Zielzonen-Meter bleibt** —
+  er wird gerade dann gebraucht, wenn jemand länger sucht); der Meter hängt
+  nicht mehr am Textblock, sondern klebt an der **projizierten Grundlinie des
+  Aufschlägers** (feste Bildkoordinaten wären auf Sand und Rasen daneben);
+  Sieger- und Verlierergesicht halten bis in den Countdown statt mitten in der
+  Blende auf neutral zu fallen; die Blende dauert 2 s statt 3 s und der
+  Schriftzug federt mit derselben Kurve wie der Countdown.
+  - *Ein echter Sprung ist weg:* die Aufschlagsperre rief `haltAt()` **ohne
+    Argument** — das versetzt in die Bildmitte, statt festzuhalten. Im
+    Arcade-Modus sprang Andrea ab Satz 2 bei jedem Aufschlag von Alex sichtbar.
+    Gleiche Ursache wie damals im Bumper, siehe `haltWoSieSind()`.
+  - *Messbare Folge der kürzeren Blende:* die Pause zwischen zwei Ballwechseln
+    sinkt von 8 s auf 7 s, 20 Punkte in sieben Minuten (Bedarf ≥ 12).
+  - *Bennis Kopf* kommt aus `HEAD_BOX` statt aus drei eingemessenen Werten —
+    **eigener Commit, weil auf dem Hartplatz ein Rückschritt.** Siehe unten
+    unter „Inhaltlich offen".
 
 ---
 
@@ -356,7 +373,7 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 23.08.2026: 271 Zusicherungen, alle grün, Exit 0.** 20 Testdateien in
+**Stand 24.08.2026: 271 Zusicherungen, alle grün, Exit 0.** 20 Testdateien in
 22 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 | Zusicherungen | Test |
@@ -525,8 +542,27 @@ ein.
   `head_benni_ernst` stehen leer im Manifest; `resolveSchiriKopf()` greift sie
   von selbst ab, sobald Dateinamen eingetragen sind. **Es fehlen die Bilder**
   und die Ansage, welcher Ausdruck wann kommt.
+- **Bennis Kopfgröße auf dem Hartplatz** (seit ARENA-15). Nachgemessen:
+  seine Kopfbreite steigt dort von 33 px auf 62 px, bei einem **36 px breiten
+  Pult** — fast doppelt so breit wie das Pult, an dem er sitzt. Genau dieser
+  Zustand steht bei `PLAETZE.HART` als schon einmal behoben dokumentiert.
+  Die Ursache ist perspektivisch und nicht mit einer Zahl zu lösen: der Stuhl
+  steht auf den drei Bildern unterschiedlich weit weg, die Spielerfiguren
+  nicht. Ein gemeinsames Verhältnis kann höchstens auf einem Platz stimmen.
+  **Zwei Wege:** Commit `c99d58f` einzeln zurücknehmen (er ist genau dafür
+  getrennt), oder ein Verhältnis je Platz — aus den bisherigen Messungen
+  0,43 (Hart) / 0,87 (Sand) / 0,67 (Rasen), womit die Kopplung an `HEAD_BOX`
+  erhalten bliebe. Sand wird durch die Änderung übrigens leicht besser,
+  Rasen leicht schlechter.
+- **„SINNER / ALCARAZ" steht NUR im Hartplatzbild** (`Vorgabe_Platz.png`),
+  unten links — und zwar **exakt dort, wo die eigene Bauchbinde liegt**
+  (HUD 84–446 / 742–818). Im Match deckt sie die Grafik vollständig ab; zu
+  sehen ist sie deshalb ausschließlich im **Einspielen**, seit die Bauchbinde
+  dort nicht mehr gezeichnet wird (ARENA-10). Sand und Rasen sind sauber.
+  Die Fläche darunter ist glatter Außenbereich, eine Retusche also unkritisch.
 - **WIMBLEDON-Schriftzug** unten rechts im Rasenbild steht noch, ebenso die
-  kleine **Uhr auf der Rückwand** im Sandbild.
+  kleine **Uhr auf der Rückwand** im Sandbild — und eine zweite Uhr oben
+  rechts im Rasenbild.
 - **`MODE.ONLINE` ist reserviert und wird nirgends gesetzt.** Es gibt keinen
   Netzwerkcode. Ein Fernduell bräuchte einen vermittelnden Server (die Seite
   ist statisch), *einen* rechnenden Rechner statt zwei (die Physik zählt
@@ -685,6 +721,10 @@ okay!" → „Einspielen starten" oder „Match starten".
 | `Ctrl+Shift+A` | **Aufschlag von Hand erzwingen** (Notausgang) |
 | `Ctrl+Shift+M` | Messanzeige unten rechts ein/aus |
 | `Ctrl+Shift+L` | Protokoll als Datei sichern |
+
+**Der Schriftzug „AUFSCHLAG!" blendet nach 1,8 s aus — der Balken darunter
+nicht.** Das ist Absicht: wer länger als zwei Sekunden sucht, braucht den
+Meter, nicht die Aufforderung.
 
 **Aufschlagen seit ARENA-14:** nicht mehr dorthin singen, wo der Ball hin
 soll — der Ball fliegt zufällig. Verlangt wird die **Mitte der eigenen
