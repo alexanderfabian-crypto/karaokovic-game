@@ -380,6 +380,58 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     erzeugt `Vorgabe_Platz.png` bei jedem Lauf neu aus dem Original, eine
     Retusche am Bild wäre spurlos verschwunden. Nachgeprüft: 34 947 geänderte
     Pixel, Bounding-Box exakt das vorgesehene Loch, sonst nichts im Bild.
+- **ARENA-16** — Korrektursprint nach dem Mitschnitt vom 24.08. Das Briefing
+  **ersetzt Teile von ARENA-15**: der endlose Puls, die bis in den Countdown
+  haltenden Gesichter und der Bumper sind damit Geschichte.
+  - *Die Trefferzone ist von 100 auf 71 Weltpixel halbiert worden* — die
+    eigentliche Bühnenmeldung („Bälle, die klar neben der Figur vorbeiziehen,
+    gelten als Treffer"). Nachgemessen aus dem Alphakanal der Sprites: die
+    sichtbare Figur ist auf dem Hartplatz 84 px breit, die Zone war 100 px
+    halb — **58 px leere Fläche je Seite**. Jetzt sind es 29 px, und ein Rest
+    bleibt bewusst: pixelgenaues Treffen wäre auf der Bühne frustrierend.
+    Dafür ist `PADDLE.hitPadding` in **`PADDLE.hitHalf`** umbenannt und von
+    `PADDLE.width` getrennt worden. `width` normiert den **Schlagwinkel** und
+    bleibt bei 150 — beide Bedeutungen steckten vorher in einer Zahl, und die
+    Zone ließ sich nicht verkleinern, ohne die Ballrichtung mitzuverstellen.
+    `test-trefferzone.js` prüft beides gegeneinander.
+  - *Benni reagiert auf den Punkt* (`Benni_Punkt_Alex.png` /
+    `Benni_Punkt_Andrea.png`) — aber erst nach `ERGEBNIS_VERZUG = 300 ms`,
+    aus **derselben Quelle** wie die Mienen der Figuren
+    (`Renderer.ergebnisZeigt()`). Ohne den Verzug verrät die Bildregie den
+    Punktgewinner, bevor der Ball ausgespielt aussieht.
+  - *Die Blende ist neu choreografiert:* Logo wischt von links ein (0–25 %),
+    dreht sich im schwarzen Bild **genau einmal** (25–75 %), Platz blendet auf
+    (75–100 %). Das Schwarz liegt jetzt **über** den Figuren — nur deshalb
+    darf bei 35 % zurückgesetzt **und der Belag gewechselt** werden, ohne dass
+    jemand einen Sprung sieht. Die Ränder schließen an die Nachbarphasen an
+    (0,6 aus der Punktanzeige, 0 in die Ruheprüfung).
+  - *Der Countdown federt wuchtiger:* Überschwinger 5,0 statt 3,2, Spitze
+    **151 %** statt 128 %. `Renderer.COUNTDOWN_SPITZE` rechnet das Maximum
+    **einmal beim Laden** aus der Kurve aus, statt es als zweite Zahl zu
+    pflegen; die Kollisionsbox nutzt es, damit der Ausweichweg während der
+    Federung konstant bleibt. Warum nicht mehr: bei 6,0 schöbe sich die Ziffer
+    im Einsprung 30 % statt 17 % über Andreas Kopfbox.
+  - *„AUFSCHLAG!" springt zweimal und ist dann weg* (2 × 380 ms, 150 ms
+    Ausblende) statt endlos zu pulsieren. Der Zielzonen-Meter bleibt.
+  - *Der Einspiel-Untertitel („ENTER + LEERTASTE") ist raus* — der Operator
+    kennt die Taste, das Publikum sieht sonst eine Tastenbelegung.
+  - *Zwei Entscheidungen aus dem Briefing:* die Abdunkelung im Countdown
+    entfällt (volles Licht) — sie war bereits vorher entfernt worden; Stille
+    bleibt bei 2 s und der Countdown bei „2…1".
+  - *Fehlende Bilddateien sind jetzt zweierlei.* Der AssetManager führt eine
+    Liste `OPTIONAL`: für diese Schlüssel gibt es einen Rückfall im
+    Zeichencode, ihr Fehlen steht als Terminstand im Protokoll
+    („noch nicht geliefert") und blockiert weder Browsertest noch
+    `webseite-bauen.js`. Alles andere bleibt ein harter Fehler. Vorher sah ein
+    fehlendes Platzbild aus wie ein noch nicht geliefertes Reaktionsbild.
+  - *Nebenbefund, NICHT aus diesem Sprint:* auf dem **Sandplatz** liegt die
+    ruhige Countdown-Ziffer 42 px auf der Kopfbox der hinteren Figur.
+    Nachgerechnet mit dem alten Überschwinger 3,2 kommt derselbe Wert heraus —
+    Ursache ist der **feste** Ausweichweg `COUNTDOWN_DODGE = 170 px`:
+    `dodgeHeads()` probiert nur „gar nicht / hoch / runter" und nimmt bei zwei
+    belegten Richtungen „hoch". Ein Ausweichen um das *nötige* Maß statt um
+    einen festen Betrag würde es lösen. `test-showschliff.js` führt den Wert
+    als Messmarke mit, damit er nicht unbemerkt wächst.
 
 ---
 
@@ -389,8 +441,8 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 24.08.2026: 271 Zusicherungen, alle grün, Exit 0.** 20 Testdateien in
-22 Läufen (zwei laufen doppelt, einmal je Fassung).
+**Stand 25.08.2026: 341 Zusicherungen, alle grün, Exit 0.** 23 Testdateien in
+25 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 | Zusicherungen | Test |
 |---:|---|
@@ -401,6 +453,9 @@ node Entwickler-Tests/alle-tests.js       # ~2 min
 | 18 | `test-aufschlag-mitte.js` — Zündzone und gewürfelte Richtung |
 | 8 | `test-regeln.js` — Tennisregeln |
 | 8 | `test-netz-verdeckung.js` — Netz verdeckt den Ball (Sand) |
+| 33 | `test-showschliff.js` — Bennis Reaktion, Countdown, Aufforderung |
+| 21 | `test-blende.js` — Übergangsblende zwischen Ballwechseln |
+| 16 | `test-trefferzone.js` — Breite der Trefferzone |
 | 7 | `test-aufschlag.js` — Auslösen des Aufschlags |
 | 7 | `test-duell-aufschlag.js` — Aufschlag im Duell |
 | 6 | `test-tonhoehe.js` — Tonhöhenerkennung |
@@ -420,7 +475,11 @@ node Entwickler-Tests/alle-tests.js       # ~2 min
 
 - **Node mit DOM-Attrappe** (`dom-stub.js`, `loadGame(datei)`): lädt den
   Spielcode in einen Prozess mit gefälschten Browser-Globals und greift über
-  `window.KARAOKOVIC` auf die inneren Objekte zu.
+  `window.KARAOKOVIC` auf die inneren Objekte zu. Seit ARENA-16 liefert
+  `dom-stub.js` zusätzlich `zeichenprotokoll()` — einen **mitschreibenden**
+  Canvas-Kontext. Damit lässt sich auch in Node prüfen, *was* gezeichnet
+  wurde (Deckkraft der Blende, Drehwinkel des Logos, Schriftgrad der
+  federnden Aufforderung), ohne ein echtes Chrome zu starten.
 - **Echtes Chrome über CDP** (`test-browser.js`, 43 KB, ohne Puppeteer):
   startet Headless-Chrome auf einem freien Port mit eigenem Profil, spricht
   das DevTools-Protokoll direkt und wertet aus. Nimmt die Seite als Argument,
@@ -508,7 +567,7 @@ ein.
   geschützten Stelle muss zweimal gedacht werden. Solange V41 eingefroren
   bleibt, ist das beherrschbar — es ist aber der Punkt, an dem später ein
   Fehler doppelt gesucht wird.
-- **`app-arena.js` sind 7310 Zeilen in einer IIFE.** Eine Aufteilung ohne
+- **`app-arena.js` sind 8470 Zeilen in einer IIFE.** Eine Aufteilung ohne
   Build-Schritt wäre möglich (mehrere `<script>`-Tags, gemeinsames Namensraum-
   objekt), kostet aber die Kapselung, die die IIFE heute liefert.
 - **Kein `localStorage`, keine Wiederaufnahme.** Ein versehentlicher Reload
@@ -526,6 +585,15 @@ ein.
   sonst dreht irgendwann jemand an einer Zahl, die nichts mehr tut. Das
   Entfernen ist ein eigener Durchgang mit eigenem Testlauf; der lebende Regler
   heißt `Physics.AUFSCHLAG_MITTE_BREITE`.
+- **`dodgeHeads()` weicht um einen festen Betrag aus, nicht um das nötige
+  Maß.** `COUNTDOWN_DODGE = 170 px`, probiert wird „gar nicht / hoch / runter";
+  sind beide Richtungen belegt, gewinnt „hoch" als kleineres Übel. Auf dem
+  **Sandplatz** steht dort die hintere Figur, und die ruhige Countdown-Ziffer
+  liegt 42 px auf deren Kopfbox. Kein Nebeneffekt von ARENA-16 — mit dem alten
+  Überschwinger 3,2 kommt derselbe Wert heraus. Der Umbau auf einen minimalen
+  Versatz wäre klein, betrifft aber auch die Aufforderung „AUFSCHLAG!" und
+  gehört deshalb in einen eigenen Durchgang. `test-showschliff.js` führt den
+  Wert als Messmarke mit (Grenze 45 px), damit er nicht unbemerkt wächst.
 - **Zwei Optimierungen sind bewusst zurückgestellt, bis gemessen ist.** Beide
   aus der Durchsicht zu ARENA-11, beide mit einem klaren Auslöser:
   - *Countdown-Glow vorrendern.* `gothicText()` zeichnet in jedem Frame der
@@ -633,6 +701,15 @@ Protokoll — die Regeln verhindern ihn.
    PA-Grundlast: Display bleibt an, das Protokoll enthält am **Anfang**
    weiterhin die Boot- und Soundcheck-Zeilen, der RUHE-Bereich zeigt
    Sammelzeilen statt einer Flut.
+8. **Die drei ausstehenden Bilddateien einspielen**, sobald die Grafik
+   liefert: `Benni_Punkt_Alex.png`, `Benni_Punkt_Andrea.png`,
+   `Transitionlogo_Karaokovic.png`. Sie liegen bereits im Manifest und in
+   `AssetManager.OPTIONAL` — einfach in den Projektstamm legen,
+   `node Entwickler-Tests/webseite-bauen.js` laufen lassen, fertig; **kein
+   Codeeingriff**. Solange sie fehlen, zeigt Benni den Standardkopf und die
+   Blende den KARAOKOVIC-Schriftzug, und das Protokoll führt je eine
+   `ASSET`-Zeile „noch nicht geliefert". Zur Abnahme gehört, dass diese drei
+   Zeilen dann verschwunden sind.
 
 ---
 
@@ -758,7 +835,7 @@ Session liest:
 |---|---|
 | `AUDIO` | geöffneter Eingang: Name, Abtastrate, Kanalzahl, AGC/NS/EC |
 | `DISPLAY` | gemessene Bildwiederholrate (nach ~2 s, einmalig) |
-| `ASSET` | Bilddatei fehlt oder ist defekt — sonst still im Fallback |
+| `ASSET` | Bilddatei fehlt oder ist defekt — sonst still im Fallback. Seit ARENA-16 unterscheidet die Zeile „fehlt oder ist defekt" (Ausfall) von „noch nicht geliefert" (Terminstand, `AssetManager.OPTIONAL`) |
 | `WARNUNG` | Ruhe seit 8 s nicht erreicht; Display über 75 Hz |
 | `RUHE` | jeder Rücksetzer der Ruhe-Uhr samt Pegel und Grenze |
 | `AUFSCHLAG` | ausgelöst (mit Pegel und Ton) oder wegen Tonhöhe abgewiesen |
