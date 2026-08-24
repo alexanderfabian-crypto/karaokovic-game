@@ -716,7 +716,14 @@
            Bedingung der Ruhepruefung, nicht nur die Laenge einer Animation. */
         SILENCE_MS: 2000,   // absolute Ruhe vor dem Aufschlag
         POINT_MS: 3000,     // Jubel-/Punkteanzeige
-        TRANSITION_MS: 3000 // Karaokovic-Bumper + DVD-Wort
+        /* War 3000. Zwei Sekunden sind der Takt, den die Blende auf der
+           Buehne braucht — laenger zieht sich der Moment zwischen zwei
+           Ballwechseln.
+           ACHTUNG: an dieser Zahl haengen ANTEILIG auch das Wegblenden der
+           Figuren (10-30 %) und der Zeitpunkt von prepareServe() (20 %).
+           Beides rechnet relativ und zieht automatisch mit — aber es
+           verschiebt sich, und genau das gehoert in die Probe. */
+        TRANSITION_MS: 2000 // Karaokovic-Bumper + DVD-Wort
     };
 
     /** Gültige Zustände der State Machine. @enum {string} */
@@ -4289,10 +4296,29 @@
             let andreaEmotion = 'neutral', alexEmotion = 'neutral';
             let andreaY = 0, alexY = 0;
 
-            if (match.state === STATE.POINT_SCORED) {
+            /* Der Ausdruck haelt bis zum naechsten Aufschlag, nicht nur bis
+               zum Bumper: mit dem Wechsel nach TRANSITION fiel er vorher auf
+               neutral zurueck, also mitten in der Blende. In SILENCE_CHECK
+               steht das Ergebnis noch im Gesicht, mit dem Eintritt in
+               SERVE_WAIT ist es Geschichte.
+
+               `ease` steht in den spaeteren Zustaenden auf 1: die Verliererin
+               BLEIBT eingesackt, die Bewegung laeuft aber nicht neu an. Das
+               ist der Punkt — `elapsed()` beginnt bei jedem Zustandswechsel
+               von vorn, eine erneute 0->1-Kurve saehe aus, als saecke sie ein
+               zweites und drittes Mal ein.
+
+               `lastWinner` wird nie geloescht; vor dem ALLERERSTEN Punkt
+               einer Session ist es leer, danach nie wieder — deshalb die
+               zusaetzliche Bedingung. */
+            const zeigtErgebnis = match.state === STATE.POINT_SCORED
+                || match.state === STATE.TRANSITION
+                || match.state === STATE.SILENCE_CHECK;
+            if (zeigtErgebnis && match.lastWinner) {
                 const elapsed = match.elapsed();
-                const ease = Math.min(1, elapsed / 500);
-                const showEmotion = elapsed > 300;
+                const ease = match.state === STATE.POINT_SCORED
+                    ? Math.min(1, elapsed / 500) : 1;
+                const showEmotion = match.state !== STATE.POINT_SCORED || elapsed > 300;
                 /* Das Einsacken der Verliererin bleibt: es ist eine POSITION,
                    keine Groesse, und traegt die Enttaeuschung, seit das
                    Schrumpfen weg ist. */
@@ -5145,7 +5171,17 @@
                Zähler, der bei einem Reset aus dem Tritt geraten könnte. */
             const t = (scene.match.elapsed() % Renderer.SERVE_PROMPT_PULSE_MS)
                 / Renderer.SERVE_PROMPT_PULSE_MS;
-            const puls = 0.72 + 0.28 * Math.sin(t * Math.PI * 2);
+            let puls = 0.72 + 0.28 * Math.sin(t * Math.PI * 2);
+
+            /* Nach SERVE_PROMPT_PULSE_MAX Pulsen ausblenden — siehe dort.
+               Der Meter weiter unten bleibt davon UNBERUEHRT. */
+            const promptEnde = Renderer.SERVE_PROMPT_PULSE_MS
+                * Renderer.SERVE_PROMPT_PULSE_MAX;
+            const seitEnde = scene.match.elapsed() - promptEnde;
+            const promptSichtbar = seitEnde < Renderer.SERVE_PROMPT_FADE_MS;
+            if (seitEnde > 0) {
+                puls *= Math.max(0, 1 - seitEnde / Renderer.SERVE_PROMPT_FADE_MS);
+            }
 
             ctx.save();
             ctx.textAlign = 'center';
@@ -5167,13 +5203,15 @@
                blauen Platz wäre sie kaum zu lesen. Gelb auf dunklem Rand ist
                dieselbe Farbe wie die Punkte in der Bauchbinde und hebt sich
                von Platz UND Rasen ab. */
-            ctx.globalAlpha = puls;
-            ctx.lineWidth = size * 0.16;
-            ctx.lineJoin = 'round';
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-            ctx.strokeText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
-            ctx.fillStyle = ACCENT_YELLOW;
-            ctx.fillText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
+            if (promptSichtbar) {
+                ctx.globalAlpha = puls;
+                ctx.lineWidth = size * 0.16;
+                ctx.lineJoin = 'round';
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+                ctx.strokeText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
+                ctx.fillStyle = ACCENT_YELLOW;
+                ctx.fillText(Renderer.SERVE_PROMPT_TEXT, p.x, p.y + offset);
+            }
 
             /* --- Zielzonen-Meter ------------------------------------------
              * Laeuft bei JEDEM Aufschlag mit, nicht nur bei einem
@@ -5182,7 +5220,22 @@
              * exakt so aus wie ein Aufschlag, der einfach nicht reagiert.
              * -------------------------------------------------------------- */
             ctx.globalAlpha = 1;
-            const barY = p.y + offset + size * Renderer.ZIELZONE_OFFSET;
+
+            /* Fester Ort statt Anhaengsel des Schriftzugs: mittig, knapp
+               unter der Grundlinie DES AUFSCHLAEGERS. Die Grundlinie wird
+               projiziert, damit der Meter auf jedem der drei Plaetze an
+               seiner Linie klebt — die Kameras unterscheiden sich, eine
+               feste Bildkoordinate waere auf Sand und Rasen daneben.
+               Der Meter haengt bewusst NICHT mehr am Text: der blendet nach
+               zwei Pulsen aus, er bleibt.
+
+               `_p2` ist hier frei: headBox() benutzt es zwar auch, gibt aber
+               ein eigenes Objekt zurueck, und dodgeHeads() ist oben bereits
+               fertig. */
+            const grundY = scene.match.server === PLAYER.ALEX
+                ? scene.paddleAlex.y : scene.paddleAndrea.y;
+            const linie = this.proj.project(VIRTUAL_WIDTH / 2, grundY, 0, this._p2);
+            const barY = linie.y + Renderer.ZIELZONE_LINIENABSTAND * p.scale;
             const barW = Renderer.ZIELZONE_BREITE * p.scale;
             const barH = Renderer.ZIELZONE_HOEHE * p.scale;
             const barX = p.x - barW / 2;
@@ -5317,12 +5370,22 @@
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
 
-            if (prog < 0.2) {
-                const zoom = 1 + (prog / 0.2) * 2;
+            if (prog < Renderer.BUMPER_ANTEIL) {
+                /* EIN kraeftiger Bumper statt eines linearen Zooms: der
+                   Schriftzug schiesst ueber seine Endgroesse hinaus und
+                   federt zurueck. Bewusst dieselbe Kurve wie der Countdown
+                   (countdownBounce, "ease out back") — eine zweite Art von
+                   Animation im selben Bild waere ein Stilbruch.
+                   Das Ausblenden setzt erst in der zweiten Haelfte ein,
+                   damit der Schriftzug im Moment des Federns voll steht. */
+                const t = prog / Renderer.BUMPER_ANTEIL;
+                const zoom = Renderer.BUMPER_ZOOM
+                    * Renderer.countdownBounce(t * Renderer.COUNTDOWN_BOUNCE_MS);
+                const alpha = t < 0.5 ? 1 : 1 - (t - 0.5) / 0.5;
                 ctx.save();
                 ctx.translate(center.x, center.y);
                 ctx.scale(zoom, zoom);
-                ctx.fillStyle = `rgba(255, 0, 127, ${1 - (prog / 0.2)})`;
+                ctx.fillStyle = `rgba(255, 0, 127, ${alpha})`;
                 ctx.font = this.font(110 * center.scale);
                 ctx.fillText('KARAOKOVIC', 0, 0);
                 ctx.restore();
@@ -6148,6 +6211,19 @@
      * @param   {number} alterMs Alter der Ziffer (siehe silenceDigitAge)
      * @returns {number} Faktor auf die Schriftgröße
      */
+    /**
+     * Anteil der Blende, den der KARAOKOVIC-Schriftzug einnimmt.
+     *
+     * 0.35 von 2000 ms sind 700 ms — lang genug fuer einen sichtbaren
+     * Bumper, kurz genug, dass danach noch Blende bleibt. Der Wert war
+     * vorher 0.2 bei 3000 ms (600 ms); der Schriftzug bekommt also etwas
+     * mehr Raum, obwohl die Blende kuerzer wird.
+     */
+    Renderer.BUMPER_ANTEIL = 0.35;
+
+    /** Endgroesse des Schriftzugs als Vielfaches (der Bumper federt darum). */
+    Renderer.BUMPER_ZOOM = 2.2;
+
     Renderer.countdownBounce = function (alterMs) {
         const t = Math.min(1, Math.max(0, alterMs / Renderer.COUNTDOWN_BOUNCE_MS));
         const c1 = Renderer.COUNTDOWN_OVERSHOOT;
@@ -6189,13 +6265,38 @@
     /** Breite/Hoehe des Zielzonen-Meters unter "AUFSCHLAG!", in virtuellen Pixeln. */
     Renderer.ZIELZONE_BREITE = 240;
     Renderer.ZIELZONE_HOEHE = 16;
-    /** Vertikaler Abstand des Meters von der Aufschlag-Aufforderung. */
-    Renderer.ZIELZONE_OFFSET = 0.60;
+    /**
+     * Abstand des Meters zur Grundlinie des Aufschlaegers, in virtuellen
+     * BILDpixeln, immer nach UNTEN im Bild.
+     *
+     * Vom Betrachter aus gesehen liegt er damit bei Andrea knapp AUSSERHALB
+     * des Feldes (ihre Grundlinie ist die vordere) und bei Alex knapp
+     * INNERHALB (seine ist die hintere) — beide Male dieselbe Rechnung,
+     * beide Male dieselbe Lesart: "direkt unter der Figur, die aufschlaegt".
+     *
+     * 34 px sind mehr als die Meterhoehe: er beruehrt die Linie nie, klebt
+     * aber sichtbar daran.
+     */
+    Renderer.ZIELZONE_LINIENABSTAND = 34;
 
     Renderer.SERVE_PROMPT_TEXT = 'AUFSCHLAG!';
     Renderer.SERVE_PROMPT_SIZE = 96;
     /** Dauer eines Pulses in Millisekunden. */
     Renderer.SERVE_PROMPT_PULSE_MS = 900;
+
+    /**
+     * Nach so vielen Pulsen blendet der Schriftzug "AUFSCHLAG!" aus.
+     *
+     * Zwei Pulse (1.8 s) reichen, um die Aufforderung zu setzen; danach
+     * steht sie nur noch im Weg. Der ZIELZONEN-METER bleibt ausdruecklich
+     * stehen — er ist die Antwort auf die UI-Falle und wird gerade dann
+     * gebraucht, wenn jemand laenger als zwei Sekunden nach seiner Mitte
+     * sucht.
+     */
+    Renderer.SERVE_PROMPT_PULSE_MAX = 2;
+
+    /** Ausblendzeit des Schriftzugs am Ende in Millisekunden. */
+    Renderer.SERVE_PROMPT_FADE_MS = 350;
     /**
      * Radius des Neon-Scheins in virtuellen Pixeln, VOR der Letterbox-
      * Skalierung. Wird in neonText() mit `scale` multipliziert, damit der
@@ -7516,8 +7617,13 @@
                            gedämpfte Bewegung trägt ihren Schwung im Zustand
                            mit, die Figur würde sonst im Moment der Freigabe
                            mit der alten Geschwindigkeit weiterlaufen. */
-                        if (untenGesperrt) this.physics.haltAt();
-                        if (obenGesperrt) this.physics.haltAlexAt();
+                        /* MIT Argument: festhalten, wo sie STEHT — nicht in
+                           die Bildmitte setzen. Ohne Argument sprang Andrea
+                           bei jedem Aufschlag von Alex sichtbar in die Mitte
+                           (Arcade ab Satz 2). Gleiche Ursache wie damals im
+                           Bumper, siehe haltWoSieSind(). */
+                        if (untenGesperrt) this.physics.haltAt(this.physics.currentX);
+                        if (obenGesperrt) this.physics.haltAlexAt(this.physics.paddleAlex.x);
 
                         /* Schwelle ist CONFIG.moveGate, NICHT volumeGate.
                            Der Zusammenhang ist zwingend: die Sperre darf erst
