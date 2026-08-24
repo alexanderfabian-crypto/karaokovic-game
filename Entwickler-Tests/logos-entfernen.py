@@ -72,6 +72,27 @@ LOECHER = [
     # selbst bleibt unangetastet.
     ('polo-stuhl',     330, 321,  366, 338, 'glyph', (150, 3)),
     ('polo-bank',      235, 440,  278, 458, 'glyph', (150, 3)),
+
+    # Die Ergebnistafel "SINNER / ALCARAZ" unten links. Sie steht NUR in
+    # diesem Bild (Sand und Rasen sind sauber) und ausgerechnet genau dort,
+    # wo das Spiel seine eigene Bauchbinde zeichnet (HUD 84..446 / 742..818)
+    # — im Match ist sie deshalb verdeckt, sichtbar wurde sie erst im
+    # EINSPIELEN, seit die Bauchbinde dort nicht mehr gezeichnet wird.
+    #
+    # 'klon' wie bei "us open": eine grosse geschlossene Flaeche, keine
+    # duenne Schrift. Eine Glyphenmaske waere fast so gross wie das Rechteck.
+    #
+    # Eingemessen im Original: der Kasten liegt bei x 83..446, y 741..818;
+    # das Loch hat rundum rund sieben Pixel Luft. Nach oben ist das
+    # unkritisch — die weisse Grundlinie endet bei y 704, also 30 px
+    # entfernt. Nach links bleibt die dunkle Eckabschattung unangetastet:
+    # sie reicht an dieser Hoehe bis etwa x 11, das Loch beginnt bei 76.
+    #
+    # Quelle 500 px weiter rechts, gleiche Zeilen: dort ist der
+    # Aussenbereich frei und praktisch gleich hell (gemessen 98.5 gegen
+    # 98.5 ueber die ganze Breite). Der Helligkeitsabgleich unten braucht
+    # also kaum zu korrigieren.
+    ('sinner-alcaraz',  76, 734,  454, 826, 'klon',  (500, 0)),
 ]
 
 RICHTUNGEN = [(1, 0), (-1, 0), (0, 1), (0, -1),
