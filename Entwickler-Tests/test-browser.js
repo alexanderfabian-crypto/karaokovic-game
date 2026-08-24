@@ -778,7 +778,12 @@ class Browser {
             if (!st) return { arena: true, besetzt: false };
 
             /* Mitten ins Gesicht zielen, nicht an den Rand. */
-            const p = R.viewport.toScreen(st.x, st.schulterY - st.kopfHoehe * 0.55, {});
+            /* Dieselbe Rechnung wie der Renderer, nicht nachgebaut: die
+               Kopfhoehe kommt seit ARENA-15 aus HEAD_BOX mal einem Anteil je
+               Platz, ein hier getippter Absolutwert liefe beim naechsten
+               Umbau still daneben. */
+            const kopf = K.Renderer.umpireKopfHoehe();
+            const p = R.viewport.toScreen(st.x, st.schulterY - kopf * 0.55, {});
             const lies = () => {
                 const d = R.ctx.getImageData(Math.round(p.x), Math.round(p.y), 1, 1).data;
                 return d[0] + ',' + d[1] + ',' + d[2];

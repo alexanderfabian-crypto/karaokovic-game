@@ -480,9 +480,13 @@
 
                `schulterY` ist die Pultkante: dort verschwindet die Figur. Was
                darunter gezeichnet wuerde, laege VOR dem Pult statt dahinter.
-               `kopfHoehe` war zuerst 36 — damit war der Kopf so breit wie das
-               ganze Pult. 28 passt zur Entfernung. */
-            schiedsrichter: { x: 345, schulterY: 240, kopfHoehe: 28,
+
+               `kopfAnteil` ist Bennis Kopfhoehe als Anteil eines
+               SPIELERkopfes (HEAD_BOX.height). 0.43 ergibt hier 42 px, also
+               33 px Breite auf einem 36 px breiten Pult — genau das Mass, das
+               schon einmal von Hand gefunden wurde: mit einem groesseren Kopf
+               war er so breit wie das ganze Pult. */
+            schiedsrichter: { x: 345, schulterY: 240, kopfAnteil: 0.43,
                 /* Leerer Stuhl: hier fehlt ein Koerper, also wird eine
                    Schulter angedeutet. */
                 schultern: true },
@@ -522,8 +526,10 @@
                Schulter waere ein Buckel auf einer vorhandenen Jacke.
                Eingemessen im gerenderten Bild (der Sandplatz ist als
                einziger 1920x1080 und wird skaliert, die Datei taugt hier
-               also nicht zum Messen): Kopf x = 128..158, y = 205..247. */
-            schiedsrichter: { x: 146, schulterY: 252, kopfHoehe: 46,
+               also nicht zum Messen): Kopf x = 128..158, y = 205..247.
+               Der Stuhl steht hier naeher an der Kamera als auf den anderen
+               beiden Plaetzen — deshalb der mit Abstand groesste Anteil. */
+            schiedsrichter: { x: 146, schulterY: 252, kopfAnteil: 0.87,
                 schultern: false },
         },
         RASEN: {
@@ -543,7 +549,7 @@
             /* Stuhl RECHTS (y = 202..499), im Bild bereits besetzt — wie
                auf Sand nur der Kopf, keine Schulter.
                Eingemessen: Kopf x = 1322..1350, y = 200..245. */
-            schiedsrichter: { x: 1336, schulterY: 247, kopfHoehe: 44,
+            schiedsrichter: { x: 1336, schulterY: 247, kopfAnteil: 0.67,
                 schultern: false },
         },
     };
@@ -3974,11 +3980,9 @@
             const img = this.assets.get(this.resolveSchiriKopf(match));
             const p = this.viewport.toScreen(stuhl.x, stuhl.schulterY, this._p1);
 
-            /* Aus HEAD_BOX abgeleitet statt eingemessen — siehe
-               Renderer.UMPIRE_HEAD_RATIO. HEAD_BOX.height traegt bereits
-               PLATZ.figur und HEAD_SCALE, das Verhaeltnis stimmt damit auf
-               allen drei Plaetzen ohne Nachmessen. */
-            const h = HEAD_BOX.height * Renderer.UMPIRE_HEAD_RATIO * p.scale;
+            /* Aus HEAD_BOX abgeleitet statt eingemessen, aber mit einem
+               Anteil JE PLATZ — siehe Renderer.umpireKopfHoehe(). */
+            const h = Renderer.umpireKopfHoehe() * p.scale;
             const w = h * (img.naturalWidth / img.naturalHeight);
 
             ctx.save();
@@ -5748,43 +5752,33 @@
      * also. Wer an einer einzelnen Zahl dreht, zerlegt genau das.
      */
     /**
-     * Bennis Kopf im Verhaeltnis zu den SPIELERkoepfen.
+     * Bennis Kopfhoehe auf dem aktuellen Platz, in virtuellen Pixeln.
      *
-     * Frueher ein fester Faktor auf drei je Platz eingemessene
-     * `kopfHoehe`-Werte — voellig entkoppelt von HEAD_BOX, das die
-     * Spielerkoepfe bestimmt. Das Verhaeltnis stimmte damit auf keinem
-     * Platz, und jede Aenderung an HEAD_SCALE oder PLATZ.figur haette es
-     * erneut verschoben.
+     * ZWEI DINGE ZUGLEICH, und beide sind noetig:
      *
-     * Jetzt abgeleitet: 0.8 mal die Hoehe eines Spielerkopfes. Da HEAD_BOX
-     * von setzePlatz() je Platz gesetzt wird, stimmt das Verhaeltnis
-     * automatisch ueberall — die eingemessenen `kopfHoehe`-Werte in PLAETZE
-     * werden dadurch gegenstandslos (x und schulterY bleiben noetig).
+     * 1. GEKOPPELT an die Spielerkoepfe. Frueher hingen drei je Platz
+     *    eingemessene Absolutwerte mal festem Faktor in der Luft — voellig
+     *    unabhaengig von HEAD_BOX, das die Spielerkoepfe bestimmt. Jede
+     *    Aenderung an HEAD_SCALE oder PLATZ.figur haette das Verhaeltnis
+     *    still verschoben. HEAD_BOX.height traegt beide Faktoren bereits,
+     *    also zieht jetzt alles automatisch mit.
      *
-     * NACHGEMESSEN GEGEN DIE KULISSE, Kopfbreite in virtuellen Pixeln:
+     * 2. JE PLATZ, nicht global. Ein einziges Verhaeltnis kann hoechstens
+     *    auf einem Platz stimmen: der Schiedsrichterstuhl steht auf den drei
+     *    Bildern unterschiedlich weit weg, die Spielerfiguren nicht. Mit
+     *    einheitlich 0.8 waere Bennis Kopf auf dem Hartplatz 62 px breit
+     *    geworden — bei einem 36 px breiten Pult, also fast doppelt so breit
+     *    wie das Moebel, an dem er sitzt. Nachgemessen, siehe die Anteile
+     *    bei PLAETZE: 0.43 (Hart), 0.87 (Sand), 0.67 (Rasen). Sie
+     *    reproduzieren die von Hand gefundenen Groessen auf ein Pixel genau
+     *    und bilden zugleich die Entfernung ab.
      *
-     *   Platz   vorher    nachher   Bezugsmass der Kulisse
-     *   HART    33 px     62 px     Pultblock 36 px breit  (0.92 -> 1.73)
-     *   SAND    54 px     50 px     gemalter Kopf 30 px    (1.81 -> 1.66)
-     *   RASEN   52 px     62 px     gemalter Kopf 28 px    (1.86 -> 2.23)
-     *
-     * AUF DEM HARTPLATZ IST DAS EIN RUECKSCHRITT: Benni sitzt dort am
-     * einzigen LEEREN Stuhl, sein Kopf steht auf einem 36 px breiten Pult —
-     * mit 62 px ist er fast doppelt so breit wie das Pult. Genau dieser
-     * Zustand steht bei PLAETZE.HART als schon einmal behoben dokumentiert
-     * ("kopfHoehe war zuerst 36 — damit war der Kopf so breit wie das ganze
-     * Pult. 28 passt zur Entfernung.").
-     *
-     * Die Ursache ist perspektivisch und nicht wegzuparametrieren: der Stuhl
-     * steht auf den drei Bildern unterschiedlich weit weg, die Spielerfiguren
-     * nicht. EIN gemeinsames Verhaeltnis kann deshalb hoechstens auf einem
-     * Platz stimmen. Wer die Kopplung an HEAD_BOX behalten und trotzdem die
-     * Entfernung abbilden will, nimmt ein Verhaeltnis JE PLATZ — aus den
-     * bisherigen Messungen waeren das 0.43 (Hart), 0.87 (Sand), 0.67
-     * (Rasen); der Vorteil der Kopplung (HEAD_SCALE zieht automatisch mit)
-     * bliebe dabei erhalten.
+     * @returns {number} Kopfhoehe in virtuellen Pixeln, 0 ohne Stuhl.
      */
-    Renderer.UMPIRE_HEAD_RATIO = 0.8;
+    Renderer.umpireKopfHoehe = function () {
+        const stuhl = PLATZ.schiedsrichter;
+        return stuhl ? HEAD_BOX.height * stuhl.kopfAnteil : 0;
+    };
 
     /**
      * Fester Groessenfaktor auf die Koepfe BEIDER Spielfiguren.
