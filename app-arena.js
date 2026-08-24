@@ -1055,13 +1055,16 @@
                 /* Der Schiedsrichter. Lag seit jeher im Projekt und wurde von
                    nichts geladen — siehe Renderer.drawSchiedsrichter(). */
                 head_benni: 'Benni_Kopf.png',
-                /* RESERVIERT fuer weitere Gesichtsausdruecke. Leerer String =
-                   Slot da, Datei fehlt noch; geladen wird nichts, und
-                   assets.failed bleibt leer. Sobald hier Dateinamen stehen,
-                   greift resolveSchiriKopf() sie von selbst ab — es ist dann
-                   KEINE Codeaenderung mehr noetig, nur zwei Dateinamen. */
-                head_benni_punkt: '',
-                head_benni_ernst: '',
+                /* Bennis Reaktion auf einen gewerteten Punkt (ARENA-16).
+                   Die Dateinamen stehen hier AUCH DANN, wenn die Bilder noch
+                   fehlen: nur so laeuft das Laden ueberhaupt an, scheitert
+                   sichtbar und schreibt eine ASSET-Zeile ins Protokoll. Ein
+                   leerer Eintrag wuerde gar nicht erst geladen — das Fehlen
+                   waere lautlos, und genau das soll es nicht sein.
+                   resolveSchiriKopf() faellt derweil auf das Standardbild
+                   zurueck. */
+                head_benni_punkt_alex: 'Benni_Punkt_Alex.png',
+                head_benni_punkt_andrea: 'Benni_Punkt_Andrea.png',
                 body_andrea: 'Beispiel Spieler unten.png',
                 body_alex: 'Beispiel Spieler oben.png',
 
@@ -1075,6 +1078,12 @@
                 court_hart: 'Vorgabe_Platz.png',
                 court_sand: 'Platz_Sand.png',
                 court_rasen: 'Platz_Rasen.png',
+                /* Logo der Uebergangsblende (ARENA-16). Dateiname steht hier
+                   auch ohne Datei — siehe die Benni-Reaktionen: nur so wird
+                   das Fehlen im Protokoll sichtbar. Fehlt es, zeichnet
+                   drawTransition den KARAOKOVIC-Schriftzug mit identischer
+                   Zeitfuehrung. */
+                transition_logo: 'Transitionlogo_Karaokovic.png',
                 court_lines: '',    // ersetzt draw3DLine-Feldlinien (optional)
                 crowd: '',          // ersetzt die gezeichnete Tribüne
                 net: '',            // ersetzt das gezeichnete Netz
@@ -1083,10 +1092,34 @@
                 bounce_mark: ''     // ersetzt die Aufsprung-Ellipse
             };
 
+            /**
+             * Schluessel, deren Datei fehlen DARF.
+             *
+             * Der Unterschied ist nicht kosmetisch: ein fehlendes Platzbild
+             * ist ein Ausfall, ein noch nicht geliefertes Reaktionsbild ist
+             * ein Terminstand. Bis ARENA-16 sahen beide im Protokoll gleich
+             * aus, und der Browsertest konnte nur "irgendetwas fehlt" sagen.
+             *
+             * Fuer jeden Eintrag hier gibt es einen Rueckfall im Zeichencode:
+             *   head_benni_punkt_*  -> Standardkopf (resolveSchiriKopf)
+             *   transition_logo     -> KARAOKOVIC-Schriftzug (drawTransition)
+             *
+             * Kommt eine Datei spaeter dazu, wird sie ohne Codeaenderung
+             * benutzt — der Eintrag hier darf trotzdem stehen bleiben.
+             * @type {string[]}
+             */
+            this.OPTIONAL = [
+                'head_benni_punkt_alex',
+                'head_benni_punkt_andrea',
+                'transition_logo',
+            ];
+
             /** @type {Object<string, HTMLImageElement>} */
             this.images = {};
             /** @type {string[]} Dateien, die nicht geladen werden konnten. */
             this.failed = [];
+            /** @type {string[]} Davon die, deren Fehlen eingeplant ist. */
+            this.failedOptional = [];
         }
 
         /** Startet das Laden aller im Manifest eingetragenen Dateien. */
@@ -1095,15 +1128,23 @@
                 const src = this.MANIFEST[key];
                 if (!src) continue;
                 const img = new Image();
+                const optional = this.OPTIONAL.indexOf(key) !== -1;
                 img.onerror = () => {
                     this.failed.push(src);
+                    if (optional) this.failedOptional.push(src);
                     /* Auch ins Protokoll, nicht nur in die Konsole: eine
                        fehlende Datei faellt im Bild still auf den gezeichneten
                        Ersatz zurueck und faellt niemandem auf. Genau so blieb
                        der Tippfehler .jpg statt .png bei den Verlierer-
-                       Gesichtern monatelang unbemerkt. */
-                    Protokoll.schreib('ASSET', `fehlt oder ist defekt: ${src}`);
-                    console.warn(`[AssetManager] Datei fehlt oder ist defekt: ${src}`);
+                       Gesichtern monatelang unbemerkt.
+                       Optionale Dateien werden ausdruecklich als solche
+                       gemeldet — sonst liest sich ein Terminstand wie ein
+                       Ausfall. */
+                    Protokoll.schreib('ASSET', optional
+                        ? `noch nicht geliefert (Rueckfall greift): ${src}`
+                        : `fehlt oder ist defekt: ${src}`);
+                    console.warn(`[AssetManager] ${optional ? 'optional, ' : ''}`
+                        + `Datei fehlt oder ist defekt: ${src}`);
                 };
                 img.src = src;
                 this.images[key] = img;
@@ -4010,11 +4051,13 @@
          * @returns {string} Asset-Schluessel
          */
         resolveSchiriKopf(match) {
-            if (match && match.state === STATE.POINT_SCORED
-                && this.assets.isReady('head_benni_punkt')) {
-                return 'head_benni_punkt';
-            }
-            return 'head_benni';
+            const sieger = Renderer.ergebnisZeigt(match);
+            const key = sieger === PLAYER.ALEX ? 'head_benni_punkt_alex'
+                : sieger === PLAYER.ANDREA ? 'head_benni_punkt_andrea' : null;
+            /* Fehlt die Datei, bleibt das Standardbild stehen — kein leerer
+               Kopf, kein Absturz. Gemeldet wurde ihr Fehlen bereits beim
+               Laden (ASSET-Zeile im Protokoll). */
+            return (key && this.assets.isReady(key)) ? key : 'head_benni';
         }
 
         drawSchiedsrichter(match) {
@@ -4028,7 +4071,14 @@
             /* Aus HEAD_BOX abgeleitet statt eingemessen, aber mit einem
                Anteil JE PLATZ — siehe Renderer.umpireKopfHoehe(). */
             const h = Renderer.umpireKopfHoehe() * p.scale;
-            const w = h * (img.naturalWidth / img.naturalHeight);
+            /* Seitenverhaeltnis IMMER aus dem Standardbild, auch wenn gerade
+               ein Reaktionsbild gezeichnet wird: nur so ist die Flaeche
+               wirklich identisch. Ein abweichend zugeschnittenes
+               Reaktionsbild wuerde sonst im Moment des Punktes springen —
+               genau die Art Zucken, die auf der Wand als Fehler gelesen
+               wird. */
+            const norm = this.assets.get('head_benni') || img;
+            const w = h * (norm.naturalWidth / norm.naturalHeight);
 
             ctx.save();
 
@@ -5400,11 +5450,12 @@
             ctx.textBaseline = 'middle';
             ctx.font = this.font(72 * p.scale, 'normal', Renderer.GOTHIC_FONT);
             this.gothicText('EINSPIELEN', p.x, p.y, p.scale);
-
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-            ctx.font = this.font(28 * p.scale);
-            ctx.fillText('ENTER + LEERTASTE STARTET DAS MATCH',
-                p.x, p.y + (70 * p.scale));
+            /* KEINE Unterzeile. Hier stand "ENTER + LEERTASTE STARTET DAS
+               MATCH" — ein Regie-Cue, der auf der Wand nichts verloren hat:
+               das Publikum kann damit nichts anfangen, und es bricht den
+               Eindruck einer Uebertragung. Der Griff steht im
+               Uebergabeprotokoll, wo er hingehoert. Ersatztext gibt es
+               bewusst keinen. */
             ctx.restore();
         }
 
@@ -5854,6 +5905,37 @@
      * Gemeint ist die SICHTBARE Höhe, nicht die Bildhöhe — siehe BODY_PADDING.
      */
     Renderer.BODY_HEIGHT = 118;
+
+    /**
+     * Verzoegerung, bis nach einem Punkt die Mienen wechseln.
+     *
+     * Der Moment des Punktes gehoert dem Ball; erst danach reagieren die
+     * Gesichter. 300 ms sind kurz genug, dass es als Reaktion gelesen wird,
+     * und lang genug, dass es nicht mit dem Aufsprung verschmilzt.
+     */
+    Renderer.ERGEBNIS_VERZUG = 300;
+
+    /**
+     * Wer gerade als Sieger im Bild steht — oder '', wenn kein Ergebnis
+     * angezeigt wird.
+     *
+     * EINZIGE Stelle, die das entscheidet. Spielermienen (drawPlayers) und
+     * Bennis Reaktion (resolveSchiriKopf) lesen beide von hier; sonst
+     * koennten sie auseinanderlaufen, und der Schiedsrichter jubelte noch,
+     * waehrend die Spieler schon neutral stehen.
+     *
+     * ENDET MIT DER PUNKTPHASE. Bis ARENA-15 hielt der Ausdruck bis in den
+     * Countdown; mit der neuen Transition (ARENA-16) ist er ab der
+     * Schwarzblende Geschichte — dort ist ohnehin nichts mehr zu sehen, und
+     * beim Aufblenden steht der naechste Ballwechsel.
+     *
+     * @param   {MatchState} match
+     * @returns {string} Wert aus PLAYER oder ''
+     */
+    Renderer.ergebnisZeigt = function (match) {
+        if (!match || match.state !== STATE.POINT_SCORED || !match.lastWinner) return '';
+        return match.elapsed() > Renderer.ERGEBNIS_VERZUG ? match.lastWinner : '';
+    };
 
     /**
      * Transparenter Rand der Körper-Sprites, als Anteil der Bildhöhe.

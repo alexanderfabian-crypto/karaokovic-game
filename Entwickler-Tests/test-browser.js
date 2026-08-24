@@ -274,8 +274,17 @@ class Browser {
         while (Date.now() - gestartet < ASSET_FRIST_MS) {
             assets = await b.werteAus(`(() => {
                 const K = window.KARAOKOVIC;
-                const alle = Object.keys(K.assets.images);
-                return { fehlend: K.assets.failed,
+                /* Optionale Bilder (noch nicht gelieferte Reaktions- und
+                   Logodateien) zaehlen nicht mit: ihr Fehlen ist eingeplant
+                   und durch einen Rueckfall gedeckt. Geprueft wird, dass
+                   NICHTS ANDERES fehlt — sonst waere der Test blind fuer den
+                   Tag, an dem ein Platzbild verschwindet. */
+                const opt = K.assets.OPTIONAL || [];
+                const alle = Object.keys(K.assets.images).filter(k => opt.indexOf(k) < 0);
+                const pflichtFehlt = (K.assets.failed || []).filter(
+                    f => (K.assets.failedOptional || []).indexOf(f) < 0);
+                return { fehlend: pflichtFehlt,
+                         optionalFehlt: K.assets.failedOptional || [],
                          geladen: alle.filter(k => K.assets.isReady(k)).length,
                          offen: alle.filter(k => !K.assets.isReady(k)).join(', '),
                          gesamt: alle.length };
@@ -287,8 +296,12 @@ class Browser {
         }
         const ladeSekunden = ((Date.now() - gestartet) / 1000).toFixed(1);
 
-        check('Kein Asset ist fehlgeschlagen', assets.fehlend.length === 0,
-            assets.fehlend.join(', ') || 'assets.failed ist leer');
+        check('Kein PFLICHT-Asset ist fehlgeschlagen', assets.fehlend.length === 0,
+            assets.fehlend.join(', ') || 'nur optionale fehlen');
+        if (assets.optionalFehlt.length) {
+            console.log(`      (noch nicht geliefert, Rueckfall greift: `
+                + `${assets.optionalFehlt.join(', ')})`);
+        }
         check('Alle Bilder sind geladen', assets.geladen === assets.gesamt,
             `${assets.geladen}/${assets.gesamt} nach ${ladeSekunden} s`
             + (assets.offen ? ` — offen: ${assets.offen}` : ''));

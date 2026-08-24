@@ -59,6 +59,28 @@ const SKRIPTE = ['app-arena.js', 'app.js'];
 
 const bilder = [...new Set([...assetsAus('app-arena.js'), ...assetsAus('app.js')])].sort();
 
+/**
+ * Bilder, deren Datei fehlen DARF.
+ *
+ * Gelesen aus derselben Quelle, die auch das Spiel benutzt: der Liste
+ * `OPTIONAL` im AssetManager. Eine zweite, hier gepflegte Liste waere genau
+ * die Art Kopie, die beim naechsten Nachliefern auseinanderlaeuft.
+ * @returns {string[]} Dateinamen
+ */
+function optionaleAssets() {
+    const text = fs.readFileSync(path.join(WURZEL, 'app-arena.js'), 'utf8');
+    const block = text.match(/this\.OPTIONAL\s*=\s*\[([^\]]*)\]/);
+    if (!block) return [];
+    const schluessel = block[1].match(/'([^']+)'/g) || [];
+    return schluessel.map((s) => {
+        const key = s.slice(1, -1);
+        const zeile = text.match(
+            new RegExp(key + "\\s*:\\s*'([^']+\\.(?:png|jpg))'"));
+        return zeile ? zeile[1] : null;
+    }).filter(Boolean);
+}
+const optionaleBilder = optionaleAssets();
+
 /* --- Bauen ---------------------------------------------------------------- */
 fs.rmSync(ZIEL, { recursive: true, force: true });
 fs.mkdirSync(ZIEL, { recursive: true });
@@ -67,7 +89,11 @@ for (const [quelle, name] of SEITEN) {
     fs.copyFileSync(path.join(WURZEL, quelle), path.join(ZIEL, name));
 }
 for (const datei of [...SKRIPTE, ...bilder]) {
-    fs.copyFileSync(path.join(WURZEL, datei), path.join(ZIEL, datei));
+    const von = path.join(WURZEL, datei);
+    /* Noch nicht gelieferte Bilder halten den Bau nicht auf — siehe
+       `optionaleBilder` oben. Gemeldet werden sie unten trotzdem. */
+    if (!fs.existsSync(von)) continue;
+    fs.copyFileSync(von, path.join(ZIEL, datei));
 }
 
 /* Ohne diese Datei schickt GitHub Pages alles durch Jekyll. Das braucht hier
@@ -75,6 +101,7 @@ for (const datei of [...SKRIPTE, ...bilder]) {
 fs.writeFileSync(path.join(ZIEL, '.nojekyll'), '');
 
 /* --- Bericht -------------------------------------------------------------- */
+
 let summe = 0;
 for (const d of fs.readdirSync(ZIEL)) summe += fs.statSync(path.join(ZIEL, d)).size;
 
@@ -84,9 +111,17 @@ console.log(`  Startseite  index.html  -> ARENA-1 (drei Plätze)`);
 console.log(`  daneben     v41.html    -> V41 (nur Hartplatz)`);
 console.log(`  Bilder      ${bilder.length} aus dem Spielcode gelesen`);
 
-/* Gegenprobe: fehlt ein Bild, ist die Seite im Netz kaputt — und zwar erst
-   sichtbar beim Tester. Deshalb hier hart abbrechen statt nur warnen. */
-const fehlend = bilder.filter((b) => !fs.existsSync(path.join(ZIEL, b)));
+/* Gegenprobe: fehlt ein PFLICHTbild, ist die Seite im Netz kaputt — und zwar
+   erst sichtbar beim Tester. Deshalb hier hart abbrechen statt nur warnen.
+   Die als optional gefuehrten Dateien sind davon ausgenommen: fuer sie hat
+   der Spielcode einen Rueckfall, und ein Abbruch wuerde die ganze Seite
+   blockieren, bis die Grafik liefert. */
+const fehlend = bilder.filter((b) =>
+    !optionaleBilder.includes(b) && !fs.existsSync(path.join(ZIEL, b)));
+const offen = optionaleBilder.filter((b) => !fs.existsSync(path.join(ZIEL, b)));
+if (offen.length) {
+    console.log(`  noch nicht geliefert (Rückfall greift): ${offen.join(', ')}`);
+}
 if (fehlend.length) {
     console.error(`FEHLER: ${fehlend.length} Bild(er) fehlen: ${fehlend.join(', ')}`);
     process.exitCode = 1;
