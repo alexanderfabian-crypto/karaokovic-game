@@ -562,6 +562,62 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     Zeile vorhanden. Die Prüfung ist an der Seite erkannt, nicht vorausgesetzt
     — die eingefrorene Fassung V41 kennt weder Pinning noch Protokoll.
 
+- **ARENA-20 bis ARENA-22** — Korrektur-Sprint 3, aus dem Live-Test vom
+  25.08.2026. Sieben Befunde, die fast alle an derselben Frage hängen: *wo im
+  Bild steht etwas eigentlich?*
+  - **Die Figuren stehen hinter ihrer Grundlinie.** Der Befund „Andrea steht
+    im Feld" stimmt, seine Erklärung nicht: die Füße standen exakt auf der
+    gemalten Linie — die Projektion trifft sie auf allen drei Plätzen auf
+    einen Pixel (Bildzeile 700/823/783 gegen gerechnete 701/823/782). Im Feld
+    stand der **Körper**, der von den Füßen aus nach oben gezeichnet wird.
+    Der Bodenkontakt wandert deshalb 34 Weltpixel (~1,2 m) zurück, auf dem
+    Schirm +52 / +46 / +48 px. **Die Schlägerlinie bleibt, wo sie war** —
+    `paddle.y` ist unverändert, der Ball trifft weiter an der Grundlinie.
+  - **Der Zielzonen-Meter weicht der Figur aus** statt an einem festen
+    Abstand zu kleben. Unter Andreas Standlinie bleiben nur noch 146 / 31 /
+    70 px; auf Sand passt er dort nicht mehr hin. Ein neuer fester Wert kann
+    das nicht lösen, also dasselbe Bänder-Verfahren wie bei der Ziffer — neu
+    ist, dass auch der **Bildrand** als Hindernis zählt. Alle sechs
+    Aufschlagsituationen: Überdeckung 0 px, alles im Bild. Bei Alex' Aufschlag
+    bleibt er überall an seiner eingemessenen Stelle.
+  - **Die Countdown-Ziffer steht über dem Netz.** Sie hing an `COURT_MID_Y` —
+    einer *Welt*koordinate (500), die als *Bild*koordinate benutzt wurde; die
+    Netzlinie liegt bei 378 / 512 / 464. Jetzt hängt ihre Unterkante 16 px
+    über der eingemessenen Netzoberkante (neu: `PLAETZE[..].netzOben` =
+    321 / 397 / 385). Ihre Größe ist daraus **gerechnet**: freies Band
+    194/150/199 px, Sand bindet → Schriftgrad **88 statt 280**. Ausweichen
+    muss sie nicht mehr (Weg 0 auf allen drei Plätzen).
+  - **Alles Mittige hängt an der projizierten Platzachse.** Bild- und
+    Feldmitte fallen nur auf dem Hartplatz zusammen; Sand und Rasen liegen
+    31 px daneben. Betrifft Punkt-Banner, Einspiel-Banner, „AUFSCHLAG!" und
+    den Meter (der projizierte bereits die Tiefe, nahm die Breite aber weiter
+    aus der Bildmitte).
+  - **„AUFSCHLAG!" ist ein Wort mit zwei Schlägen.** Nicht die Deckkraft war
+    das Problem — die stand längst auf 1 —, sondern die *Größe*: `bounce()`
+    beginnt bauartbedingt bei exakt 0, und zwar bei jedem Schlag. Neu ist
+    `Renderer.pulse()`, dieselbe Kurve ohne den Anlauf; der Nulldurchgang
+    ist aus dem Überschwinger abgeleitet, nicht abgeschrieben.
+  - **Zwei Stimm-Panels, eine Regel.** Alex bekommt dasselbe Panel; seine
+    Werte sind im Arcade-Modus synthetisch, entstehen aber **an der Quelle**
+    (`tonquelle()`) und laufen durch dieselbe Bewertung. Bei seinem Aufschlag
+    *spiegelt* die synthetische Stimme den Eingang, der ihn tatsächlich
+    auslöst — eine eigene Kurve könnte grün zeigen, während nichts fällt.
+    Sonst ist seine Bewegung seine Stimme. Der Wechsel auf den echten zweiten
+    Kanal ist eine Zeile.
+  - **Die Aufschlagsperre färbt nicht mehr rot.** Der Befund „löst aus,
+    während das Panel rot zeigt" war weder eine zusätzliche Bedingung noch
+    ein Frame Nachlauf: grün fällt drei Frames **vor** dem Aufschlag, und ab
+    dem Frame *danach* machte die Bewegungssperre es rot — bei fliegendem Ball
+    und gehaltenem Ton. `frei` heißt jetzt „diese Stimme zählt gerade".
+  - **Die Tonhöhe ist aus dem Panel raus** (Doppelanzeige zum Meter). Dabei
+    kam ein Loch heraus: die Ampelfarbe hing an der Hertzzeile und am
+    Pegelbalken — ohne die Zeile bliebe bei Stille *gar keine* Farbe, denn ein
+    leerer Balken färbt nichts. An ihre Stelle tritt ein Statuslicht.
+  - **Satzgewinn und Satzbeginn** haben eigene Anzeigen: „ANDREA GEWINNT DEN
+    SATZ 40:15" für die volle Punktphase, „SATZ n" über dem Netz mit der
+    Aufblende. Nach Einstand steht dort **„NACH EINSTAND"** — „ADV:40" als
+    Endstand wäre Unsinn, ein Spiel endet nie im Vorteil.
+
 ---
 
 ## 8. Prüfstand
@@ -570,8 +626,8 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 25.08.2026: 412 Zusicherungen, alle grün, Exit 0.** 25 Testdateien in
-27 Läufen (zwei laufen doppelt, einmal je Fassung).
+**Stand 25.08.2026: 467 Zusicherungen, alle grün, Exit 0.** 27 Testdateien in
+29 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 | Zusicherungen | Test |
 |---:|---|
@@ -716,15 +772,32 @@ ein.
   sonst dreht irgendwann jemand an einer Zahl, die nichts mehr tut. Das
   Entfernen ist ein eigener Durchgang mit eigenem Testlauf; der lebende Regler
   heißt `Physics.AUFSCHLAG_MITTE_BREITE`.
-- **Die Countdown-Ziffer passt auf dem Rasenplatz nicht zwischen die Köpfe.**
-  Kein Fehler mehr, sondern eine gemessene Enge: das freie Band zwischen den
-  beiden Kopfboxen misst dort 320 px, die Ziffer im Einsprung 339 px — 19 px
-  zu viel. `dodgeHeads()` teilt die Störung seit ARENA-18 gleichmäßig auf
-  beide Köpfe auf (je rund 10 px am Scheitel, für die ~170 ms des
-  Überschwingers); in Ruhe steht sie auf allen drei Plätzen frei. Ganz zu
-  beseitigen wäre es nur über die Ziffer selbst: `COUNTDOWN_SIZE` 264 statt
-  280, oder `COUNTDOWN_OVERSHOOT` 4,3 statt 5,0. Beides sind bewusst gewählte
-  Bühnenwerte — deshalb steht hier die Zahl und nicht eine stille Korrektur.
+- **Die Countdown-Ziffer ist auf 88 geschrumpft — und das ist eine
+  Entscheidung, keine Nebenwirkung.** Seit ARENA-20 steht sie zwischen Alex'
+  Kopf und der Netzoberkante, und dieses Band misst auf dem Sandplatz 150 px.
+  Daraus folgt der Schriftgrad. Zwei Folgen, beide gemessen und beide offen
+  für eine andere Entscheidung:
+  - Sie ist damit **kleiner als „AUFSCHLAG!"** (96). Dramaturgisch ist das
+    verkehrt herum; geometrisch ist es das, was zwischen Kopf und Netz passt.
+  - Auf Sand kreuzt sie in Ruhe **Alex' Schienbeine** (~28 px). Sein *Kopf*
+    bleibt frei — das ist die Abnahmebedingung —, sein Körper nicht ganz.
+    Beides zugleich geht nicht: zwischen seinen Füßen und dem Netz sind auf
+    Sand nur 76 px, das ergäbe Schriftgrad 36 und wäre auf der Wand unlesbar.
+  Wer die Ziffer größer will, muss sie **woanders hinstellen** — nicht diesen
+  Wert erhöhen.
+- **Der Zielzonen-Meter steht je Platz woanders.** Auf Hart bleibt er unter
+  Andreas Grundlinie (31 px Ausweichweg), auf Sand und Rasen springt er über
+  sie hinweg nach oben (−277 / −319 px) und schwebt dann über dem vorderen
+  Feld. Das ist die einzige Lage, die dort frei ist — unter ihrer Standlinie
+  bleiben auf Sand 31 px. Auf der Probe ansehen: wenn der Sprung stört, ist
+  die Alternative, ihn dauerhaft über den Kopf des Aufschlägers zu legen (dann
+  auf allen drei Plätzen gleich, aber auf Hart weiter weg von der Linie als
+  nötig).
+- **Der erste Ballwechsel eines Satzes zeigt nur „1".** „SATZ n" belegt
+  1,5 s, davon 1,0 s in der Ruhephase, und solange wird die Ziffer nicht
+  gezeichnet — beide hängen an derselben Marke über dem Netz. Der Countdown
+  selbst läuft unverändert (die Ruheprüfung ist geschützt). Wer beide sehen
+  will, muss `SATZ_ANZEIGE_MS` senken oder die Ansage woanders hinstellen.
 - **Zwei Optimierungen sind bewusst zurückgestellt, bis gemessen ist.** Beide
   aus der Durchsicht zu ARENA-11, beide mit einem klaren Auslöser:
   - *Countdown-Glow vorrendern.* `gothicText()` zeichnet in jedem Frame der
