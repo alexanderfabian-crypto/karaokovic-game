@@ -493,6 +493,27 @@ class Browser {
             await new Promise(r => setTimeout(r, 1500));
             schritte.dannEinsingen = sichtbar('btnLow');
 
+            /* --- Abtastrate ---------------------------------------------
+             * Erst hier steht der AudioContext — vorher gibt es keinen, den
+             * man fragen koennte. Geprueft wird an dem, was am Ende WIRKLICH
+             * rechnet (audioCtx.sampleRate), nicht an der Bitte: Chrome
+             * darf die Option annehmen und trotzdem etwas anderes liefern,
+             * und genau dieser Fall soll auffallen. */
+            const actx = K.audio.audioCtx;
+            schritte.rechenrate = actx ? actx.sampleRate : 0;
+            schritte.rateSoll = K.audio.constructor.ABTASTRATE || 0;
+            /* Wie bei der Platzwahl entscheidet die gepruefte SEITE, ob es das
+               Merkmal gibt: die eingefrorene Fassung (app.js) kennt weder das
+               Pinning noch das Protokoll. Erkannt statt vorausgesetzt — sonst
+               zerfaellt diese Datei in zwei Kopien. */
+            schritte.hatPinning = !!schritte.rateSoll && !!K.protokoll;
+            /* Die Protokollzeile ist kein Beiwerk: auf der Buehne ist sie der
+               einzige Ort, an dem die Rate ueberhaupt sichtbar wird. */
+            schritte.rateImProtokoll = K.protokoll
+                ? K.protokoll().split('\\n')
+                    .filter(z => /Rechenrate/.test(z)).join(' | ')
+                : '';
+
             singe(110); document.getElementById('btnLow').click();
             singe(330); document.getElementById('btnHigh').click();
             await new Promise(r => setTimeout(r, 100));
@@ -565,6 +586,21 @@ class Browser {
         }
         check('Vor dem Einsingen steht der Mikrofon-Check', einspielen.dannMikrofon);
         check('Nach der Mikrofonfreigabe kommt das Einsingen', einspielen.dannEinsingen);
+
+        /* Ohne Vorgabe folgt Chrome dem Standard-AUSGABEgeraet — auf einem Mac
+           gern 44100 Hz, waehrend Dante mit 48000 Hz liefert. Dazwischen saesse
+           eine Resampling-Stufe vor der teuersten Rechnung im Frame. */
+        if (einspielen.hatPinning) {
+            check(`Der AudioContext rechnet mit ${einspielen.rateSoll} Hz`,
+                einspielen.rechenrate === einspielen.rateSoll,
+                `${einspielen.rechenrate} Hz`);
+            /* Die Zeile MUSS stehen, egal wie es ausgegangen ist. Gepinnt oder
+               abgelehnt, mit oder ohne Resampling: was nicht im Protokoll
+               steht, ist auf der Buehne nicht passiert. */
+            check('Und die Rate steht im Protokoll, nicht nur im Speicher',
+                /Rechenrate \d+ Hz \((gepinnt|Bitte um)/.test(einspielen.rateImProtokoll),
+                einspielen.rateImProtokoll || '(keine Zeile)');
+        }
         check('Nach dem hohen Ton wird der Bereich zur Bestätigung gezeigt',
             einspielen.bestaetigungKommt, einspielen.bereichText);
         check('Der Start erscheint NICHT vor der Bestätigung',

@@ -1292,7 +1292,7 @@
             AudioEngine.protokolliereTrack(stream);
             AudioEngine.bewacheTrack(stream);
 
-            this.audioCtx = new AudioContext();
+            this.audioCtx = AudioEngine.kontextOeffnen(stream);
             this.attachTo(this.audioCtx, this.audioCtx.createMediaStreamSource(stream));
 
             if (this.audioCtx.state === 'suspended') await this.audioCtx.resume();
@@ -1357,7 +1357,7 @@
             AudioEngine.protokolliereTrack(stream);
             AudioEngine.bewacheTrack(stream);
 
-            const ctx = new AudioContext();
+            const ctx = AudioEngine.kontextOeffnen(stream);
             const source = ctx.createMediaStreamSource(stream);
             const splitter = ctx.createChannelSplitter(2);
             source.connect(splitter);
@@ -1369,6 +1369,74 @@
 
             const settings = stream.getAudioTracks()[0].getSettings();
             return settings.channelCount || 1;
+        }
+
+        /**
+         * Den AudioContext oeffnen — mit FESTGELEGTER Abtastrate.
+         *
+         * EINZIGE Stelle, an der ein AudioContext entsteht. Vorher stand
+         * `new AudioContext()` zweimal im File (Mono- und Duell-Pfad), und
+         * zwei Stellen mit derselben Aufgabe laufen frueher oder spaeter
+         * auseinander — hier waere das besonders unauffaellig gewesen, weil
+         * der Duell-Pfad auf der Buehne seltener laeuft als der Mono-Pfad.
+         *
+         * OHNE Vorgabe nimmt Chrome die Rate des Standard-AUSGABEgeraets,
+         * nicht die des Eingangs. Auf einem Mac sind das gern 44100 Hz
+         * (interne Lautsprecher), waehrend die Dante Virtual Soundcard mit
+         * 48000 Hz liefert. Der Graph resampelt dann jeden Block — eine
+         * Rechenstufe, die niemand bestellt hat, ausgerechnet vor der
+         * teuersten Rechnung im Frame (die Autokorrelation ist O(n^2) und
+         * laeuft im Duell zweimal).
+         *
+         * Auf die geschuetzte MATHEMATIK wirkt das nicht: autoCorrelate()
+         * bekommt die Rate als Parameter und liest sie aus genau diesem
+         * Kontext. Welche Rate am Ende steht, aendert die Rechnung nicht.
+         *
+         * ZWEI WEGE ZU SCHEITERN, beide abgefangen — auf der Buehne darf kein
+         * Start an einer Bitte um eine Abtastrate scheitern:
+         *   - der Browser WIRFT (aeltere Fassungen kennen die Option nicht),
+         *   - der Browser nimmt sie an und liefert trotzdem etwas anderes.
+         * In beiden Faellen laeuft das Spiel weiter, und im Protokoll steht,
+         * was tatsaechlich herausgekommen ist.
+         *
+         * @param   {MediaStream} [stream] Nur fuer den Vergleich im Protokoll.
+         * @returns {AudioContext}
+         */
+        static kontextOeffnen(stream) {
+            let ctx;
+            try {
+                ctx = new AudioContext({ sampleRate: AudioEngine.ABTASTRATE });
+            } catch (err) {
+                ctx = new AudioContext();
+                Protokoll.schreib('WARNUNG',
+                    `Abtastrate ${AudioEngine.ABTASTRATE} Hz abgelehnt `
+                    + `(${(err && err.name) || err}) — es bleibt bei `
+                    + `${ctx.sampleRate} Hz`);
+                return ctx;
+            }
+
+            /* Eine Diagnosezeile darf den Start nie verhindern — dieselbe
+               Regel wie in protokolliereTrack(). */
+            try {
+                const t = (stream && stream.getAudioTracks)
+                    ? stream.getAudioTracks()[0] : null;
+                const s = (t && t.getSettings) ? t.getSettings() : {};
+                const gepinnt = ctx.sampleRate === AudioEngine.ABTASTRATE;
+                /* Kennt der Track seine Rate nicht, ist keine Aussage
+                   moeglich — dann lieber nichts behaupten als etwas
+                   Beruhigendes. */
+                const gleich = !s.sampleRate || s.sampleRate === ctx.sampleRate;
+                Protokoll.schreib(gleich ? 'AUDIO' : 'WARNUNG',
+                    `Rechenrate ${ctx.sampleRate} Hz `
+                    + `(${gepinnt ? 'gepinnt' : 'Bitte um '
+                        + AudioEngine.ABTASTRATE + ' Hz ignoriert'}), `
+                    + `Eingang ${s.sampleRate || '?'} Hz — `
+                    + (gleich ? 'kein Resampling'
+                        : 'ZWEI Raten, der Graph resampelt jeden Block'));
+            } catch (err) {
+                Protokoll.schreib('AUDIO', `Abtastrate nicht auslesbar: ${err}`);
+            }
+            return ctx;
         }
 
         /**
@@ -1714,6 +1782,26 @@
     /* -------------------------------------------------------------------------
      * Kalibrier-Historie (siehe AudioEngine.calibrationPitch)
      * ---------------------------------------------------------------------- */
+
+    /**
+     * Abtastrate, auf die der AudioContext festgelegt wird.
+     *
+     * 48000 Hz ist die Rate, mit der die Dante Virtual Soundcard liefert, und
+     * der Studiostandard schlechthin. Ohne Vorgabe folgt Chrome dem
+     * Standard-AUSGABEgeraet — siehe AudioEngine.kontextOeffnen().
+     *
+     * WAS SICH DADURCH AENDERT, und was nicht:
+     *   - Die Rate geht direkt in autoCorrelate() ein (freq = rate / maxpos).
+     *     Die Rechnung zieht automatisch mit, sie ist unberuehrt.
+     *   - Das Akzeptanzfenster steht in HERTZ (CONFIG.pitchFloor /
+     *     pitchCeiling) und gilt unveraendert weiter.
+     *   - Das Analysefenster ist mit fftSize = 2048 in SAMPLES festgelegt und
+     *     wird bei hoeherer Rate kuerzer: 42.7 ms statt 46.4 ms bei 44100 Hz.
+     *     Beim tiefsten erwarteten Ton (pitchFloor = 60 Hz, Periode 16.7 ms)
+     *     bleiben damit 2.6 Perioden im Fenster statt 2.8 — die
+     *     Autokorrelation braucht zwei, es bleibt also Reserve.
+     */
+    AudioEngine.ABTASTRATE = 48000;
 
     /** Laenge des Ringspeichers in Messungen. 90 = 1,5 s bei 60 Hz. */
     AudioEngine.CALIB_RING = 90;
@@ -7652,7 +7740,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-18 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-19 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**

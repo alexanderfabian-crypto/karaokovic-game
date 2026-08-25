@@ -533,6 +533,34 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     Sprung: Überdeckung durchweg 0 px, freies Band 320–343 px gegen 145 px
     Schrifthöhe, also 174–197 px Reserve. Die Probe steht als 3b in
     `test-showschliff.js` und schlägt an, sobald `SERVE_PROMPT_SIZE` wächst.
+- **ARENA-19** — der `AudioContext` läuft auf **48 000 Hz**, festgelegt statt
+  geerbt. Ohne Vorgabe nimmt Chrome die Rate des Standard-**Ausgabe**geräts —
+  auf einem Mac gern 44 100 Hz (interne Lautsprecher), während die Dante
+  Virtual Soundcard mit 48 000 Hz liefert. Dazwischen sitzt dann eine
+  Resampling-Stufe, und zwar unmittelbar vor der teuersten Rechnung im Frame
+  (die Autokorrelation ist O(n²) und läuft im Duell zweimal).
+  - `AudioEngine.kontextOeffnen()` ist ab jetzt die **einzige** Stelle, an der
+    ein `AudioContext` entsteht. Vorher stand `new AudioContext()` zweimal im
+    File; der Duell-Pfad läuft seltener und wäre still auseinandergelaufen.
+  - **Zwei Wege zu scheitern, beide abgefangen:** der Browser *wirft* (ältere
+    Fassungen kennen die Option nicht) oder er nimmt sie an und liefert
+    trotzdem etwas anderes. In beiden Fällen startet das Spiel; im Protokoll
+    steht, was herausgekommen ist.
+  - **Neue `AUDIO`-Zeile,** und sie nennt beide Zahlen nebeneinander:
+    `Rechenrate 48000 Hz (gepinnt), Eingang 48000 Hz — kein Resampling`.
+    Weichen sie ab, ist es eine `WARNUNG`. Die bisherige Zeile nannte nur die
+    Rate des *Tracks* — also die, mit der das Gerät liefert, nicht die, mit
+    der gerechnet wird. Erst beide zusammen machen die Stufe sichtbar.
+  - *Auf die geschützte Mathematik wirkt das nicht:* `autoCorrelate()` bekommt
+    die Rate als Parameter und liest sie aus genau diesem Kontext.
+  - **Was man wissen muss:** das Pinning ist für den Bühnenrechner richtig und
+    kann anderswo eine Stufe *erzeugen* — hängt ein 44,1-kHz-Eingang dran,
+    resampelt der Graph jetzt. Genau dafür ist die Zeile da. Im Browsertest
+    ist das direkt zu sehen: Chromes Fake-Mikrofon meldet 44 100 Hz, und die
+    Warnung steht prompt im Protokoll.
+  - Geprüft im echten Browser (`test-browser.js`): Rechenrate **48 000 Hz**,
+    Zeile vorhanden. Die Prüfung ist an der Seite erkannt, nicht vorausgesetzt
+    — die eingefrorene Fassung V41 kennt weder Pinning noch Protokoll.
 
 ---
 
@@ -542,7 +570,7 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 25.08.2026: 410 Zusicherungen, alle grün, Exit 0.** 25 Testdateien in
+**Stand 25.08.2026: 412 Zusicherungen, alle grün, Exit 0.** 25 Testdateien in
 27 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 | Zusicherungen | Test |
