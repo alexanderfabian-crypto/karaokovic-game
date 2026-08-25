@@ -306,4 +306,39 @@ check('GEGENPROBE: auch ein viel zu breites Logo wird eingepasst',
     maxB <= platzB + 1 && maxH <= platzH + 1,
     `${maxB.toFixed(0)}x${maxH.toFixed(0)} in ${platzB.toFixed(0)}x${platzH.toFixed(0)}`);
 
+/* --- 9. Waehrend des Schwarz wird die Welt gar nicht erst gezeichnet ------
+ * Die Isolation ist strukturell und nicht rechnerisch: render() steigt in
+ * diesem Fenster vorzeitig aus. Damit KANN nichts vom kommenden Ballwechsel
+ * durchblitzen — auch nichts, was spaeter dazukommt. */
+game._scene.andreaX = game.physics.currentX;
+
+/**
+ * Einen vollstaendigen Frame zeichnen.
+ * @param {number} prog
+ */
+function vollbild(prog) {
+    const { ctx, log } = zeichenprotokoll();
+    const echt = renderer.ctx;
+    renderer.ctx = ctx;
+    match.stateTimer = game.uhr.jetzt() - prog * DAUER;
+    try { renderer.render(game._scene); } finally { renderer.ctx = echt; }
+    return log;
+}
+
+match.state = 'TRANSITION';
+const imSchwarz = vollbild((A + B) / 2);
+const imWisch = vollbild(A / 2);
+const inAufblende = vollbild(B + (1 - B) / 2);
+console.log(`\nZeichenbefehle je Frame: Wisch ${imWisch.rechtecke.length}, `
+    + `Schwarz ${imSchwarz.rechtecke.length}, Aufblende ${inAufblende.rechtecke.length}`);
+
+check('Im Schwarz wird genau EIN Rechteck gezeichnet: die Blende selbst',
+    imSchwarz.rechtecke.length === 1, `${imSchwarz.rechtecke.length}`);
+check('Und genau ein Text: das Logo',
+    imSchwarz.texte.length === 1 && imSchwarz.texte[0].text === R.TRANS_TEXT,
+    imSchwarz.texte.map(t => t.text).join(', '));
+check('GEGENPROBE: im Wisch und in der Aufblende wird die volle Welt gemalt',
+    imWisch.rechtecke.length > 50 && inAufblende.rechtecke.length > 50,
+    `${imWisch.rechtecke.length} / ${inAufblende.rechtecke.length}`);
+
 summary();

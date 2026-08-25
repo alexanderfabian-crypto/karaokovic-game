@@ -3397,6 +3397,31 @@
          * @param {AudioEngine} [scene.audio] Für die Live-Audiowerte unten links
          */
         render(scene) {
+            /* --- Die Blende deckt alles zu: gar nicht erst zeichnen --------
+             * Zwischen Wisch und Aufblende liegt ein voll deckendes Schwarz
+             * ueber dem Bild. Alles darunter waere unsichtbar — aber nur,
+             * solange die Deckkraft wirklich 1 ist. Diese Abhaengigkeit ist
+             * zu duenn fuer eine Buehne: ein spaeterer Effekt, der NACH der
+             * Blende zeichnet, oder eine Deckkraft von 0.98 genuegen, und der
+             * naechste Zustand blitzt durch.
+             *
+             * Deshalb wird hier gar nicht erst gezeichnet. Damit ist die
+             * Isolation strukturell und nicht rechnerisch: waehrend dieser
+             * Phase KANN nichts vom kommenden Ballwechsel zu sehen sein, egal
+             * was spaeter dazukommt. Ein Nebeneffekt ist die gesparte
+             * Rechenzeit ausgerechnet in dem Moment, in dem im Hintergrund
+             * der Platz gewechselt wird.
+             *
+             * Die Bedienebene bleibt: eine tote Audiozuspielung und die
+             * Messanzeige sind Werkzeuge des Operators, kein Teil der Show.
+             * -------------------------------------------------------------- */
+            if (Renderer.blendeDecktAlles(scene.match)) {
+                this.drawTransition(scene.match, scene.dvd, '');
+                this.drawBedienebene(scene);
+                scene.bounceMarks.fade();
+                return;
+            }
+
             const palette = scene.match.courtPalette();
 
             this.drawBackground(palette);
@@ -3431,15 +3456,30 @@
                 this.drawServePrompt(scene);
             }
 
-            /* Ganz zuletzt, damit die Werte auch unter der Abdunkelung und
-               unter dem Bumper lesbar bleiben — sie sind ein Kontrollmittel
-               für den Operator, kein Teil der Show. Standardmaessig AUS,
-               siehe Renderer.SHOW_AUDIO_METER. */
+            this.drawBedienebene(scene);
+
+            /* Ausblenden bewusst NACH dem Zeichnen — identische Optik zu V36. */
+            scene.bounceMarks.fade();
+        }
+
+        /**
+         * Alles, was dem OPERATOR gilt und nicht dem Publikum.
+         *
+         * Ganz zuletzt, damit die Werte auch unter der Abdunkelung und unter
+         * der Blende lesbar bleiben. Die Reihenfolge in der Ecke unten rechts
+         * ist festgelegt und nicht zufaellig:
+         *
+         *   unten     Stimm-Anzeige (Teil der Show, siehe drawStimmAnzeige)
+         *   darueber  "AUDIOEINGANG TOT" — hat immer Vorrang
+         *   ueber allem  Messanzeige (Ctrl+Shift+M), ein Werkzeug auf Zuruf
+         *
+         * @param {Object} scene
+         */
+        drawBedienebene(scene) {
             /* Ein toter Audioeingang steht IMMER im Bild, unabhaengig von
                der Messanzeige: die ist im Regelfall aus, und genau in der
                Show muss der Operator das sehen, ohne vorher Ctrl+Shift+M
-               gedrueckt zu haben. Dieselbe Ecke wie die Ampel, oberhalb
-               ihrer vier Zeilen — die beiden ueberdecken sich nicht. */
+               gedrueckt zu haben. */
             if (scene.audioTot) {
                 const p = this.viewport.toScreen(VIRTUAL_WIDTH, VIRTUAL_HEIGHT, this._p1);
                 const ctx = this.ctx;
@@ -3449,15 +3489,12 @@
                 ctx.font = this.font(26 * p.scale, 'bold');
                 ctx.fillStyle = Renderer.METER_BAD;
                 ctx.fillText('AUDIOEINGANG TOT — KARAOKOVIC.audioNeustart()',
-                    p.x - 24 * p.scale, p.y - 128 * p.scale);
+                    p.x - 24 * p.scale, p.y - Renderer.AUDIOTOT_ABSTAND * p.scale);
                 ctx.restore();
             }
             if (Renderer.SHOW_AUDIO_METER) {
                 this.drawAudioDebug(scene.audio, scene.match, scene.audio2);
             }
-
-            /* Ausblenden bewusst NACH dem Zeichnen — identische Optik zu V36. */
-            scene.bounceMarks.fade();
         }
 
         /* --------------------------------------------------------------------
@@ -6521,6 +6558,27 @@
      * LED-Beschnitt ein paar Pixel frisst.
      */
     Renderer.TRANS_LOGO_RAND = 0.05;
+
+    /**
+     * Deckt die Blende in diesem Moment das ganze Bild zu?
+     *
+     * EINZIGE Stelle, die das entscheidet — render() ueberspringt danach das
+     * Zeichnen der Welt, drawTransition() malt in genau diesem Fenster mit
+     * Deckkraft 1. Zwei getrennte Rechnungen wuerden frueher oder spaeter um
+     * einen Frame auseinanderlaufen, und dieser eine Frame ist der, in dem
+     * das Publikum den Platzwechsel sieht.
+     *
+     * @param   {MatchState} match
+     * @returns {boolean}
+     */
+    Renderer.blendeDecktAlles = function (match) {
+        if (!match || match.state !== STATE.TRANSITION) return false;
+        const prog = match.elapsed() / TIMING.TRANSITION_MS;
+        return prog >= Renderer.TRANS_WISCH_BIS && prog < Renderer.TRANS_DREH_BIS;
+    };
+
+    /** Abstand der Audio-tot-Zeile vom unteren Bildrand, in Weltpixeln. */
+    Renderer.AUDIOTOT_ABSTAND = 128;
 
     /** Ersatzschriftzug, solange die Logodatei fehlt. */
     Renderer.TRANS_TEXT = 'KARAOKOVIC';
