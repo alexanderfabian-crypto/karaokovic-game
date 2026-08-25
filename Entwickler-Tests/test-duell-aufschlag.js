@@ -73,7 +73,7 @@ function aufschlagAnzeige(server) {
     match.server = server;
     match.state = 'SERVE_WAIT';
     physics.update();
-    return physics.aufschlagAnzeige;
+    return physics.stimme;
 }
 
 /* Vorbedingung: der jeweils FALSCHE Umfang muss ein deutlich anderes

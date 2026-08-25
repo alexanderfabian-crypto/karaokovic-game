@@ -2190,18 +2190,41 @@
             this.abweisung = { bis: 0, richtung: 'kein' };
 
             /**
-             * Live-Anzeige fuer den Zielzonen-Meter im Zustand SERVE_WAIT
-             * (siehe Renderer.drawServePrompt). Laeuft JEDEN Frame mit
-             * erkanntem Ton mit, nicht nur bei einem Ausloeseversuch — das
-             * ist die Antwort auf die "UI-Falle": die Zone ist sichtbar,
-             * bevor man ueberhaupt laut genug ist, um es zu versuchen.
-             *   prozent    Position im kalibrierten Umfang, 0..1
-             *              (Overdrive: kann auch ausserhalb liegen)
-             *   zentriert  true, wenn prozent in der mittleren Zuendzone
-             *              liegt (siehe AUFSCHLAG_MITTE_BREITE)
-             *   aktiv      false, solange kein Ton erkannt wird
+             * ### DIE STIMMLAGE — eine Quelle, drei Anzeigen ###
+             *
+             * Was die Stimme in diesem Frame tut und ob sie damit gerade
+             * etwas ausloest. Geschrieben AUSSCHLIESSLICH von
+             * stimmeSetzen(); gelesen vom Ausloeser des Aufschlags, vom
+             * Zielzonen-Meter und von der Stimm-Anzeige unten rechts.
+             *
+             * WARUM SO STRENG: die drei duerfen nie auseinanderlaufen. Eine
+             * Anzeige, die gruen zeigt, waehrend der Aufschlag nicht
+             * ausloest, ist schlimmer als gar keine Anzeige — sie laesst die
+             * Saengerin an ihrer Stimme zweifeln, obwohl die Regel eine
+             * andere ist. Das ist dieselbe Lehre wie beim Oktavfehler: eine
+             * zweite, parallel gerechnete Logik ist verboten, auch wenn sie
+             * dasselbe zu tun scheint.
+             *
+             *   spieler      wessen Stimme hier zu sehen ist (PLAYER.*)
+             *   hz           geglaettete Tonhoehe, 0 = kein Ton
+             *   pegel        Lautstaerke dieses Frames
+             *   prozent      Position im kalibrierten Umfang, 0..1
+             *                (Overdrive: kann auch ausserhalb liegen).
+             *                Ohne Ton bleibt der letzte Wert stehen, damit
+             *                der Marker nicht springt.
+             *   aktiv        Ton erkannt
+             *   zentriert    Ton in der Zuendzone; im Ballwechsel, wo es
+             *                keine Zone gibt, gleichbedeutend mit `aktiv`
+             *   schwelle     Pegelschwelle, die in diesem Zustand gilt
+             *   pegelReicht  laut genug fuer diese Schwelle
+             *   frei         DIE Entscheidung: loest die Stimme gerade aus
+             *                bzw. steuert sie gerade die Figur
              */
-            this.aufschlagAnzeige = { prozent: 0.5, zentriert: false, aktiv: false };
+            this.stimme = {
+                spieler: PLAYER.ANDREA, hz: 0, pegel: 0, prozent: 0.5,
+                schwelle: CONFIG.moveGate,
+                aktiv: false, zentriert: false, pegelReicht: false, frei: false,
+            };
             /** @type {number} Schläge von Andrea im laufenden Ballwechsel. */
             this.rallyShots = 0;
 
@@ -2411,6 +2434,43 @@
             const r = Physics.voiceRange(player);
             const spielraum = Math.pow(2, CONFIG.aufschlagToleranzHalbtoene / 12);
             return hz >= r.min / spielraum && hz <= r.max * spielraum;
+        }
+
+        /**
+         * Die Stimmlage dieses Frames festschreiben.
+         *
+         * EINZIGE Stelle, die `frei` setzt — siehe das Feld `stimme`. Die
+         * Aufrufer liefern nur die Eingaben ihres Zustands; die Regel, wann
+         * eine Stimme etwas ausloest, steht genau hier und nirgends sonst.
+         *
+         * @param   {string}  spieler   PLAYER.* — wessen Stimme gezeigt wird
+         * @param   {Object}  ton       AudioEngine dieser Stimme
+         * @param   {number}  prozent   Lage im Umfang (0..1, Overdrive frei)
+         * @param   {boolean} zentriert in der Zuendzone (Aufschlag) bzw. true
+         * @param   {number}  schwelle  Pegelschwelle dieses Zustands
+         * @param   {boolean} gesperrt  Bewegung/Ausloesung gerade gesperrt
+         * @returns {Object} das Stimmlage-Objekt (nicht kopiert)
+         */
+        stimmeSetzen(spieler, ton, zonenHalb, schwelle, gesperrt) {
+            const st = this.stimme;
+            st.spieler = spieler;
+            /* smoothedPitch ueberlebt die Stille (siehe updateSmoothedPitch)
+               und ist deshalb der ruhige Wert fuer die Anzeige; -1 heisst
+               "seit dem letzten Zuruecksetzen kein Ton". */
+            st.hz = ton.smoothedPitch > 0 ? ton.smoothedPitch : 0;
+            st.pegel = ton.currentVolume;
+            st.aktiv = st.hz > 0;
+            /* Ohne Ton bleibt die letzte Lage stehen — der Marker im Meter
+               soll nicht in die Mitte springen, sondern gedimmt liegen
+               bleiben. */
+            if (st.aktiv) st.prozent = Physics.aufschlagProzent(st.hz, spieler);
+            st.zentriert = zonenHalb === null
+                ? st.aktiv
+                : (st.aktiv && Math.abs(st.prozent - 0.5) <= zonenHalb);
+            st.schwelle = schwelle;
+            st.pegelReicht = st.pegel >= schwelle;
+            st.frei = !gesperrt && st.aktiv && st.zentriert && st.pegelReicht;
+            return st;
         }
 
         /**
@@ -2763,19 +2823,11 @@
                        Mikrofon, weil die KI keine Stimme hat. Mit
                        `match.server` als Umfang waere ihr Ton durch Alex'
                        nie eingesungene Kalibrierung gerechnet worden. */
-                    if (ton.smoothedPitch > 0) {
-                        this.aufschlagAnzeige.prozent =
-                            Physics.aufschlagProzent(ton.smoothedPitch, spieler);
-                        this.aufschlagAnzeige.aktiv = true;
-                    } else {
-                        this.aufschlagAnzeige.aktiv = false;
-                    }
-                    const zentriert = this.aufschlagAnzeige.aktiv
-                        && this.aufschlagAnzeige.prozent >= 0.5 - halb
-                        && this.aufschlagAnzeige.prozent <= 0.5 + halb;
-                    this.aufschlagAnzeige.zentriert = zentriert;
+                    const st = this.stimmeSetzen(spieler, ton, halb,
+                        CONFIG.serveVolume, false);
+                    const zentriert = st.zentriert;
 
-                    if (!zentriert && ton.currentVolume >= CONFIG.serveVolume) {
+                    if (!zentriert && st.pegelReicht) {
                         /* Sichtbar machen, sonst sieht es aus wie ein Aufschlag,
                            der einfach nicht reagiert. Unter dem neuen Modus ist
                            "noch nicht zentriert" der NORMALFALL am Anfang jedes
@@ -2783,8 +2835,8 @@
                            ist deshalb entfallen, sie deutete auf einen
                            Kalibrierfehler, wo jetzt schlicht noch gesucht wird. */
                         this.abweisung.bis = Uhr.jetzt() + Physics.ABWEISUNG_NACHLAUF_MS;
-                        this.abweisung.richtung = !this.aufschlagAnzeige.aktiv ? 'kein'
-                            : (this.aufschlagAnzeige.prozent > 0.5 + halb ? 'hoch' : 'tief');
+                        this.abweisung.richtung = !st.aktiv ? 'kein'
+                            : (st.prozent > 0.5 + halb ? 'hoch' : 'tief');
 
                         if (Uhr.jetzt() - (this._tonAbgewiesen || 0) > 700) {
                             this._tonAbgewiesen = Uhr.jetzt();
@@ -2793,13 +2845,17 @@
                                nachzujustieren, ohne bei jedem Versuch zu
                                fluten. */
                             Protokoll.schreib('AUFSCHLAG',
-                                `nicht zentriert: ${(this.aufschlagAnzeige.prozent * 100).toFixed(0)} % `
+                                `nicht zentriert: ${(st.prozent * 100).toFixed(0)} % `
                                 + `(Zone ${Math.round((0.5 - halb) * 100)}-`
                                 + `${Math.round((0.5 + halb) * 100)} %)`);
                         }
                     }
 
-                    if (zentriert && ton.currentVolume >= CONFIG.serveVolume) {
+                    /* AUS DERSELBEN QUELLE wie Meter und Stimm-Anzeige:
+                       `frei` ist die einzige Stelle, an der "die Stimme
+                       loest jetzt aus" entschieden wird. Vorher stand die
+                       Bedingung hier ein zweites Mal ausgeschrieben. */
+                    if (st.frei) {
                         this.serveCharge++;
                         /* Siehe Physics.SERVE_CHARGE_FRAMES — nur eine Sperre
                            gegen einzelne Messspitzen, kein Durchhaltetest. */
@@ -3438,6 +3494,10 @@
 
             const scoreLine = scene.match.scoreLine();
             this.drawHud(scene.match, scene.audio, scene.audio2);
+            /* Vor der Abdunkelung, also in derselben Ebene wie die
+               Bauchbinde: beide sind Grafik ueber dem Platz und treten in den
+               Pausen gemeinsam zurueck. */
+            this.drawStimmAnzeige(scene);
             this.drawDimOverlay(scene.match);
 
             if (scene.match.state === STATE.POINT_SCORED) {
@@ -5409,7 +5469,7 @@
             const barH = Renderer.ZIELZONE_HOEHE * p.scale;
             const barX = p.x - barW / 2;
             const halb = Physics.AUFSCHLAG_MITTE_BREITE / 2;
-            const anz = scene.aufschlagAnzeige;
+            const anz = scene.stimme;
             const zentriert = !!(anz && anz.zentriert);
 
             /* Aussenrahmen: der volle kalibrierte Umfang. */
@@ -5589,6 +5649,119 @@
                selben Moment. Weil das Bild am Ende von Schritt 2 vollstaendig
                schwarz ist, sieht man sein Verschwinden nicht. */
             if (prog < B) this.drawTransitionLogo(wisch, dreh);
+            ctx.restore();
+        }
+
+        /**
+         * Stimm-Anzeige unten rechts — ein Teil der SHOW, kein Messgeraet.
+         *
+         * Sie beantwortet fuer das Publikum die Frage, die dieses Spiel
+         * ueberhaupt erst erklaert: was macht die Stimme gerade, und zaehlt
+         * das? Pegel als Balken, Tonhoehe in Hertz und als Notenname, beides
+         * in der Ampelfarbe gruen (zaehlt) oder rot (zaehlt nicht).
+         *
+         * SIE RECHNET NICHTS SELBST. Ob gruen gilt, steht in
+         * `scene.stimme.frei` — derselben Quelle, aus der auch der Ausloeser
+         * des Aufschlags und der Zielzonen-Meter lesen (siehe
+         * Physics.stimmeSetzen). Eine zweite, hier gerechnete Bewertung waere
+         * schlimmer als gar keine Anzeige: sie zeigte gruen, waehrend der
+         * Aufschlag nicht ausloest, und liesse die Saengerin an ihrer Stimme
+         * zweifeln, obwohl die Regel eine andere ist. Dieselbe Lehre wie beim
+         * Oktavfehler.
+         *
+         * NICHT ZU VERWECHSELN mit drawAudioDebug(): das ist das
+         * Operator-Messgeraet, standardmaessig aus, mit Rohwerten und
+         * Schwellen. Dieses hier steht immer im Bild und ist gestaltet wie die
+         * Bauchbinde.
+         *
+         * Der Pegelbalken laeuft LOGARITHMISCH, wie jede Aussteuerungsanzeige:
+         * linear gerechnet klebte der interessante Bereich (Raumgeraeusch bis
+         * Schwelle) im linken Zehntel und der Rest waere Dekoration. Der
+         * Strich im Balken markiert die Schwelle, die in DIESEM Zustand gilt —
+         * sichtbar wird also nicht nur "laut", sondern "laut genug".
+         *
+         * @param {Object} scene
+         */
+        drawStimmAnzeige(scene) {
+            const st = scene.stimme;
+            if (!st) return;
+
+            const ctx = this.ctx;
+            const p = this.viewport.toScreen(
+                VIRTUAL_WIDTH - Renderer.STIMME_RAND - Renderer.STIMME_BREITE,
+                VIRTUAL_HEIGHT - Renderer.STIMME_UNTEN - Renderer.STIMME_HOEHE,
+                this._p1);
+            const s = p.scale;
+            const w = Renderer.STIMME_BREITE * s;
+            const h = Renderer.STIMME_HOEHE * s;
+            const pad = Renderer.HUD_PAD * s;
+            const radius = Renderer.HUD_RADIUS * s;
+            const farbe = st.frei ? Renderer.METER_OK : Renderer.METER_BAD;
+
+            ctx.save();
+            ctx.textBaseline = 'middle';
+
+            /* --- Kasten, in der Sprache der Bauchbinde -------------------- */
+            const grad = ctx.createLinearGradient(p.x, p.y, p.x, p.y + h);
+            grad.addColorStop(0, Renderer.HUD_BG_TOP);
+            grad.addColorStop(1, Renderer.HUD_BG_BOTTOM);
+            this.roundRectPath(p.x, p.y, w, h, radius);
+            ctx.fillStyle = grad;
+            ctx.fill();
+            ctx.strokeStyle = Renderer.HUD_BORDER;
+            ctx.lineWidth = Math.max(1, 1.5 * s);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(p.x + radius, p.y + 1.5 * s);
+            ctx.lineTo(p.x + w - radius, p.y + 1.5 * s);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+            ctx.stroke();
+
+            /* --- Zeile 1: wessen Stimme, und welcher Ton ------------------ */
+            const zeileY = p.y + Renderer.STIMME_ZEILE * s;
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#ffffff';
+            ctx.font = this.font(Renderer.STIMME_NAME_SIZE * s, 'bold', Renderer.HUD_FONT);
+            ctx.fillText(st.spieler === PLAYER.ALEX ? 'ALEX' : 'ANDREA',
+                p.x + pad, zeileY);
+
+            ctx.textAlign = 'right';
+            ctx.fillStyle = farbe;
+            ctx.font = this.font(Renderer.STIMME_HZ_SIZE * s, 'bold', Renderer.HUD_FONT);
+            /* Ohne Ton bleibt die Stelle besetzt statt zu verschwinden — eine
+               Zeile, die im Takt der Atempausen umspringt, ist unruhiger als
+               ein Strich. */
+            ctx.fillText(st.aktiv
+                ? `${Math.round(st.hz)} Hz  ${Renderer.noteName(st.hz)}`
+                : '—  —', p.x + w - pad, zeileY);
+
+            /* --- Zeile 2: Pegelbalken ------------------------------------- */
+            const barX = p.x + pad;
+            const barY = p.y + Renderer.STIMME_BALKEN_Y * s;
+            const barW = w - pad * 2;
+            const barH = Renderer.STIMME_BALKEN_H * s;
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.fillRect(barX, barY, barW, barH);
+
+            const anteil = Renderer.pegelAnteil(st.pegel);
+            if (anteil > 0) {
+                ctx.fillStyle = farbe;
+                ctx.shadowColor = farbe;
+                ctx.shadowBlur = 8 * s;
+                ctx.fillRect(barX, barY, barW * anteil, barH);
+                ctx.shadowBlur = 0;
+            }
+
+            /* Schwellenstrich: ab hier zaehlt es. Er ragt oben und unten
+               ueber den Balken hinaus und bleibt deshalb sichtbar, auch wenn
+               der Pegel ihn ueberlaeuft. */
+            const marke = barX + barW * Renderer.pegelAnteil(st.schwelle);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.fillRect(marke - Math.max(1, s), barY - 3 * s,
+                Math.max(2, 2 * s), barH + 6 * s);
+
             ctx.restore();
         }
 
@@ -6733,6 +6906,61 @@
        mit dem Verhaeltnis der Tiefenmassstaebe verrechnet — siehe
        drawServePrompt. Wer hier dreht, veraendert beide Seiten zugleich. */
 
+    /* -------------------------------------------------------------------------
+     * Stimm-Anzeige unten rechts (siehe Renderer.drawStimmAnzeige)
+     *
+     * DIE ECKE UNTEN RECHTS IST BELEGT, und zwar in dieser Reihenfolge:
+     *   unten       diese Anzeige            (Show, immer sichtbar)
+     *   darueber    "AUDIOEINGANG TOT"       (AUDIOTOT_ABSTAND = 128)
+     *   ueber allem Messanzeige Ctrl+Shift+M (Werkzeug auf Zuruf)
+     * Die Anzeige endet bei y = 880, die Warnzeile sitzt auf 772 — 24 px
+     * Luft dazwischen. Wer eine der drei Zahlen aendert, muss die anderen
+     * beiden pruefen.
+     * ---------------------------------------------------------------------- */
+    Renderer.STIMME_BREITE = 300;
+    Renderer.STIMME_HOEHE = 84;
+    /** Abstand zum rechten Bildrand bzw. zur Unterkante, in Weltpixeln. */
+    Renderer.STIMME_RAND = 24;
+    Renderer.STIMME_UNTEN = 20;
+    /** Mitte der Textzeile, von der Oberkante des Kastens aus. */
+    Renderer.STIMME_ZEILE = 26;
+    Renderer.STIMME_NAME_SIZE = 26;
+    Renderer.STIMME_HZ_SIZE = 24;
+    /** Oberkante und Hoehe des Pegelbalkens, von der Kastenoberkante aus. */
+    Renderer.STIMME_BALKEN_Y = 50;
+    Renderer.STIMME_BALKEN_H = 16;
+
+    /**
+     * Enden der Pegelskala (RMS).
+     *
+     * Eingerahmt um das, was auf der Buehne tatsaechlich vorkommt: ein
+     * ruhiger Raum misst rund 0.005, ein gesungener Ton 0.04 bis 0.15, die
+     * Aufschlagschwelle liegt bei 0.022. Unter STIMME_PEGEL_MIN ist der
+     * Balken leer, ueber STIMME_PEGEL_MAX voll.
+     */
+    Renderer.STIMME_PEGEL_MIN = 0.002;
+    Renderer.STIMME_PEGEL_MAX = 0.2;
+
+    /**
+     * Pegel auf die Balkenlaenge abbilden — LOGARITHMISCH.
+     *
+     * Wie jede Aussteuerungsanzeige und aus demselben Grund: linear
+     * gerechnet laege der gesamte interessante Bereich (Raumgeraeusch 0.005
+     * bis Schwelle 0.022) im linken Zehntel des Balkens, und die restlichen
+     * neun Zehntel waeren Dekoration. Auf der logarithmischen Skala liegt
+     * die Aufschlagschwelle bei 52 %, also ungefaehr in der Mitte — genau
+     * dort, wo eine Marke etwas taugt.
+     *
+     * @param   {number} rms
+     * @returns {number} 0..1
+     */
+    Renderer.pegelAnteil = function (rms) {
+        const lo = Renderer.STIMME_PEGEL_MIN;
+        const hi = Renderer.STIMME_PEGEL_MAX;
+        if (!(rms > lo)) return 0;
+        return Math.min(1, Math.log(rms / lo) / Math.log(hi / lo));
+    };
+
     Renderer.SERVE_PROMPT_TEXT = 'AUFSCHLAG!';
     Renderer.SERVE_PROMPT_SIZE = 96;
     /**
@@ -7813,7 +8041,7 @@
 
                     this._scene.andreaX = this.physics.currentX;
                     this._scene.abweisung = this.physics.abweisung;
-                    this._scene.aufschlagAnzeige = this.physics.aufschlagAnzeige;
+                    this._scene.stimme = this.physics.stimme;
                     this._scene.ruheHaengt = !!this.ruheHaengt;
                     this._scene.raumpegel = this.raumpegel();
                     this._scene.audioTot = this.audioTot;
@@ -8170,6 +8398,24 @@
                      * Reihenfolge Bewegung -> Aufsprung -> Schläger für beide
                      * Modi dieselbe.
                      * -------------------------------------------------------- */
+                    /* --- Stimmlage fuer die Anzeigen -----------------------
+                     * Im Ballwechsel heisst "frei": DIESE Stimme steuert
+                     * gerade ihre Figur. Eine Zuendzone gibt es hier nicht,
+                     * also entfaellt sie (null) — was zaehlt, ist ein
+                     * erkannter Ton ueber moveGate und keine Aufschlagsperre.
+                     *
+                     * GEZEIGT WIRD, WER GLEICH SPIELEN MUSS: der Ball fliegt
+                     * auf eine der beiden Figuren zu, und deren Stimme ist in
+                     * diesem Moment die interessante. Im Arcade-Modus ist das
+                     * immer Andrea — Alex hat keine Stimme, seine Anzeige
+                     * waere dauerhaft rot und damit eine Falschmeldung. */
+                    const zeigtAlex = versus && this.ball.vy < 0;
+                    this.physics.stimmeSetzen(
+                        zeigtAlex ? PLAYER.ALEX : PLAYER.ANDREA,
+                        zeigtAlex ? this.audio2 : this.audio,
+                        null, CONFIG.moveGate,
+                        zeigtAlex ? obenGesperrt : untenGesperrt);
+
                     if (versus && !obenGesperrt && this.audio2.smoothedPitch !== -1) {
                         /* Dieselbe Totzone wie unten. Zwei unterschiedlich
                            ruhige Figuren wuerden sich beim Zuschauen sofort

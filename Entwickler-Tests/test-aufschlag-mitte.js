@@ -45,14 +45,14 @@ console.log(`Umfang 110–330 Hz, Zuendzone ${(breite * 100).toFixed(0)} %`
  * Einen Frame in der Aufschlagphase fahren.
  * @param   {number} hz     Tonhoehe, 0 = kein Ton erkannt
  * @param   {number} volume Pegel
- * @returns {{prozent:number, zentriert:boolean, aktiv:boolean}}
+ * @returns {Object} die Stimmlage (siehe Physics.stimme)
  */
 function frame(hz, volume) {
     audio.smoothedPitch = hz > 0 ? hz : -1;
     audio.currentVolume = volume;
     match.state = 'SERVE_WAIT';
     physics.update();
-    return physics.aufschlagAnzeige;
+    return physics.stimme;
 }
 
 /** Zuruecksetzen zwischen den Abschnitten. */
