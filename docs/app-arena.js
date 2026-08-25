@@ -3349,6 +3349,7 @@
             /** Scratch für Punkte, die über einen Aufruf hinaus leben müssen. */
             this._p1 = { x: 0, y: 0, scale: 1, scale3D: 1 };
             this._p2 = { x: 0, y: 0, scale: 1, scale3D: 1 };
+            this._p3 = { x: 0, y: 0, scale: 1, scale3D: 1 };
 
             /** Publikum: einmalig vorberechnet, kein GC-Druck im Hot Path. */
             this._crowd = this.buildCrowd();
@@ -5383,7 +5384,27 @@
             const grundY = scene.match.server === PLAYER.ALEX
                 ? scene.paddleAlex.y : scene.paddleAndrea.y;
             const linie = this.proj.project(VIRTUAL_WIDTH / 2, grundY, 0, this._p2);
-            const barY = linie.y + Renderer.ZIELZONE_LINIENABSTAND * p.scale;
+
+            /* --- Abstand zur Linie waechst und schrumpft mit der Tiefe -----
+             * Der eingemessene Wert (34 px) galt an der VORDEREN Grundlinie.
+             * Fest angewandt sass der Meter bei Alex' Aufschlag sichtbar zu
+             * weit weg: seine Linie liegt doppelt so weit hinten, dort ist
+             * derselbe Bildabstand perspektivisch doppelt so gross, und die
+             * Zuordnung "das gehoert zu seinem Aufschlag" riss ab.
+             *
+             * Bezugspunkt bleibt die vordere Linie — dort ist der Wert
+             * eingemessen und soll sich nicht aendern. Alles andere folgt
+             * ihrem Verhaeltnis der Tiefenmassstaebe:
+             *   Hart 0.50, Sand 0.57, Rasen 0.55 an der hinteren Linie.
+             *
+             * NUR der Abstand skaliert, nicht der Meter selbst. Er ist eine
+             * Anzeige und kein Gegenstand auf dem Platz; an der hinteren
+             * Linie halb so gross waere er auf der Wand nicht mehr ablesbar,
+             * und genau dann wird er gebraucht. */
+            const vorn = this.proj.project(VIRTUAL_WIDTH / 2, COURT_BOTTOM, 0, this._p3);
+            const tiefenfaktor = linie.scale3D / vorn.scale3D;
+            const barY = linie.y
+                + Renderer.ZIELZONE_LINIENABSTAND * p.scale * tiefenfaktor;
             const barW = Renderer.ZIELZONE_BREITE * p.scale;
             const barH = Renderer.ZIELZONE_HOEHE * p.scale;
             const barX = p.x - barW / 2;
@@ -6708,6 +6729,9 @@
      * aber sichtbar daran.
      */
     Renderer.ZIELZONE_LINIENABSTAND = 34;
+    /* Eingemessen an der VORDEREN Grundlinie. An der hinteren wird der Wert
+       mit dem Verhaeltnis der Tiefenmassstaebe verrechnet — siehe
+       drawServePrompt. Wer hier dreht, veraendert beide Seiten zugleich. */
 
     Renderer.SERVE_PROMPT_TEXT = 'AUFSCHLAG!';
     Renderer.SERVE_PROMPT_SIZE = 96;
