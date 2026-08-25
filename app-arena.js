@@ -4449,7 +4449,10 @@
                 /* Das Einsacken der Verliererin bleibt: es ist eine POSITION,
                    keine Groesse, und traegt die Enttaeuschung, seit das
                    Schrumpfen weg ist. */
-                const ease = Math.min(1, match.elapsed() / 500);
+                /* In der Blende zaehlt elapsed() von vorn — ohne die feste
+                   1 sackte die Verliererin im Wisch ein zweites Mal ein. */
+                const ease = match.state === STATE.POINT_SCORED
+                    ? Math.min(1, match.elapsed() / 500) : 1;
                 if (sieger === PLAYER.ANDREA) {
                     andreaEmotion = 'win'; alexEmotion = 'lose'; alexY = 20 * ease;
                 } else {
@@ -6017,8 +6020,27 @@
      * @returns {string} Wert aus PLAYER oder ''
      */
     Renderer.ergebnisZeigt = function (match) {
-        if (!match || match.state !== STATE.POINT_SCORED || !match.lastWinner) return '';
-        return match.elapsed() > Renderer.ERGEBNIS_VERZUG ? match.lastWinner : '';
+        if (!match || !match.lastWinner) return '';
+        if (match.state === STATE.POINT_SCORED) {
+            return match.elapsed() > Renderer.ERGEBNIS_VERZUG ? match.lastWinner : '';
+        }
+        /* AUCH IN DER BLENDE, solange das Schwarz noch nicht dicht ist.
+           Bis ARENA-16 kippte die Mimik — Spielergesichter UND Bennis
+           Reaktionsbild — im allerersten Blendenframe auf neutral, und das
+           war sichtbar: der Wisch deckt zu Beginn erst mit 0.6. Genau der
+           Buehnenbefund "die Gesichter des naechsten Punktes stehen schon
+           in der Blende".
+
+           Ab TRANS_WISCH_BIS deckt drawTransition mit alpha 1.0 (siehe
+           blendeDecktAlles) — ab dort ist jeder Wechsel unsichtbar, und
+           beim Aufblenden steht laengst der naechste Ballwechsel. Der
+           Zustands-Reset bei TRANS_SCHWARZ_AB bleibt davon unberuehrt;
+           test-blende.js sichert seine Reihenfolge weiterhin. */
+        if (match.state === STATE.TRANSITION) {
+            const prog = match.elapsed() / TIMING.TRANSITION_MS;
+            return prog < Renderer.TRANS_WISCH_BIS ? match.lastWinner : '';
+        }
+        return '';
     };
 
     /**

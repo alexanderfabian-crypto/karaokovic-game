@@ -341,4 +341,65 @@ check('GEGENPROBE: im Wisch und in der Aufblende wird die volle Welt gemalt',
     imWisch.rechtecke.length > 50 && inAufblende.rechtecke.length > 50,
     `${imWisch.rechtecke.length} / ${inAufblende.rechtecke.length}`);
 
+/* --- 10. Die Mimik haelt bis zum vollen Schwarz --------------------------
+ * BUEHNENBEFUND: "die Gesichter des naechsten Punktes stehen schon in der
+ * Blende." Ursache war nicht der Zustands-Reset (der liegt korrekt im vollen
+ * Schwarz), sondern ergebnisZeigt(): es lieferte ab dem ALLERERSTEN
+ * Blendenframe ein leeres Ergebnis — sichtbar durch das dort erst zu 60 %
+ * dichte Schwarz.
+ * ------------------------------------------------------------------------ */
+match.lastWinner = game.PLAYER.ANDREA;
+
+/**
+ * Wer laut ergebnisZeigt() gerade als Sieger im Bild steht.
+ * @param {string} zustand
+ * @param {number} prog
+ */
+function mimik(zustand, prog) {
+    match.state = zustand;
+    match.stateTimer = game.uhr.jetzt()
+        - prog * (zustand === 'TRANSITION' ? DAUER : 3000);
+    return R.ergebnisZeigt(match);
+}
+
+const wisch = [0.01, 0.1, 0.2, 0.24].map(x => mimik('TRANSITION', x));
+const schwarz = [0.26, 0.5, 0.74].map(x => mimik('TRANSITION', x));
+const auf = [0.8, 0.99].map(x => mimik('TRANSITION', x));
+console.log(`\nMimik: Wisch ${wisch.join(',')} | Schwarz `
+    + `${schwarz.map(x => x || '-').join(',')} | Aufblende `
+    + `${auf.map(x => x || '-').join(',')}`);
+
+check('Waehrend des Wischs steht das Ergebnis unveraendert im Bild',
+    wisch.every(x => x === game.PLAYER.ANDREA), wisch.join(', '));
+check('Ab dem vollen Schwarz ist es Geschichte',
+    schwarz.every(x => x === '') && auf.every(x => x === ''));
+check('In der Punktphase gilt weiterhin der Verzug von 300 ms',
+    mimik('POINT_SCORED', 0.05) === ''
+    && mimik('POINT_SCORED', 0.5) === game.PLAYER.ANDREA);
+check('Ohne Sieger zeigt sie nie etwas', (() => {
+    const merk = match.lastWinner;
+    match.lastWinner = '';
+    const r = mimik('TRANSITION', 0.1);
+    match.lastWinner = merk;
+    return r === '';
+})());
+
+/* Der zweite Teil derselben Ursache: das Einsacken der Verliererin rechnet
+   mit elapsed(), und das beginnt in der Blende neu. Ohne Korrektur saecke
+   sie im Wisch ein zweites Mal ein. */
+const sackt = (zustand, prog) => {
+    match.state = zustand;
+    match.stateTimer = game.uhr.jetzt() - prog;
+    const { ctx, log } = zeichenprotokoll();
+    const e = renderer.ctx; renderer.ctx = ctx;
+    try { renderer.drawPlayers(game._scene); } finally { renderer.ctx = e; }
+    return log;
+};
+sackt('POINT_SCORED', 2000);
+const inBlende = R.ergebnisZeigt(
+    (match.state = 'TRANSITION',
+     match.stateTimer = game.uhr.jetzt() - 0.1 * DAUER, match));
+check('Im Wisch steht das Ergebnis noch — Grundlage des Einsackens',
+    inBlende === game.PLAYER.ANDREA);
+
 summary();
