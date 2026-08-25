@@ -2343,6 +2343,10 @@
              * zweite, parallel gerechnete Logik ist verboten, auch wenn sie
              * dasselbe zu tun scheint.
              *
+             * SEIT ARENA-20 EINE LAGE JE SPIELER (`stimmen`), weil beide ein
+             * Panel haben. Geschrieben wird trotzdem nur an einer Stelle;
+             * `stimme` zeigt auf die, die in diesem Frame entschieden hat.
+             *
              *   spieler      wessen Stimme hier zu sehen ist (PLAYER.*)
              *   hz           geglaettete Tonhoehe, 0 = kein Ton
              *   pegel        Lautstaerke dieses Frames
@@ -2355,14 +2359,47 @@
              *                keine Zone gibt, gleichbedeutend mit `aktiv`
              *   schwelle     Pegelschwelle, die in diesem Zustand gilt
              *   pegelReicht  laut genug fuer diese Schwelle
-             *   frei         DIE Entscheidung: loest die Stimme gerade aus
-             *                bzw. steuert sie gerade die Figur
+             *   frei         DIE Entscheidung: zaehlt diese Stimme gerade?
+             *                Im Aufschlag heisst das "sie loest aus", im
+             *                Ballwechsel "sie steuert". Die Aufschlagsperre
+             *                macht sie NICHT unfrei — siehe
+             *                stimmeSchreiben().
              */
-            this.stimme = {
-                spieler: PLAYER.ANDREA, hz: 0, pegel: 0, prozent: 0.5,
+            const leer = (spieler) => ({
+                spieler, hz: 0, pegel: 0, prozent: 0.5,
                 schwelle: CONFIG.moveGate,
                 aktiv: false, zentriert: false, pegelReicht: false, frei: false,
+            });
+            /**
+             * EINE Lage JE SPIELER. Bis ARENA-20 gab es nur eine, weil nur
+             * eine Anzeige im Bild stand. Seit beide Spieler ein Panel haben,
+             * braucht jeder seine — sonst zeigten beide denselben Zustand,
+             * und die Anzeige waere fuer einen der beiden gelogen.
+             *
+             * Geschrieben wird weiterhin an genau EINER Stelle
+             * (stimmeSchreiben), gelesen von den Panels.
+             */
+            this.stimmen = {
+                [PLAYER.ANDREA]: leer(PLAYER.ANDREA),
+                [PLAYER.ALEX]: leer(PLAYER.ALEX),
             };
+            /**
+             * @type {Object} Die Lage, die in diesem Frame ENTSCHIEDEN hat —
+             * also die des Aufschlaegers bzw. des Rueckschlaegers. Der
+             * Zielzonen-Meter liest von hier, die Panels aus `stimmen`.
+             */
+            this.stimme = this.stimmen[PLAYER.ANDREA];
+
+            /**
+             * Synthetische Stimme der KI (siehe kiStimme()). Ein festes
+             * Objekt in der Form eines AudioEngine-Ausschnitts, damit
+             * stimmeSchreiben() es nicht von einem echten Eingang
+             * unterscheiden muss — genau das macht den spaeteren Wechsel auf
+             * den zweiten Kanal zu einem reinen Quellenwechsel.
+             */
+            this._kiStimme = { smoothedPitch: 0, currentVolume: 0 };
+            /** @type {number} Alex' X im vorigen Frame — sein "Pegel". */
+            this._alexZuvor = VIRTUAL_WIDTH / 2;
             /** @type {number} Schläge von Andrea im laufenden Ballwechsel. */
             this.rallyShots = 0;
 
@@ -2555,8 +2592,124 @@
          * @param   {boolean} gesperrt  Bewegung/Ausloesung gerade gesperrt
          * @returns {Object} das Stimmlage-Objekt (nicht kopiert)
          */
-        stimmeSetzen(spieler, ton, zonenHalb, schwelle, gesperrt) {
-            const st = this.stimme;
+        stimmeSetzen(spieler, ton, zonenHalb, schwelle) {
+            this.stimme = this.stimmeSchreiben(spieler, ton, zonenHalb, schwelle);
+            return this.stimme;
+        }
+
+        /**
+         * Woher die Werte eines Spielers kommen.
+         *
+         * DIE STELLE DES QUELLENWECHSELS. Andrea singt immer selbst. Alex
+         * singt im Duell in den zweiten Kanal und wird im Arcade-Modus von
+         * der KI gespielt — dann liefert kiStimme() die Werte. Am Panel und
+         * an der Regel aendert das nichts: beide bekommen dieselbe Form und
+         * laufen durch dieselbe Bewertung. Wenn beim 1:1-Test der echte
+         * zweite Kanal drankommt, aendert sich genau diese Zeile und sonst
+         * nichts.
+         *
+         * @param   {string} spieler PLAYER.*
+         * @returns {Object} etwas mit smoothedPitch und currentVolume
+         */
+        tonquelle(spieler) {
+            if (spieler !== PLAYER.ALEX) return this.audio;
+            if (CONFIG.mode === MODE.VERSUS && this.audio2) return this.audio2;
+            return this.kiStimme();
+        }
+
+        /**
+         * Die Anzeige des Spielers nachfuehren, dessen Stimme in diesem Frame
+         * NICHT die entscheidende war.
+         *
+         * Bewusst mit denselben Parametern wie der entscheidende Aufruf:
+         * beide Panels werden im selben Frame nach derselben Regel bewertet.
+         * Zwei verschiedene Regeln nebeneinander waeren wieder die zweite
+         * Logik, die dieses Feld gerade verhindern soll.
+         *
+         * @param {string} aktiver   Wer in diesem Frame entschieden hat
+         * @param {number|null} zonenHalb
+         * @param {number} schwelle
+         */
+        zweiteStimme(aktiver, zonenHalb, schwelle) {
+            const anderer = aktiver === PLAYER.ALEX ? PLAYER.ANDREA : PLAYER.ALEX;
+            this.stimmeSchreiben(anderer, this.tonquelle(anderer),
+                zonenHalb, schwelle);
+        }
+
+        /**
+         * Die synthetische Stimme der KI, einmal je Frame nachgefuehrt.
+         *
+         * ZWEI FAELLE, und der erste ist der wichtige:
+         *
+         *   Bei SEINEM Aufschlag spiegelt sie den Eingang, der ihn
+         *   tatsaechlich ausloest. Im Arcade-Modus hat die KI keine Stimme —
+         *   Alex' Aufschlag haengt an der einzigen Stimme im Raum (siehe
+         *   serverAudio()). Eine eigens erfundene Kurve koennte gruen zeigen,
+         *   waehrend der Aufschlag nicht faellt, oder umgekehrt. Gespiegelt
+         *   kann sie das nicht.
+         *
+         *   Sonst ist seine BEWEGUNG seine Stimme: wie weit er im letzten
+         *   Frame gelaufen ist, auf den Pegel abgebildet, und die Tonhoehe,
+         *   die ihn an seine jetzige Stelle schicken wuerde (Umkehrung von
+         *   freqToQuantizedX). Das ist keine Zierde, sondern die ehrlichste
+         *   verfuegbare Aussage: eine Figur, die laeuft, wuerde gesungen.
+         *
+         * @returns {{smoothedPitch:number, currentVolume:number}}
+         */
+        kiStimme() {
+            const k = this._kiStimme;
+            if (this.match.state === STATE.SERVE_WAIT
+                && this.match.server === PLAYER.ALEX) {
+                const ton = this.serverAudio();
+                k.smoothedPitch = ton.smoothedPitch;
+                k.currentVolume = ton.currentVolume;
+                return k;
+            }
+            const tempo = Math.min(1, Math.abs(this.paddleAlex.x - this._alexZuvor)
+                / Physics.OPPONENT_SPEED);
+            k.currentVolume = Physics.KI_PEGEL_RUHE
+                + tempo * (Physics.KI_PEGEL_LAUT - Physics.KI_PEGEL_RUHE);
+            k.smoothedPitch = Physics.aufschlagHz(
+                (this.paddleAlex.x - COURT_LEFT) / COURT_WIDTH, PLAYER.ALEX);
+            return k;
+        }
+
+        /**
+         * Die Stimmlage EINES Spielers festschreiben.
+         *
+         * EINZIGE Stelle, die `frei` setzt — siehe das Feld `stimmen`.
+         *
+         * DIE AUFSCHLAGSPERRE GEHT HIER NICHT MEHR EIN. Bis ARENA-20 stand
+         * hier `!gesperrt && ...`, und das erzeugte den Buehnenbefund
+         * "Aufschlag loest aus, waehrend das Panel noch rot zeigt". Frame fuer
+         * Frame nachgemessen war es weder eine zusaetzliche Bedingung der
+         * Anzeige noch ein Frame Nachlauf — beide lesen dieselbe Quelle und
+         * gruen faellt drei Frames VOR dem Aufschlag:
+         *
+         *   Frame 0  frei=true   SERVE_WAIT   Ladung 1
+         *   Frame 1  frei=true   SERVE_WAIT   Ladung 2
+         *   Frame 2  frei=true   PLAYING      Aufschlag faellt
+         *   Frame 3  frei=FALSE  PLAYING      Ball fliegt   <-- hier
+         *
+         * Ab Frame 3 griff die Sperre, die die Figur nach dem Aufschlag
+         * festhaelt, und faerbte das Panel rot — waehrend der Ball flog und
+         * die Saengerin ihren Ton noch hielt. Sichtbar waren drei Frame gruen
+         * (50 ms) und danach das lange Rot; auf einer Aufzeichnung mit 30 Hz
+         * bleibt davon der Eindruck "es loest aus, obwohl rot".
+         *
+         * `frei` heisst deshalb jetzt: DIESE STIMME ZAEHLT GERADE. Waehrend
+         * der Sperre zaehlt sie sehr wohl — sie hat den Ball gerade
+         * losgeschickt, sie ist nur schon verbraucht. Rot wird das Panel erst,
+         * wenn kein brauchbarer Ton mehr anliegt, und das ist dann auch wahr.
+         *
+         * @param   {string}  spieler   PLAYER.* — wessen Stimme
+         * @param   {Object}  ton       Eingang oder synthetische Quelle
+         * @param   {number|null} zonenHalb halbe Zuendzone, null = keine
+         * @param   {number}  schwelle  Pegelschwelle dieses Zustands
+         * @returns {Object} die Lage dieses Spielers (nicht kopiert)
+         */
+        stimmeSchreiben(spieler, ton, zonenHalb, schwelle) {
+            const st = this.stimmen[spieler];
             st.spieler = spieler;
             /* smoothedPitch ueberlebt die Stille (siehe updateSmoothedPitch)
                und ist deshalb der ruhige Wert fuer die Anzeige; -1 heisst
@@ -2573,7 +2726,7 @@
                 : (st.aktiv && Math.abs(st.prozent - 0.5) <= zonenHalb);
             st.schwelle = schwelle;
             st.pegelReicht = st.pegel >= schwelle;
-            st.frei = !gesperrt && st.aktiv && st.zentriert && st.pegelReicht;
+            st.frei = st.aktiv && st.zentriert && st.pegelReicht;
             return st;
         }
 
@@ -2932,6 +3085,11 @@
             const prevAndreaX = this.prevCurrentX;
             this.prevCurrentX = this.currentX;
             const prevAlexX = this.paddleAlex.x;
+            /* Seine Strecke SEIT DEM VORIGEN FRAME ist der Pegel seiner
+               synthetischen Stimme — siehe kiStimme(). Festgehalten wird sie
+               hier, weil Game.step() im naechsten Frame frueher laeuft als
+               dieser Block. */
+            this._alexZuvor = prevAlexX;
 
             /* --- Aufschlagaufbau: Ball klebt am Schläger ----------------------
              * Am Schläger DES AUFSCHLÄGERS, nicht fest an Andreas Position.
@@ -2962,7 +3120,10 @@
                        `match.server` als Umfang waere ihr Ton durch Alex'
                        nie eingesungene Kalibrierung gerechnet worden. */
                     const st = this.stimmeSetzen(spieler, ton, halb,
-                        CONFIG.serveVolume, false);
+                        CONFIG.serveVolume);
+                    /* Das zweite Panel im selben Frame und nach derselben
+                       Regel — siehe zweiteStimme(). */
+                    this.zweiteStimme(spieler, halb, CONFIG.serveVolume);
                     const zentriert = st.zentriert;
 
                     if (!zentriert && st.pegelReicht) {
@@ -3411,6 +3572,39 @@
         const midiNote = 12 * Math.log2(freq / 440) + 69;
         return (midiNote - minMidi) / (maxMidi - minMidi);
     };
+
+    /**
+     * UMKEHRUNG von aufschlagProzent(): welcher Ton gehoert zu dieser Lage?
+     *
+     * Gebraucht fuer die synthetische Stimme der KI (Physics.kiStimme): Alex
+     * steht irgendwo, und die Anzeige soll den Ton nennen, der ihn dorthin
+     * schicken WUERDE. Bewusst als echte Umkehrung und nicht als zweite,
+     * aehnliche Rechnung — beide Richtungen muessen zusammenpassen, und ein
+     * Test kann das genau dann pruefen.
+     *
+     * @param   {number} prozent Anteil am kalibrierten Umfang (0..1, frei)
+     * @param   {string} [player] Wert aus PLAYER; ohne Angabe Andrea.
+     * @returns {number} Tonhoehe in Hz
+     */
+    Physics.aufschlagHz = function (prozent, player) {
+        const range = Physics.voiceRange(player);
+        const minMidi = 12 * Math.log2(range.min / 440) + 69;
+        const maxMidi = 12 * Math.log2(range.max / 440) + 69;
+        const midi = minMidi + prozent * (maxMidi - minMidi);
+        return 440 * Math.pow(2, (midi - 69) / 12);
+    };
+
+    /**
+     * Pegel der synthetischen KI-Stimme, wenn Alex steht und wenn er rennt.
+     *
+     * Beide Werte sind an CONFIG.moveGate (0.015) ausgerichtet und rahmen es
+     * ein: im Stand liegt er darunter (das Panel ist rot, er "singt" nicht),
+     * in voller Bewegung deutlich darueber. 0.006 ist der Pegel eines ruhigen
+     * Raums, 0.075 der eines gesungenen Tons — dieselben Groessen, die auch
+     * die echte Skala einrahmen (siehe Renderer.STIMME_PEGEL_MIN/MAX).
+     */
+    Physics.KI_PEGEL_RUHE = 0.006;
+    Physics.KI_PEGEL_LAUT = 0.075;
 
     /**
      * Totzone der Zielposition, in HALBTÖNEN.
@@ -5870,14 +6064,59 @@
          * @param {Object} scene
          */
         drawStimmAnzeige(scene) {
-            const st = scene.stimme;
+            const alle = scene.stimmen;
+            if (!alle) return;
+
+            /* Andrea unten rechts — wie seit ARENA-17. */
+            this.drawStimmKasten(alle[PLAYER.ANDREA],
+                VIRTUAL_WIDTH - Renderer.STIMME_RAND - Renderer.STIMME_BREITE,
+                VIRTUAL_HEIGHT - Renderer.STIMME_UNTEN - Renderer.STIMME_HOEHE);
+
+            /* Alex oben links — die einzige freie Ecke. Unten links klebt die
+               Bauchbinde, unten rechts Andreas Anzeige samt Warnzeile und
+               Messanzeige, oben rechts steht auf dem Rasenplatz der
+               Schiedsrichterstuhl (x 1322..1350, y 200..499).
+
+               AUF DEM SANDPLATZ SITZT DORT ABER DIE BAUCHBINDE: seit ARENA-9
+               steht sie dort oben statt unten, weil unten links der Sand
+               beginnt. Der Kasten rutscht deshalb unter sie, wenn sie in der
+               oberen Bildhaelfte liegt — abgeleitet aus HUD_Y und
+               HUD_HEIGHT, damit er einer verschobenen Bauchbinde von selbst
+               folgt und nicht beim naechsten Platz stillschweigend darunter
+               verschwindet. */
+            const obenBelegt = Renderer.HUD_Y < VIRTUAL_HEIGHT / 2;
+            const alexY = obenBelegt
+                ? Renderer.HUD_Y + Renderer.HUD_HEIGHT + Renderer.STIMME_OBEN
+                : Renderer.STIMME_OBEN;
+            this.drawStimmKasten(alle[PLAYER.ALEX], Renderer.STIMME_RAND, alexY);
+        }
+
+        /**
+         * Ein Panel zeichnen.
+         *
+         * ES ZEIGT NAME, PEGELBALKEN UND SCHWELLE — und seit ARENA-20 keine
+         * Tonhoehe mehr. Die stand hier als Hertzzahl und Notenname und war
+         * eine Doppelanzeige: welchen Ton der Aufschlaeger trifft, sagt der
+         * Zielzonen-Meter, und der sagt es besser, weil er die ZIELZONE
+         * mitzeigt statt einer Zahl, mit der auf der Buehne niemand etwas
+         * anfangen kann. Zweimal Tonhoehe im Bild kostet Aufmerksamkeit und
+         * bringt nichts. Die Hz-Zeilen des Operator-Messgeraets
+         * (drawAudioDebug, Ctrl+Shift+M) bleiben unveraendert.
+         *
+         * SIE RECHNET NICHTS SELBST. Ob gruen gilt, steht in `st.frei` —
+         * derselben Quelle, aus der auch der Ausloeser des Aufschlags und der
+         * Zielzonen-Meter lesen (siehe Physics.stimmeSchreiben). Eine zweite,
+         * hier gerechnete Bewertung waere schlimmer als gar keine Anzeige.
+         *
+         * @param {Object} st Lage EINES Spielers aus Physics.stimmen
+         * @param {number} vx Linke Kante in virtuellen Pixeln
+         * @param {number} vy Oberkante in virtuellen Pixeln
+         */
+        drawStimmKasten(st, vx, vy) {
             if (!st) return;
 
             const ctx = this.ctx;
-            const p = this.viewport.toScreen(
-                VIRTUAL_WIDTH - Renderer.STIMME_RAND - Renderer.STIMME_BREITE,
-                VIRTUAL_HEIGHT - Renderer.STIMME_UNTEN - Renderer.STIMME_HOEHE,
-                this._p1);
+            const p = this.viewport.toScreen(vx, vy, this._p1);
             const s = p.scale;
             const w = Renderer.STIMME_BREITE * s;
             const h = Renderer.STIMME_HOEHE * s;
@@ -5905,7 +6144,7 @@
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
             ctx.stroke();
 
-            /* --- Zeile 1: wessen Stimme, und welcher Ton ------------------ */
+            /* --- Zeile 1: wessen Stimme ---------------------------------- */
             const zeileY = p.y + Renderer.STIMME_ZEILE * s;
             ctx.textAlign = 'left';
             ctx.fillStyle = '#ffffff';
@@ -5913,15 +6152,26 @@
             ctx.fillText(st.spieler === PLAYER.ALEX ? 'ALEX' : 'ANDREA',
                 p.x + pad, zeileY);
 
-            ctx.textAlign = 'right';
+            /* --- Statuslicht am rechten Ende der Namenszeile -------------
+             * Es steht da, wo bis ARENA-20 die Hertzzahl stand, und hat
+             * einen handfesten Grund: die Ampelfarbe lag vorher an dieser
+             * Zahl und am Pegelbalken. Ohne die Zahl bliebe bei Stille GAR
+             * KEINE Farbe im Kasten — der Balken ist dann leer und faerbt
+             * nichts. Die Anzeige koennte im entscheidenden Moment ("es ist
+             * still, das zaehlt gerade nicht") nur durch Abwesenheit
+             * antworten.
+             *
+             * Bewusst ein Rechteck und kein Kreis: es liest sich als
+             * Kontrolllampe eines Mischpults, passt zur Formsprache der
+             * Bauchbinde — und es ist die einzige Zeichenform, die der
+             * Node-Test mitschreiben kann. */
             ctx.fillStyle = farbe;
-            ctx.font = this.font(Renderer.STIMME_HZ_SIZE * s, 'bold', Renderer.HUD_FONT);
-            /* Ohne Ton bleibt die Stelle besetzt statt zu verschwinden — eine
-               Zeile, die im Takt der Atempausen umspringt, ist unruhiger als
-               ein Strich. */
-            ctx.fillText(st.aktiv
-                ? `${Math.round(st.hz)} Hz  ${Renderer.noteName(st.hz)}`
-                : '—  —', p.x + w - pad, zeileY);
+            ctx.shadowColor = farbe;
+            ctx.shadowBlur = 8 * s;
+            ctx.fillRect(p.x + w - pad - Renderer.STIMME_LED_B * s,
+                zeileY - Renderer.STIMME_LED_H * s / 2,
+                Renderer.STIMME_LED_B * s, Renderer.STIMME_LED_H * s);
+            ctx.shadowBlur = 0;
 
             /* --- Zeile 2: Pegelbalken ------------------------------------- */
             const barX = p.x + pad;
@@ -7600,10 +7850,23 @@
     /** Abstand zum rechten Bildrand bzw. zur Unterkante, in Weltpixeln. */
     Renderer.STIMME_RAND = 24;
     Renderer.STIMME_UNTEN = 20;
+    /**
+     * Abstand des Alex-Panels zur Oberkante — bzw. zur Bauchbinde, wo die
+     * oben steht (Sandplatz). Siehe drawStimmAnzeige().
+     */
+    Renderer.STIMME_OBEN = 20;
     /** Mitte der Textzeile, von der Oberkante des Kastens aus. */
     Renderer.STIMME_ZEILE = 26;
     Renderer.STIMME_NAME_SIZE = 26;
-    Renderer.STIMME_HZ_SIZE = 24;
+    /**
+     * Statuslicht rechts in der Namenszeile, in virtuellen Pixeln.
+     *
+     * Steht an der Stelle, an der bis ARENA-20 die Hertzzahl stand
+     * (STIMME_HZ_SIZE ist damit entfallen). Breiter als hoch, damit es als
+     * Lampe und nicht als Knopf gelesen wird.
+     */
+    Renderer.STIMME_LED_B = 26;
+    Renderer.STIMME_LED_H = 12;
     /** Oberkante und Hoehe des Pegelbalkens, von der Kastenoberkante aus. */
     Renderer.STIMME_BALKEN_Y = 50;
     Renderer.STIMME_BALKEN_H = 16;
@@ -8096,7 +8359,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-20 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-21 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**
@@ -8720,6 +8983,9 @@
                     this._scene.andreaX = this.physics.currentX;
                     this._scene.abweisung = this.physics.abweisung;
                     this._scene.stimme = this.physics.stimme;
+                    /* Beide Panels lesen von hier — DASSELBE Objekt, keine
+                       Kopie, damit zwischen Quelle und Anzeige nichts liegt. */
+                    this._scene.stimmen = this.physics.stimmen;
                     this._scene.ruheHaengt = !!this.ruheHaengt;
                     this._scene.raumpegel = this.raumpegel();
                     this._scene.audioTot = this.audioTot;
@@ -9088,11 +9354,15 @@
                      * immer Andrea — Alex hat keine Stimme, seine Anzeige
                      * waere dauerhaft rot und damit eine Falschmeldung. */
                     const zeigtAlex = versus && this.ball.vy < 0;
-                    this.physics.stimmeSetzen(
-                        zeigtAlex ? PLAYER.ALEX : PLAYER.ANDREA,
-                        zeigtAlex ? this.audio2 : this.audio,
-                        null, CONFIG.moveGate,
-                        zeigtAlex ? obenGesperrt : untenGesperrt);
+                    const aktiveStimme = zeigtAlex ? PLAYER.ALEX : PLAYER.ANDREA;
+                    /* Die Quelle kommt aus tonquelle() statt aus einer
+                       zweiten Fallunterscheidung hier — das ist die Stelle,
+                       an der spaeter der echte zweite Kanal eingehaengt
+                       wird. */
+                    this.physics.stimmeSetzen(aktiveStimme,
+                        this.physics.tonquelle(aktiveStimme),
+                        null, CONFIG.moveGate);
+                    this.physics.zweiteStimme(aktiveStimme, null, CONFIG.moveGate);
 
                     if (versus && !obenGesperrt && this.audio2.smoothedPitch !== -1) {
                         /* Dieselbe Totzone wie unten. Zwei unterschiedlich
