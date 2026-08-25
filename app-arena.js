@@ -1900,6 +1900,23 @@
             this.lastWinner = '';
             /** @type {boolean} Merker, damit prepareServe pro Transition nur 1x läuft. */
             this.transitionResetDone = false;
+            /**
+             * @type {string} Endstand des gerade entschiedenen Satzes, fuer
+             * die Satzgewinn-Anzeige. Leer, solange nur ein Punkt fiel.
+             *
+             * MUSS BEIM VERGEBEN GEBILDET WERDEN und kann nicht spaeter aus
+             * `score` gelesen werden: awardPoint() setzt den Punktestand im
+             * selben Zug auf 0:0 zurueck. Danach ist der Endstand weg.
+             */
+            this.satzErgebnis = '';
+            /**
+             * @type {number} Satznummer, die zuletzt angesagt wurde. Damit
+             * "SATZ n" je Satz genau einmal erscheint — siehe
+             * Renderer.drawSatzStart().
+             */
+            this.satzAngesagt = 0;
+            /** @type {number} Bis wann "SATZ n" stehen bleibt (ms). */
+            this.satzAnzeigeBis = 0;
             /** @type {number} Index in GAMIFICATION_WORDS. */
             this.currentWordIndex = 0;
             /**
@@ -1936,6 +1953,11 @@
             this.history.length = 0;
             this.server = PLAYER.ANDREA;
             this.lastWinner = '';
+            this.satzErgebnis = '';
+            /* 0 heisst "noch nichts angesagt" — damit auch Satz 1 seine
+               Ansage bekommt, nicht erst Satz 2. */
+            this.satzAngesagt = 0;
+            this.satzAnzeigeBis = 0;
         }
 
         /**
@@ -2031,15 +2053,23 @@
 
             this.pushHistory();
             this.lastWinner = winner;
+            /* Jeder Punkt loescht ihn zuerst: sonst stuende die Anzeige des
+               letzten Satzgewinns beim naechsten gewoehnlichen Punkt wieder
+               im Bild. */
+            this.satzErgebnis = '';
 
             if (winner === PLAYER.ANDREA) this.score.andrea++;
             else this.score.alex++;
 
             if (this.score.andrea >= 4 && this.score.andrea - this.score.alex >= 2) {
+                this.satzErgebnis = MatchState.satzEndstand(
+                    this.score.andrea, this.score.alex);
                 this.sets.andrea++;
                 this.score.andrea = 0; this.score.alex = 0;
                 this.switchServer();
             } else if (this.score.alex >= 4 && this.score.alex - this.score.andrea >= 2) {
+                this.satzErgebnis = MatchState.satzEndstand(
+                    this.score.alex, this.score.andrea);
                 this.sets.alex++;
                 this.score.andrea = 0; this.score.alex = 0;
                 this.switchServer();
@@ -2056,6 +2086,9 @@
         undo() {
             if (this.history.length === 0) return false;
             const last = this.history.pop();
+            /* Sonst bliebe die Satzgewinn-Anzeige stehen, obwohl der Satz
+               gerade zurueckgenommen wurde. */
+            this.satzErgebnis = '';
             this.score = last.score;
             this.sets = last.sets;
             this.currentWordIndex = last.currentWordIndex;
@@ -2087,6 +2120,35 @@
             }
             return ['0', '15', '30', '40'][p1] || '40';
         }
+
+        /**
+         * Endstand eines entschiedenen Satzes, in Tennis-Schreibweise.
+         *
+         * "40:15", so wie die Anzeigetafel ihn fuehrt.
+         *
+         * DER SONDERFALL EINSTAND, und er ist kein Randfall: bei 5:3 nach
+         * Einstand ergaebe tennisScore() fuer den Sieger "ADV", und "ADV:40"
+         * als ENDstand ist Unsinn — ein Spiel endet nie im Vorteil, der
+         * Punkt, der es beendet, ist per Definition das Spiel. Es gibt auch
+         * kein Zahlenpaar dafuer: eine Anzeigetafel schaltet nach Einstand
+         * schlicht auf "Spiel". Deshalb steht dort der Satz, den auch ein
+         * Kommentator sagt.
+         *
+         * @param   {number} sieger  Punkte des Gewinners
+         * @param   {number} verlier Punkte des Verlierers
+         * @returns {string}
+         */
+        static satzEndstand(sieger, verlier) {
+            if (verlier >= 3) return 'NACH EINSTAND';
+            return `${MatchState.tennisScore(sieger, verlier)}:`
+                + `${MatchState.tennisScore(verlier, sieger)}`;
+        }
+
+        /**
+         * Nummer des Satzes, der gerade laeuft (1-basiert).
+         * @returns {number}
+         */
+        satzNummer() { return this.sets.andrea + this.sets.alex + 1; }
 
         /**
          * Zeile für die Großanzeige, IMMER aus Sicht des Aufschlägers: sein
@@ -3957,6 +4019,9 @@
 
             if (scene.match.state === STATE.POINT_SCORED) {
                 if (scene.match.isWarmup) this.drawWarmupBanner(scene.match);
+                /* Der satzentscheidende Punkt bekommt seine eigene Zeile —
+                   "40 - 15" und "ANDREA PUNKTET!" waeren dort untertrieben. */
+                else if (scene.match.satzErgebnis) this.drawSatzBanner(scene.match);
                 else this.drawPointBanner(scene.match, scoreLine);
             }
 
@@ -3964,9 +4029,20 @@
 
             if (scene.match.state === STATE.TRANSITION) {
                 this.drawTransition(scene.match, scene.dvd, scoreLine);
+                /* NACH der Blende: die Ansage kommt mit der Aufblende und
+                   muss ueber ihr liegen, nicht darunter. */
+                if (Renderer.satzAnsageLaeuft(scene.match)) {
+                    this.drawSatzStart(scene.match);
+                }
             }
             if (scene.match.state === STATE.SILENCE_CHECK) {
-                this.drawSilenceCheck(scene.match, scene);
+                /* Entweder — oder: beide haengen an derselben Marke ueber dem
+                   Netz. Siehe drawSatzStart(). */
+                if (Renderer.satzAnsageLaeuft(scene.match)) {
+                    this.drawSatzStart(scene.match);
+                } else {
+                    this.drawSilenceCheck(scene.match, scene);
+                }
             }
             if (scene.match.state === STATE.SERVE_WAIT) {
                 this.drawServePrompt(scene);
@@ -6203,6 +6279,99 @@
         }
 
         /**
+         * Ankerpunkt der grossen Ansagen UEBER DEM NETZ.
+         *
+         * EINZIGE Stelle, die ihn rechnet. Countdown-Ziffer und "SATZ n"
+         * stehen an derselben Marke — waagerecht auf der Platzachse,
+         * senkrecht so, dass die Unterkante COUNTDOWN_NETZ_ABSTAND ueber der
+         * eingemessenen Netzoberkante liegt. Zwei Rechnungen daneben waeren
+         * genau der Fall, in dem die zweite Anzeige beim naechsten Feintuning
+         * still verrutscht.
+         *
+         * @param   {number} grad Schriftgrad, mit dem die Unterkante rechnet
+         *                        (bei federnden Texten der GROESSTE Moment)
+         * @returns {{x:number, y:number, scale:number}}
+         */
+        netzAnker(grad) {
+            const achse = this.achseAuf(COURT_MID_Y, this._p1);
+            const netzY = this.viewport.toScreen(0, Renderer.NETZ_OBEN, this._p3).y;
+            return {
+                x: achse.x,
+                y: netzY - Renderer.COUNTDOWN_NETZ_ABSTAND * achse.scale
+                    - grad * 0.4,
+                scale: achse.scale,
+            };
+        }
+
+        /**
+         * "SATZ n" zu Beginn jedes Satzes.
+         *
+         * SIE BLOCKIERT NICHTS. Die Ruhepruefung laeuft darunter unveraendert
+         * weiter (sie ist geschuetzt); waere die Ruhe frueher fertig als die
+         * Ansage, faellt der Aufschlag trotzdem und die Ansage verschwindet
+         * mit dem Zustandswechsel. Sie ist Optik und sonst nichts.
+         *
+         * SOLANGE SIE STEHT, WIRD DIE ZIFFER NICHT GEZEICHNET — beide haengen
+         * an derselben Marke ueber dem Netz und laegen sonst uebereinander.
+         * Der Countdown selbst laeuft weiter; sichtbar wird auf dem ersten
+         * Ballwechsel eines Satzes nur seine letzte Sekunde.
+         *
+         * @param {MatchState} match
+         */
+        drawSatzStart(match) {
+            const ctx = this.ctx;
+            const size = Renderer.SATZ_START_SIZE * this.viewport.scale;
+            const p = this.netzAnker(size);
+
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = this.font(size, 'normal', Renderer.GOTHIC_FONT);
+            this.gothicText(`SATZ ${match.satzNummer()}`, p.x, p.y, p.scale);
+            ctx.restore();
+        }
+
+        /**
+         * Satzgewinn statt gewoehnlicher Punktanzeige.
+         *
+         * Steht an der Stelle des Punkt-Banners und fuer dieselbe Dauer — die
+         * volle Punktphase (TIMING.POINT_MS = 3 s). Erst danach beginnt die
+         * Blende; verkuerzt oder uebersprungen wird nichts, weil an dieser
+         * Reihenfolge nichts geaendert wurde.
+         *
+         * DER SCHRIFTGRAD WIRD BEI BEDARF VERKLEINERT. "ANDREA GEWINNT DEN
+         * SATZ NACH EINSTAND" ist mehr als doppelt so lang wie "ALEX GEWINNT
+         * DEN SATZ 40:0", und ob Impact geladen ist, entscheidet sich erst
+         * zur Laufzeit. Gemessen statt geschaetzt: passt die Zeile nicht in
+         * SATZ_BANNER_BREITE, schrumpft sie genau so weit, dass sie es tut.
+         *
+         * @param {MatchState} match
+         */
+        drawSatzBanner(match) {
+            const ctx = this.ctx;
+            const p = this.achseAuf(COURT_MID_Y, this._p1);
+            const wer = match.lastWinner === PLAYER.ANDREA ? 'ANDREA' : 'ALEX';
+            const text = `${wer} GEWINNT DEN SATZ ${match.satzErgebnis}`;
+
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const soll = Renderer.SATZ_BANNER_SIZE * p.scale;
+            ctx.font = this.font(soll, 'normal', Renderer.GOTHIC_FONT);
+            const breite = ctx.measureText(text).width;
+            const platz = Renderer.SATZ_BANNER_BREITE * p.scale;
+            const schrumpf = breite > platz ? platz / breite : 1;
+            if (schrumpf < 1) {
+                ctx.font = this.font(soll * schrumpf, 'normal', Renderer.GOTHIC_FONT);
+            }
+            /* Kontur und Schein schrumpfen mit, sonst behielte die kleinere
+               Schrift die Strichstaerke der grossen. */
+            this.gothicText(text, p.x, p.y, p.scale * schrumpf);
+            ctx.restore();
+        }
+
+        /**
          * Große Punktanzeige inkl. "X PUNKTET!".
          * @param {MatchState} match
          * @param {string}     scoreLine
@@ -6479,9 +6648,6 @@
              * Rueckfallpfad auf eine Position, die es nie gab, kann es nicht
              * geben. Fuer das Gamification-Wort oben wirkt er unveraendert.
              * -------------------------------------------------------------- */
-            const achse = this.achseAuf(COURT_MID_Y, this._p1);
-            const netzY = this.viewport.toScreen(0, Renderer.NETZ_OBEN, this._p3).y;
-
             /* Drei Größen, und die Unterschiede sind wesentlich:
                `size`     ruhige Endgröße,
                `gefedert` was in DIESEM Frame gezeichnet wird,
@@ -6495,16 +6661,9 @@
                alle hinsehen. Bis ARENA-15 stand hier die ruhige Größe; bei
                einem Überschwinger von 28 % fiel das nicht auf, bei 51 %
                schon. */
-            const size = Renderer.COUNTDOWN_SIZE * achse.scale;
+            const size = Renderer.COUNTDOWN_SIZE * this.viewport.scale;
             const spitze = size * Renderer.COUNTDOWN_SPITZE;
-            /* Unterkante im groessten Moment liegt COUNTDOWN_NETZ_ABSTAND
-               ueber dem Netz; daraus folgt die Mitte. */
-            const p = {
-                x: achse.x,
-                y: netzY - Renderer.COUNTDOWN_NETZ_ABSTAND * achse.scale
-                    - spitze * 0.4,
-                scale: achse.scale,
-            };
+            const p = this.netzAnker(spitze);
             const bounce = Renderer.countdownBounce(match.silenceDigitAge());
             const gefedert = size * bounce;
             ctx.font = this.font(gefedert, 'normal', Renderer.GOTHIC_FONT);
@@ -7652,6 +7811,59 @@
         return prog >= Renderer.TRANS_WISCH_BIS && prog < Renderer.TRANS_DREH_BIS;
     };
 
+    /* -------------------------------------------------------------------------
+     * Satzgewinn und Satzbeginn (siehe drawSatzBanner / drawSatzStart)
+     * ---------------------------------------------------------------------- */
+
+    /** Schriftgrad der Satzgewinn-Zeile in virtuellen Pixeln. */
+    Renderer.SATZ_BANNER_SIZE = 84;
+
+    /**
+     * Breite, die der Zeile zur Verfuegung steht, in virtuellen Pixeln.
+     *
+     * 1240 von 1600 laesst links und rechts 180 px Rand — genug, dass die
+     * Zeile auf keinem der drei Plaetze an der Bande klebt, auch nicht wenn
+     * die Platzachse 31 px aus der Bildmitte liegt.
+     */
+    Renderer.SATZ_BANNER_BREITE = 1240;
+
+    /**
+     * Schriftgrad von "SATZ n".
+     *
+     * Er teilt sich die Marke ueber dem Netz mit der Countdown-Ziffer und
+     * darf deshalb nicht groesser sein als sie im GROESSTEN Moment — sonst
+     * stiesse er an Alex' Kopf, den die Ziffer gerade erst freigeraeumt hat.
+     * COUNTDOWN_SIZE * COUNTDOWN_SPITZE sind 133; 108 bleibt darunter und ist
+     * als stehender Text trotzdem deutlich groesser als die ruhende Ziffer.
+     */
+    Renderer.SATZ_START_SIZE = 108;
+
+    /**
+     * Wie lange "SATZ n" steht, in Millisekunden.
+     *
+     * Sie beginnt mit der Aufblende (TRANS_DREH_BIS = 75 % von 2000 ms) und
+     * reicht damit 500 ms in die Blende und 1000 ms in die Ruhephase hinein.
+     * In diesen 1000 ms wird die Countdown-Ziffer nicht gezeichnet — der
+     * Countdown laeuft weiter, sichtbar wird auf dem ersten Ballwechsel eines
+     * Satzes nur seine letzte Sekunde. Das ist der Preis dafuer, dass beide
+     * an derselben Marke ueber dem Netz stehen, und er ist bewusst bezahlt:
+     * die Ansage soll man lesen koennen.
+     */
+    Renderer.SATZ_ANZEIGE_MS = 1500;
+
+    /**
+     * Steht "SATZ n" gerade im Bild?
+     *
+     * EINZIGE Stelle, die das entscheidet — Blende und Ruhephase zeichnen
+     * beide danach, und die Ziffer laesst sich davon verdraengen.
+     *
+     * @param   {MatchState} match
+     * @returns {boolean}
+     */
+    Renderer.satzAnsageLaeuft = function (match) {
+        return !!match && Uhr.jetzt() < match.satzAnzeigeBis;
+    };
+
     /** Abstand der Audio-tot-Zeile vom unteren Bildrand, in Weltpixeln. */
     Renderer.AUDIOTOT_ABSTAND = 128;
 
@@ -8359,7 +8571,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-21 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-22 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**
@@ -9165,6 +9377,7 @@
          */
         step() {
             const match = this.match;
+            this.satzAnsagePruefen();
 
             switch (match.state) {
                 /* --- GESCHÜTZT: 3 Sekunden absolute Ruhe ---------------------- */
@@ -9446,6 +9659,33 @@
                 && match.state !== STATE.TRANSITION) {
                 this.pruefePlatzwechsel();
             }
+        }
+
+        /**
+         * "SATZ n" ansagen — einmal je Satz, sobald das Bild wieder da ist.
+         *
+         * NICHT waehrend der Punktphase und nicht im Schwarz der Blende: dort
+         * steht entweder die Satzgewinn-Anzeige des VORIGEN Satzes oder gar
+         * nichts. Erst mit der Aufblende auf den neuen Platz.
+         *
+         * Der Vergleich laeuft ueber die Satznummer und nicht ueber einen
+         * Zaehler — damit greift auch das Undo des Operators: nimmt er einen
+         * Satz zurueck, wird dessen Nummer wieder ansagbar.
+         *
+         * Im Einspielen gibt es keine Saetze und deshalb auch keine Ansage.
+         */
+        satzAnsagePruefen() {
+            const m = this.match;
+            if (m.isWarmup || m.satzAngesagt === m.satzNummer()) return;
+            if (m.state === STATE.POINT_SCORED) return;
+            if (m.state === STATE.TRANSITION
+                && m.elapsed() / TIMING.TRANSITION_MS < Renderer.TRANS_DREH_BIS) {
+                return;
+            }
+            m.satzAngesagt = m.satzNummer();
+            m.satzAnzeigeBis = Uhr.jetzt() + Renderer.SATZ_ANZEIGE_MS;
+            Protokoll.schreib('SATZ', `Satz ${m.satzNummer()} beginnt `
+                + `(${PLATZ.name})`);
         }
 
         /**
