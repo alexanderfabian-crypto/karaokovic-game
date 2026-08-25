@@ -37,6 +37,7 @@ const TESTS = [
     ['test-blende.js', 'Uebergangsblende zwischen Ballwechseln (Arena)'],
     ['test-showschliff.js', 'Bennis Reaktion, Countdown, Aufforderung (Arena)'],
     ['test-stimme.js', 'Stimm-Anzeige und ihre eine Quelle (Arena)'],
+    ['test-kulisse.js', 'Abpraller an der Kulisse nach dem Punkt (Arena)'],
     ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz: V41'],
     /* Das Balltempo weicht seit ARENA-3 zwischen den Fassungen ab. Die
        Sendeplatz-Rechnung muss deshalb fuer beide gelten, nicht nur fuer die

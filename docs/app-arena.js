@@ -486,6 +486,17 @@
                33 px Breite auf einem 36 px breiten Pult — genau das Mass, das
                schon einmal von Hand gefunden wurde: mit einem groesseren Kopf
                war er so breit wie das ganze Pult. */
+            /* Raumgrenzen fuer den Abpraller nach dem Punkt (ARENA-17).
+               EINGEMESSEN AM BILD am 25.08.2026, nicht geschaetzt:
+               `hinten` ist die Zeile, ab der die Bodenflaeche beginnt —
+               darueber ist Tribuene. Gefunden ueber die Bodenfarbe
+               (Entwickler-Tests/rueckwand.py, selbstkalibrierend) und mit
+               der Kamera dieses Platzes in Weltmass zurueckgerechnet.
+               `links`/`rechts` folgen aus randLinks/randRechts an der
+               Netzlinie, wo scale3D genau 1 ist.
+               Bildzeile 143 -> Welt-y -54, also 224 px hinter der
+               Grundlinie. Seitlich reicht das Bild links bis an den Rand. */
+            raum: { hinten: -54, links: 8, rechts: 1402 },
             schiedsrichter: { x: 345, schulterY: 240, kopfAnteil: 0.43,
                 /* Leerer Stuhl: hier fehlt ein Koerper, also wird eine
                    Schulter angedeutet. */
@@ -529,6 +540,18 @@
                also nicht zum Messen): Kopf x = 128..158, y = 205..247.
                Der Stuhl steht hier naeher an der Kamera als auf den anderen
                beiden Plaetzen — deshalb der mit Abstand groesste Anteil. */
+            /* Raumgrenzen fuer den Abpraller nach dem Punkt (ARENA-17).
+               EINGEMESSEN AM BILD am 25.08.2026, nicht geschaetzt:
+               `hinten` ist die Zeile, ab der die Bodenflaeche beginnt —
+               darueber ist Tribuene. Gefunden ueber die Bodenfarbe
+               (Entwickler-Tests/rueckwand.py, selbstkalibrierend) und mit
+               der Kamera dieses Platzes in Weltmass zurueckgerechnet.
+               `links`/`rechts` folgen aus randLinks/randRechts an der
+               Netzlinie, wo scale3D genau 1 ist.
+               Bildzeile 270 -> Welt-y -2, also 172 px hinter der
+               Grundlinie. Der engste der drei Raeume: die Kamera steht
+               naeher dran, das Bild zeigt weniger Welt. */
+            raum: { hinten: -2, links: 301, rechts: 1281 },
             schiedsrichter: { x: 146, schulterY: 252, kopfAnteil: 0.87,
                 schultern: false },
         },
@@ -549,6 +572,17 @@
             /* Stuhl RECHTS (y = 202..499), im Bild bereits besetzt — wie
                auf Sand nur der Kopf, keine Schulter.
                Eingemessen: Kopf x = 1322..1350, y = 200..245. */
+            /* Raumgrenzen fuer den Abpraller nach dem Punkt (ARENA-17).
+               EINGEMESSEN AM BILD am 25.08.2026, nicht geschaetzt:
+               `hinten` ist die Zeile, ab der die Bodenflaeche beginnt —
+               darueber ist Tribuene. Gefunden ueber die Bodenfarbe
+               (Entwickler-Tests/rueckwand.py, selbstkalibrierend) und mit
+               der Kamera dieses Platzes in Weltmass zurueckgerechnet.
+               `links`/`rechts` folgen aus randLinks/randRechts an der
+               Netzlinie, wo scale3D genau 1 ist.
+               Bildzeile 202 -> Welt-y -75, also 245 px hinter der
+               Grundlinie — der tiefste Raum der drei. */
+            raum: { hinten: -75, links: 230, rechts: 1330 },
             schiedsrichter: { x: 1336, schulterY: 247, kopfAnteil: 0.67,
                 schultern: false },
         },
@@ -2886,6 +2920,9 @@
             if (b.z <= 0) {
                 b.z = 0;
                 b.bounces++;
+                /* Aufprallwucht, VOR dem Umkehren gemessen — sie entscheidet
+                   weiter unten, ob der Kontakt noch eine Marke wert ist. */
+                const wucht = Math.abs(b.vz);
                 /* Die feste Untergrenze von 4.0 stammte aus der Zeit mit
                    gravity 0.25. Bei der jetzigen Gravitation entspräche sie
                    einer Absprunghöhe von fast 200 px — der Ball wäre nach dem
@@ -2893,17 +2930,45 @@
                    Untergrenze ist deshalb an die Gravitation gekoppelt und
                    sorgt nur noch dafür, dass ein müder Ball nicht am Boden
                    klebt. Bestimmend ist jetzt der Rückprallfaktor. */
+                /* Die Untergrenze gilt NUR im Ballwechsel: sie haelt einen
+                   muede gewordenen Ball spielbar in der Luft. Nach dem Punkt
+                   waere sie das Gegenteil des Gewollten — der Ball huepfte
+                   fuer immer auf der Stelle, statt im Raum zur Ruhe zu
+                   kommen. Im Ballwechsel bleibt die Rechnung unveraendert. */
                 b.vz = Math.max(
                     Math.abs(b.vz) * Physics.BOUNCE_RESTITUTION,
-                    Physics.BOUNCE_MIN_APEX_VZ * b.gravity
+                    match.state === STATE.PLAYING
+                        ? Physics.BOUNCE_MIN_APEX_VZ * b.gravity : 0
                 );
 
                 if (b.bounces === 1) {
                     b.firstBounceInside = this.isInsideCourt(b.x, b.y);
                 }
 
-                if (match.state === STATE.PLAYING || match.state === STATE.POINT_SCORED) {
+                /* Marken: im Ballwechsel immer — auch die Marke IM AUS ist
+                   die Begruendung des Punktes und gehoert ins Bild. Nach dem
+                   Punkt nur noch auf der Platzflaeche: ein abprallender Ball
+                   soll keine Staubflecken auf der Tribuene hinterlassen, das
+                   zerstoert genau die Illusion, die er aufbauen soll.
+
+                   Geprueft wird das VOLLE Rechteck samt Doppelgassen und
+                   nicht isInsideCourt() — jenes meint das Einzelfeld und ist
+                   eine REGEL, hier geht es um den Belag. */
+                const aufDemPlatz = b.x >= COURT_LEFT && b.x <= COURT_RIGHT
+                    && b.y >= COURT_TOP && b.y <= COURT_BOTTOM;
+                if (match.state === STATE.PLAYING
+                    || (match.state === STATE.POINT_SCORED && aufDemPlatz
+                        && wucht > Physics.MARKE_MIN_WUCHT)) {
                     this.bounceMarks.add(b.x, b.y);
+                }
+
+                /* Rollreibung, NUR nach dem Punkt: ohne sie behaelt der Ball
+                   seine Quergeschwindigkeit fuer immer und schiebt zwischen
+                   den Wanden hin und her, statt auszurollen. Im Ballwechsel
+                   bleibt die Physik dadurch bit-identisch zu vorher. */
+                if (match.state !== STATE.PLAYING) {
+                    b.vx *= Physics.KULISSE_REIBUNG;
+                    b.vy *= Physics.KULISSE_REIBUNG;
                 }
 
                 /* --- Urteil am Aufsprung ---------------------------------------
@@ -2924,7 +2989,16 @@
                 }
             }
 
-            if (match.state !== STATE.PLAYING) return;
+            /* --- Raumgrenzen: Abpraller an der Kulisse ------------------------
+             * NUR nach dem Punkt, und deshalb genau hier: ab dieser Zeile
+             * laeuft nichts mehr, was das Spiel entscheidet. Die Reihenfolge
+             * des Ballwechsels (Bewegung -> Aufsprung -> KI -> Schlaeger ->
+             * Seitenwaende -> Aus-Pruefung) bleibt unberuehrt.
+             * ------------------------------------------------------------------ */
+            if (match.state !== STATE.PLAYING) {
+                this.prallAnKulisse();
+                return;
+            }
 
             /* --- Gegner-KI (Alex) ---------------------------------------------
              * Der absichtliche Fehler zog Alex bisher zur FELDMITTE. Das
@@ -3051,6 +3125,55 @@
                     ? (b.y < COURT_TOP)
                     : (b.y > COURT_BOTTOM);
                 if (passed) match.awardPoint(b.lastHitter);
+            }
+        }
+
+        /**
+         * Der Ball prallt an der Kulisse ab — REINE DEKO NACH DEM PUNKT.
+         *
+         * Bis ARENA-16 verschwand ein weit geschlagener Ball einfach aus dem
+         * Bild und war weg. Jetzt trifft er die Tribuene hinter Alex oder
+         * eine der beiden Seiten, kommt gedaempft zurueck und rollt aus. Das
+         * gibt der Arena Tiefe — mehr soll es nicht.
+         *
+         * VIER DINGE, DIE HIER NICHT PASSIEREN, und jedes einzelne mit Grund:
+         *
+         *   - KEINE WERTUNG. Aufgerufen wird die Methode ausschliesslich,
+         *     wenn der Zustand nicht mehr PLAYING ist — der Punkt ist da
+         *     bereits entschieden, Zeitpunkte und Zustandswechsel bleiben
+         *     exakt wie vorher.
+         *   - KEIN TREFFER. Die Schlaegerpruefung liegt hinter dem
+         *     Ausstieg aus update() und laeuft nur im Ballwechsel. Ein
+         *     abprallender Ball ist fuer beide Figuren nicht mehr da.
+         *   - KEINE EIGENE UHR. Invertieren und Daempfen im vorhandenen
+         *     Frame-Schritt, wie jeder andere Stoss in dieser Physik.
+         *   - KEINE PROTOKOLLZEILE. Deko flutet nicht das Protokoll, das
+         *     gerade erst gegen Fluten geschuetzt wurde.
+         *
+         * ACHSEN: die Rueckwand begrenzt die TIEFE (Welt-y), die Seiten die
+         * QUERachse (Welt-x). Die Hoehe (z) sprigt laengst am Boden und
+         * bleibt unangetastet.
+         *
+         * Es gibt bewusst KEINE vordere Wand: dort steht die Kamera. Ein
+         * Ball, der auf den Zuschauer zufliegt, verlaesst das Bild — genau
+         * wie im Fernsehen.
+         */
+        prallAnKulisse() {
+            const b = this.ball;
+            const raum = PLATZ.raum;
+            if (!raum) return;
+
+            const d = Physics.KULISSE_DAEMPFUNG;
+            if (b.x - b.radius < raum.links) {
+                b.x = raum.links + b.radius;
+                b.vx = Math.abs(b.vx) * d;
+            } else if (b.x + b.radius > raum.rechts) {
+                b.x = raum.rechts - b.radius;
+                b.vx = -Math.abs(b.vx) * d;
+            }
+            if (b.y - b.radius < raum.hinten) {
+                b.y = raum.hinten + b.radius;
+                b.vy = Math.abs(b.vy) * d;
             }
         }
 
@@ -3272,6 +3395,40 @@
 
     /** Anteil der Vertikalgeschwindigkeit, der beim Aufsprung erhalten bleibt. */
     Physics.BOUNCE_RESTITUTION = 0.6;
+
+    /**
+     * Anteil der Geschwindigkeit, der beim Abprall an der Kulisse bleibt.
+     *
+     * 0.5 ist der Startwert aus dem Briefing: die Kulisse ist Stoff, Bande
+     * und Tribuene, kein Trampolin. Halb so schnell zurueck liest sich als
+     * "dagegen gelaufen"; deutlich mehr saehe aus wie eine zweite Bande.
+     * REINE OPTIK — an dieser Zahl haengt keine Regel.
+     */
+    Physics.KULISSE_DAEMPFUNG = 0.5;
+
+    /**
+     * Rollreibung je Bodenkontakt, ebenfalls nur nach dem Punkt.
+     *
+     * Ohne sie kommt der Ball nie zur Ruhe: der Aufsprung daempft allein die
+     * HOEHE (BOUNCE_RESTITUTION), quer und laengs liefe er unvermindert
+     * weiter und pendelte zwischen den Waenden. 0.82 je Kontakt heisst nach
+     * fuenf Aufspruengen noch ein Drittel — er rollt sichtbar aus, ohne
+     * abrupt stehenzubleiben.
+     */
+    Physics.KULISSE_REIBUNG = 0.82;
+
+    /**
+     * Ab welcher Aufprallgeschwindigkeit ein Kontakt NACH dem Punkt noch
+     * eine Aufsprungmarke hinterlaesst.
+     *
+     * Ein ausrollender Ball beruehrt den Boden in fast jedem Frame. Ohne
+     * diese Schwelle laege binnen einer Sekunde die volle Zahl von 64 Marken
+     * uebereinander auf demselben Fleck — und die aelteren, noch sichtbaren
+     * Marken des Ballwechsels waeren aus dem Ringspeicher gedraengt.
+     * Im Ballwechsel gilt sie NICHT: dort zaehlt jeder Aufsprung, auch ein
+     * ganz weicher Stoppball.
+     */
+    Physics.MARKE_MIN_WUCHT = 0.5;
 
     /**
      * Untergrenze der Absprunggeschwindigkeit, ausgedrückt als Vielfaches der
