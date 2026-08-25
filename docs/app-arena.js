@@ -2437,40 +2437,6 @@
         }
 
         /**
-         * OHNE AUFRUFER SEIT ARENA-14 — siehe CONFIG.aufschlagToleranzHalbtoene.
-         *
-         * Ersetzt durch die Zuendzone in der Stimmmitte (update(), Block
-         * SERVE_WAIT, Physics.AUFSCHLAG_MITTE_BREITE). Steht noch da, weil
-         * das Entfernen ein eigener Durchgang ist; geprueft wird sie von
-         * nichts mehr, ihr frueherer Test ist test-aufschlag-mitte.js
-         * gewichen.
-         *
-         * Taugt der anliegende Ton zum Ausloesen eines Aufschlags?
-         *
-         * Nur die Tonhoehe wird geprueft, nicht die Lautstaerke — die haengt
-         * an CONFIG.serveVolume und wird getrennt behandelt.
-         *
-         * Wird GAR KEIN Ton erkannt, gilt der Aufschlag weiterhin als gueltig.
-         * Das ist Absicht: ein percussiver Einsatz ohne erkennbare Tonhoehe
-         * soll ausloesen duerfen, und eine strengere Regel haette in einem
-         * lauten Raum eine zweite Sperre eingebaut, die niemand sieht.
-         *
-         * @param   {AudioEngine} engine Eingang des Aufschlaegers
-         * @returns {boolean}
-         */
-        aufschlagTonPasst(engine) {
-            const hz = engine.smoothedPitch;
-            if (!(hz > 0)) return true;
-            /* Umfang des EINGANGS, nicht des Aufschlaegers — dieselbe
-               Unterscheidung wie in triggerServe(): im Arcade-Modus liest
-               serverAudio() bei Alex' Aufschlag Andreas Mikrofon. */
-            const player = (engine === this.audio2) ? PLAYER.ALEX : PLAYER.ANDREA;
-            const r = Physics.voiceRange(player);
-            const spielraum = Math.pow(2, CONFIG.aufschlagToleranzHalbtoene / 12);
-            return hz >= r.min / spielraum && hz <= r.max * spielraum;
-        }
-
-        /**
          * Die Stimmlage dieses Frames festschreiben.
          *
          * EINZIGE Stelle, die `frei` setzt — siehe das Feld `stimme`. Die
@@ -2505,6 +2471,40 @@
             st.pegelReicht = st.pegel >= schwelle;
             st.frei = !gesperrt && st.aktiv && st.zentriert && st.pegelReicht;
             return st;
+        }
+
+        /**
+         * OHNE AUFRUFER SEIT ARENA-14 — siehe CONFIG.aufschlagToleranzHalbtoene.
+         *
+         * Ersetzt durch die Zuendzone in der Stimmmitte (update(), Block
+         * SERVE_WAIT, Physics.AUFSCHLAG_MITTE_BREITE). Steht noch da, weil
+         * das Entfernen ein eigener Durchgang ist; geprueft wird sie von
+         * nichts mehr, ihr frueherer Test ist test-aufschlag-mitte.js
+         * gewichen.
+         *
+         * Taugt der anliegende Ton zum Ausloesen eines Aufschlags?
+         *
+         * Nur die Tonhoehe wird geprueft, nicht die Lautstaerke — die haengt
+         * an CONFIG.serveVolume und wird getrennt behandelt.
+         *
+         * Wird GAR KEIN Ton erkannt, gilt der Aufschlag weiterhin als gueltig.
+         * Das ist Absicht: ein percussiver Einsatz ohne erkennbare Tonhoehe
+         * soll ausloesen duerfen, und eine strengere Regel haette in einem
+         * lauten Raum eine zweite Sperre eingebaut, die niemand sieht.
+         *
+         * @param   {AudioEngine} engine Eingang des Aufschlaegers
+         * @returns {boolean}
+         */
+        aufschlagTonPasst(engine) {
+            const hz = engine.smoothedPitch;
+            if (!(hz > 0)) return true;
+            /* Umfang des EINGANGS, nicht des Aufschlaegers — dieselbe
+               Unterscheidung wie in triggerServe(): im Arcade-Modus liest
+               serverAudio() bei Alex' Aufschlag Andreas Mikrofon. */
+            const player = (engine === this.audio2) ? PLAYER.ALEX : PLAYER.ANDREA;
+            const r = Physics.voiceRange(player);
+            const spielraum = Math.pow(2, CONFIG.aufschlagToleranzHalbtoene / 12);
+            return hz >= r.min / spielraum && hz <= r.max * spielraum;
         }
 
         /**
@@ -5690,6 +5690,119 @@
         }
 
         /**
+         * Stimm-Anzeige unten rechts — ein Teil der SHOW, kein Messgeraet.
+         *
+         * Sie beantwortet fuer das Publikum die Frage, die dieses Spiel
+         * ueberhaupt erst erklaert: was macht die Stimme gerade, und zaehlt
+         * das? Pegel als Balken, Tonhoehe in Hertz und als Notenname, beides
+         * in der Ampelfarbe gruen (zaehlt) oder rot (zaehlt nicht).
+         *
+         * SIE RECHNET NICHTS SELBST. Ob gruen gilt, steht in
+         * `scene.stimme.frei` — derselben Quelle, aus der auch der Ausloeser
+         * des Aufschlags und der Zielzonen-Meter lesen (siehe
+         * Physics.stimmeSetzen). Eine zweite, hier gerechnete Bewertung waere
+         * schlimmer als gar keine Anzeige: sie zeigte gruen, waehrend der
+         * Aufschlag nicht ausloest, und liesse die Saengerin an ihrer Stimme
+         * zweifeln, obwohl die Regel eine andere ist. Dieselbe Lehre wie beim
+         * Oktavfehler.
+         *
+         * NICHT ZU VERWECHSELN mit drawAudioDebug(): das ist das
+         * Operator-Messgeraet, standardmaessig aus, mit Rohwerten und
+         * Schwellen. Dieses hier steht immer im Bild und ist gestaltet wie die
+         * Bauchbinde.
+         *
+         * Der Pegelbalken laeuft LOGARITHMISCH, wie jede Aussteuerungsanzeige:
+         * linear gerechnet klebte der interessante Bereich (Raumgeraeusch bis
+         * Schwelle) im linken Zehntel und der Rest waere Dekoration. Der
+         * Strich im Balken markiert die Schwelle, die in DIESEM Zustand gilt —
+         * sichtbar wird also nicht nur "laut", sondern "laut genug".
+         *
+         * @param {Object} scene
+         */
+        drawStimmAnzeige(scene) {
+            const st = scene.stimme;
+            if (!st) return;
+
+            const ctx = this.ctx;
+            const p = this.viewport.toScreen(
+                VIRTUAL_WIDTH - Renderer.STIMME_RAND - Renderer.STIMME_BREITE,
+                VIRTUAL_HEIGHT - Renderer.STIMME_UNTEN - Renderer.STIMME_HOEHE,
+                this._p1);
+            const s = p.scale;
+            const w = Renderer.STIMME_BREITE * s;
+            const h = Renderer.STIMME_HOEHE * s;
+            const pad = Renderer.HUD_PAD * s;
+            const radius = Renderer.HUD_RADIUS * s;
+            const farbe = st.frei ? Renderer.METER_OK : Renderer.METER_BAD;
+
+            ctx.save();
+            ctx.textBaseline = 'middle';
+
+            /* --- Kasten, in der Sprache der Bauchbinde -------------------- */
+            const grad = ctx.createLinearGradient(p.x, p.y, p.x, p.y + h);
+            grad.addColorStop(0, Renderer.HUD_BG_TOP);
+            grad.addColorStop(1, Renderer.HUD_BG_BOTTOM);
+            this.roundRectPath(p.x, p.y, w, h, radius);
+            ctx.fillStyle = grad;
+            ctx.fill();
+            ctx.strokeStyle = Renderer.HUD_BORDER;
+            ctx.lineWidth = Math.max(1, 1.5 * s);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(p.x + radius, p.y + 1.5 * s);
+            ctx.lineTo(p.x + w - radius, p.y + 1.5 * s);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+            ctx.stroke();
+
+            /* --- Zeile 1: wessen Stimme, und welcher Ton ------------------ */
+            const zeileY = p.y + Renderer.STIMME_ZEILE * s;
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#ffffff';
+            ctx.font = this.font(Renderer.STIMME_NAME_SIZE * s, 'bold', Renderer.HUD_FONT);
+            ctx.fillText(st.spieler === PLAYER.ALEX ? 'ALEX' : 'ANDREA',
+                p.x + pad, zeileY);
+
+            ctx.textAlign = 'right';
+            ctx.fillStyle = farbe;
+            ctx.font = this.font(Renderer.STIMME_HZ_SIZE * s, 'bold', Renderer.HUD_FONT);
+            /* Ohne Ton bleibt die Stelle besetzt statt zu verschwinden — eine
+               Zeile, die im Takt der Atempausen umspringt, ist unruhiger als
+               ein Strich. */
+            ctx.fillText(st.aktiv
+                ? `${Math.round(st.hz)} Hz  ${Renderer.noteName(st.hz)}`
+                : '—  —', p.x + w - pad, zeileY);
+
+            /* --- Zeile 2: Pegelbalken ------------------------------------- */
+            const barX = p.x + pad;
+            const barY = p.y + Renderer.STIMME_BALKEN_Y * s;
+            const barW = w - pad * 2;
+            const barH = Renderer.STIMME_BALKEN_H * s;
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.fillRect(barX, barY, barW, barH);
+
+            const anteil = Renderer.pegelAnteil(st.pegel);
+            if (anteil > 0) {
+                ctx.fillStyle = farbe;
+                ctx.shadowColor = farbe;
+                ctx.shadowBlur = 8 * s;
+                ctx.fillRect(barX, barY, barW * anteil, barH);
+                ctx.shadowBlur = 0;
+            }
+
+            /* Schwellenstrich: ab hier zaehlt es. Er ragt oben und unten
+               ueber den Balken hinaus und bleibt deshalb sichtbar, auch wenn
+               der Pegel ihn ueberlaeuft. */
+            const marke = barX + barW * Renderer.pegelAnteil(st.schwelle);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.fillRect(marke - Math.max(1, s), barY - 3 * s,
+                Math.max(2, 2 * s), barH + 6 * s);
+
+            ctx.restore();
+        }
+
+        /**
          * Große Punktanzeige inkl. "X PUNKTET!".
          * @param {MatchState} match
          * @param {string}     scoreLine
@@ -5806,119 +5919,6 @@
                selben Moment. Weil das Bild am Ende von Schritt 2 vollstaendig
                schwarz ist, sieht man sein Verschwinden nicht. */
             if (prog < B) this.drawTransitionLogo(wisch, dreh);
-            ctx.restore();
-        }
-
-        /**
-         * Stimm-Anzeige unten rechts — ein Teil der SHOW, kein Messgeraet.
-         *
-         * Sie beantwortet fuer das Publikum die Frage, die dieses Spiel
-         * ueberhaupt erst erklaert: was macht die Stimme gerade, und zaehlt
-         * das? Pegel als Balken, Tonhoehe in Hertz und als Notenname, beides
-         * in der Ampelfarbe gruen (zaehlt) oder rot (zaehlt nicht).
-         *
-         * SIE RECHNET NICHTS SELBST. Ob gruen gilt, steht in
-         * `scene.stimme.frei` — derselben Quelle, aus der auch der Ausloeser
-         * des Aufschlags und der Zielzonen-Meter lesen (siehe
-         * Physics.stimmeSetzen). Eine zweite, hier gerechnete Bewertung waere
-         * schlimmer als gar keine Anzeige: sie zeigte gruen, waehrend der
-         * Aufschlag nicht ausloest, und liesse die Saengerin an ihrer Stimme
-         * zweifeln, obwohl die Regel eine andere ist. Dieselbe Lehre wie beim
-         * Oktavfehler.
-         *
-         * NICHT ZU VERWECHSELN mit drawAudioDebug(): das ist das
-         * Operator-Messgeraet, standardmaessig aus, mit Rohwerten und
-         * Schwellen. Dieses hier steht immer im Bild und ist gestaltet wie die
-         * Bauchbinde.
-         *
-         * Der Pegelbalken laeuft LOGARITHMISCH, wie jede Aussteuerungsanzeige:
-         * linear gerechnet klebte der interessante Bereich (Raumgeraeusch bis
-         * Schwelle) im linken Zehntel und der Rest waere Dekoration. Der
-         * Strich im Balken markiert die Schwelle, die in DIESEM Zustand gilt —
-         * sichtbar wird also nicht nur "laut", sondern "laut genug".
-         *
-         * @param {Object} scene
-         */
-        drawStimmAnzeige(scene) {
-            const st = scene.stimme;
-            if (!st) return;
-
-            const ctx = this.ctx;
-            const p = this.viewport.toScreen(
-                VIRTUAL_WIDTH - Renderer.STIMME_RAND - Renderer.STIMME_BREITE,
-                VIRTUAL_HEIGHT - Renderer.STIMME_UNTEN - Renderer.STIMME_HOEHE,
-                this._p1);
-            const s = p.scale;
-            const w = Renderer.STIMME_BREITE * s;
-            const h = Renderer.STIMME_HOEHE * s;
-            const pad = Renderer.HUD_PAD * s;
-            const radius = Renderer.HUD_RADIUS * s;
-            const farbe = st.frei ? Renderer.METER_OK : Renderer.METER_BAD;
-
-            ctx.save();
-            ctx.textBaseline = 'middle';
-
-            /* --- Kasten, in der Sprache der Bauchbinde -------------------- */
-            const grad = ctx.createLinearGradient(p.x, p.y, p.x, p.y + h);
-            grad.addColorStop(0, Renderer.HUD_BG_TOP);
-            grad.addColorStop(1, Renderer.HUD_BG_BOTTOM);
-            this.roundRectPath(p.x, p.y, w, h, radius);
-            ctx.fillStyle = grad;
-            ctx.fill();
-            ctx.strokeStyle = Renderer.HUD_BORDER;
-            ctx.lineWidth = Math.max(1, 1.5 * s);
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.moveTo(p.x + radius, p.y + 1.5 * s);
-            ctx.lineTo(p.x + w - radius, p.y + 1.5 * s);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
-            ctx.stroke();
-
-            /* --- Zeile 1: wessen Stimme, und welcher Ton ------------------ */
-            const zeileY = p.y + Renderer.STIMME_ZEILE * s;
-            ctx.textAlign = 'left';
-            ctx.fillStyle = '#ffffff';
-            ctx.font = this.font(Renderer.STIMME_NAME_SIZE * s, 'bold', Renderer.HUD_FONT);
-            ctx.fillText(st.spieler === PLAYER.ALEX ? 'ALEX' : 'ANDREA',
-                p.x + pad, zeileY);
-
-            ctx.textAlign = 'right';
-            ctx.fillStyle = farbe;
-            ctx.font = this.font(Renderer.STIMME_HZ_SIZE * s, 'bold', Renderer.HUD_FONT);
-            /* Ohne Ton bleibt die Stelle besetzt statt zu verschwinden — eine
-               Zeile, die im Takt der Atempausen umspringt, ist unruhiger als
-               ein Strich. */
-            ctx.fillText(st.aktiv
-                ? `${Math.round(st.hz)} Hz  ${Renderer.noteName(st.hz)}`
-                : '—  —', p.x + w - pad, zeileY);
-
-            /* --- Zeile 2: Pegelbalken ------------------------------------- */
-            const barX = p.x + pad;
-            const barY = p.y + Renderer.STIMME_BALKEN_Y * s;
-            const barW = w - pad * 2;
-            const barH = Renderer.STIMME_BALKEN_H * s;
-
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-            ctx.fillRect(barX, barY, barW, barH);
-
-            const anteil = Renderer.pegelAnteil(st.pegel);
-            if (anteil > 0) {
-                ctx.fillStyle = farbe;
-                ctx.shadowColor = farbe;
-                ctx.shadowBlur = 8 * s;
-                ctx.fillRect(barX, barY, barW * anteil, barH);
-                ctx.shadowBlur = 0;
-            }
-
-            /* Schwellenstrich: ab hier zaehlt es. Er ragt oben und unten
-               ueber den Balken hinaus und bleibt deshalb sichtbar, auch wenn
-               der Pegel ihn ueberlaeuft. */
-            const marke = barX + barW * Renderer.pegelAnteil(st.schwelle);
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-            ctx.fillRect(marke - Math.max(1, s), barY - 3 * s,
-                Math.max(2, 2 * s), barH + 6 * s);
-
             ctx.restore();
         }
 
@@ -7575,7 +7575,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-16 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-17 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**

@@ -311,6 +311,7 @@ check('GEGENPROBE: auch ein viel zu breites Logo wird eingepasst',
  * diesem Fenster vorzeitig aus. Damit KANN nichts vom kommenden Ballwechsel
  * durchblitzen — auch nichts, was spaeter dazukommt. */
 game._scene.andreaX = game.physics.currentX;
+game._scene.stimme = game.physics.stimme;
 
 /**
  * Einen vollstaendigen Frame zeichnen.

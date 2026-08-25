@@ -432,6 +432,77 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     belegten Richtungen „hoch". Ein Ausweichen um das *nötige* Maß statt um
     einen festen Betrag würde es lösen. `test-showschliff.js` führt den Wert
     als Messmarke mit, damit er nicht unbemerkt wächst.
+- **ARENA-17** — Korrektursprint 2. Vier diagnostizierte Fehler und zwei
+  Neubauten.
+  - *Der Aufschlag-Bumper war zu hektisch.* „AUFSCHLAG!" federte mit **380 ms
+    je Schlag** — demselben Wert wie der Countdown, laut Kommentar bewusst.
+    Der Schriftzug ist aber nur ein Viertel so hoch wie die Ziffer und legt in
+    derselben Zeit einen viel kürzeren Weg zurück: zwei Schläge in 760 ms
+    lesen sich als Zucken. Jetzt **620 ms**, bei **unveränderter Kurvenform**.
+    Dafür ist `countdownBounce()` in `Renderer.bounce(alterMs, dauerMs,
+    ueberschwinger)` verallgemeinert; die alte Funktion normierte intern auf
+    `COUNTDOWN_BOUNCE_MS` und wäre nach 380 ms fertig gewesen — ein Plateau
+    statt eines satteren Schlags. `spitzeVon()` leitet die Spitze jeder Kurve
+    daraus ab.
+  - *Das Blendenlogo wurde bei der Rotation beschnitten* — und die Ursache war
+    eine andere als vermutet: **der Beschnitt des Wischs blieb während der
+    ganzen Drehung stehen.** Ein Band von doppelter Logohöhe um die Bildmitte;
+    das quer stehende Logo ragte oben und unten heraus. Nachgemessen: Maske
+    620×273 px bei einem 620 px breiten Logo, das sich um 90° dreht. Die Maske
+    endet jetzt mit dem Wisch. Zusätzlich eine **Größenklemme** über das
+    achsenparallele Umrechteck des gedrehten Logos (5 % Rand zu jeder Kante) —
+    sie greift beim Ersatzschriftzug nie, ist aber die Versicherung für die
+    noch ausstehende Logodatei und als solche geprüft.
+  - *Die Ergebnisgesichter kippten im ersten Blendenframe auf neutral.*
+    `ergebnisZeigt()` lieferte ab dem Zustandswechsel '' — sichtbar, weil der
+    Wisch dort erst zu 60 % deckt. Jetzt hält die Mimik (Spieler **und**
+    Benni) bis `TRANS_WISCH_BIS`, also bis zum vollen Schwarz. Zweiter Teil
+    derselben Ursache: das Einsacken der Verliererin rechnet mit `elapsed()`,
+    und das beginnt in der Blende neu — ohne feste 1 sackte sie im Wisch ein
+    zweites Mal ein.
+  - *Während des vollen Schwarz wird die Welt gar nicht mehr gezeichnet.*
+    `render()` steigt in diesem Fenster vorzeitig aus (`blendeDecktAlles`).
+    Die Isolation ist damit **strukturell statt rechnerisch**: sie hängt nicht
+    mehr daran, dass die Deckkraft wirklich 1,0 ist und dass niemand nach der
+    Blende zeichnet. Gemessen: 1 Rechteck und 1 Text je Frame statt 326.
+    Nebeneffekt: gespart wird die Rechenzeit ausgerechnet in dem Moment, in
+    dem im Hintergrund der Platz gewechselt wird.
+  - *Der Zielzonen-Meter hing bei Alex im Raum.* `ZIELZONE_LINIENABSTAND`
+    wurde als **fester Bildabstand** angewandt — an der fernen Grundlinie ist
+    derselbe Bildabstand perspektivisch das Doppelte. Jetzt skaliert er mit
+    dem **Verhältnis der Tiefenmaßstäbe** zur vorderen Linie: Andrea behält
+    auf allen drei Plätzen ihre eingemessenen 34 px, Alex bekommt 17 / 19 /
+    19 px. Bewusst nicht der rohe `scale3D`: der hätte Andreas Abstand auf
+    51 / 75 / 69 px gezogen, also je Platz einen anderen — der Meter selbst
+    skaliert ja auch nicht mit der Tiefe, er ist eine Anzeige und kein
+    Gegenstand auf dem Platz.
+  - *NEU: die Stimm-Anzeige unten rechts.* Ein gestaltetes Show-Element in der
+    Sprache der Bauchbinde: wessen Stimme gerade zählt, welcher Ton anliegt
+    (Hertz und Notenname), wie laut, und ob das gerade etwas auslöst.
+    **Nicht zu verwechseln mit dem Operator-Messgerät** (`Ctrl+Shift+M`), das
+    unverändert daneben besteht.
+    Die eigentliche Arbeit steckt nicht in der Grafik, sondern in der
+    **einen Quelle**: `Physics.stimme`, geschrieben ausschließlich von
+    `stimmeSetzen()`, gelesen von Auslöser, Zielzonen-Meter und Anzeige. Die
+    Auslösebedingung des Aufschlags stand vorher zweimal ausgeschrieben im
+    Code; jetzt entscheidet `stimme.frei` an genau einer Stelle. Der Balken
+    läuft **logarithmisch** wie jede Aussteuerungsanzeige — linear läge der
+    interessante Bereich (Raumgeräusch bis Schwelle) im linken Zehntel.
+    Die Ecke unten rechts ist damit gestapelt: Anzeige unten (796–880),
+    Audio-tot-Warnung darüber (772), Messanzeige über allem.
+  - *NEU: der Ball prallt an der Kulisse ab.* Nach einem entschiedenen Punkt
+    trifft ein weit geschlagener Ball die Tribüne hinter Alex oder eine der
+    Seiten, kommt mit halber Geschwindigkeit zurück und rollt aus. **Reine
+    Deko**, und die Leitplanken sind einzeln geprüft: kein Einfluss auf
+    Wertung oder Zeitpunkte, kein Treffer mehr möglich, keine eigene Uhr,
+    keine Marken außerhalb der Platzfläche, keine Protokollzeile.
+    Die Grenzen sind **je Platz am Bild eingemessen** (25.08.2026,
+    `Entwickler-Tests/rueckwand.py`, selbstkalibrierend über die Bodenfarbe)
+    und mit der jeweiligen Kamera in Weltmaß zurückgerechnet: Rückwand bei
+    Welt-y −54 (Hart), −2 (Sand), −75 (Rasen), also 224 / 172 / 245 px hinter
+    der Grundlinie. Dazu zwei Dämpfungen, beide nur nach dem Punkt: 0,5 an der
+    Wand und 0,82 Rollreibung je Bodenkontakt — ohne sie pendelte der Ball
+    für immer zwischen den Wänden.
 
 ---
 
@@ -441,8 +512,8 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 25.08.2026: 341 Zusicherungen, alle grün, Exit 0.** 23 Testdateien in
-25 Läufen (zwei laufen doppelt, einmal je Fassung).
+**Stand 25.08.2026: 404 Zusicherungen, alle grün, Exit 0.** 25 Testdateien in
+27 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 | Zusicherungen | Test |
 |---:|---|
@@ -454,8 +525,10 @@ node Entwickler-Tests/alle-tests.js       # ~2 min
 | 8 | `test-regeln.js` — Tennisregeln |
 | 8 | `test-netz-verdeckung.js` — Netz verdeckt den Ball (Sand) |
 | 33 | `test-showschliff.js` — Bennis Reaktion, Countdown, Aufforderung |
-| 21 | `test-blende.js` — Übergangsblende zwischen Ballwechseln |
+| 36 | `test-blende.js` — Übergangsblende zwischen Ballwechseln |
 | 16 | `test-trefferzone.js` — Breite der Trefferzone |
+| 24 | `test-stimme.js` — Stimm-Anzeige und ihre eine Quelle |
+| 19 | `test-kulisse.js` — Abpraller an der Kulisse |
 | 7 | `test-aufschlag.js` — Auslösen des Aufschlags |
 | 7 | `test-duell-aufschlag.js` — Aufschlag im Duell |
 | 6 | `test-tonhoehe.js` — Tonhöhenerkennung |
@@ -567,7 +640,7 @@ ein.
   geschützten Stelle muss zweimal gedacht werden. Solange V41 eingefroren
   bleibt, ist das beherrschbar — es ist aber der Punkt, an dem später ein
   Fehler doppelt gesucht wird.
-- **`app-arena.js` sind 8470 Zeilen in einer IIFE.** Eine Aufteilung ohne
+- **`app-arena.js` sind 9086 Zeilen in einer IIFE.** Eine Aufteilung ohne
   Build-Schritt wäre möglich (mehrere `<script>`-Tags, gemeinsames Namensraum-
   objekt), kostet aber die Kapselung, die die IIFE heute liefert.
 - **Kein `localStorage`, keine Wiederaufnahme.** Ein versehentlicher Reload
