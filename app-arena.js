@@ -5268,7 +5268,12 @@
             const nummer = Math.floor(el / bounceMs);
             let promptScale = 1, promptAlpha = 1, promptSichtbar = true;
             if (nummer < Renderer.SERVE_PROMPT_BOUNCES) {
-                promptScale = Renderer.countdownBounce(el - nummer * bounceMs);
+                /* DIESELBE KURVE wie der Countdown, eigenes TEMPO: der
+                   Ueberschwinger kommt aus COUNTDOWN_OVERSHOOT, die Dauer
+                   aus SERVE_PROMPT_BOUNCE_MS. Eine zweite Kurvenform im
+                   selben Bild waere ein Stilbruch. */
+                promptScale = Renderer.bounce(el - nummer * bounceMs, bounceMs,
+                    Renderer.COUNTDOWN_OVERSHOOT);
             } else {
                 const seit = el - Renderer.SERVE_PROMPT_BOUNCES * bounceMs;
                 promptAlpha = 1 - seit / Renderer.SERVE_PROMPT_FADE_MS;
@@ -5281,8 +5286,10 @@
             ctx.font = this.font(size, 'normal', Renderer.GOTHIC_FONT);
 
             /* Gegen den GROESSTEN Moment geprueft, nicht gegen die
-               Ruhegroesse — dieselbe Ueberlegung wie beim Countdown. */
-            const spitze = Renderer.COUNTDOWN_SPITZE;
+               Ruhegroesse — dieselbe Ueberlegung wie beim Countdown, aber
+               mit der SPITZE DIESER Kurve: die Aufforderung federt seit
+               ARENA-17 weiter aus als die Ziffer. */
+            const spitze = Renderer.SERVE_PROMPT_SPITZE;
             const half = ctx.measureText(Renderer.SERVE_PROMPT_TEXT).width * spitze / 2;
             const box = {
                 left: p.x - half, right: p.x + half,
@@ -6472,33 +6479,50 @@
      */
     Renderer.TRANS_SCHWARZ_AB = 0.35;
 
-    Renderer.countdownBounce = function (alterMs) {
-        const t = Math.min(1, Math.max(0, alterMs / Renderer.COUNTDOWN_BOUNCE_MS));
-        const c1 = Renderer.COUNTDOWN_OVERSHOOT;
+    Renderer.bounce = function (alterMs, dauerMs, ueberschwinger) {
+        const t = Math.min(1, Math.max(0, alterMs / dauerMs));
+        const c1 = ueberschwinger;
         const c3 = c1 + 1;
         const k = t - 1;
         return 1 + c3 * k * k * k + c1 * k * k;
     };
 
     /**
-     * Groesster Faktor, den countdownBounce() ueberhaupt erreicht.
+     * Die Kurve des Countdowns — der Bezugspunkt der Familie.
+     * @param   {number} alterMs
+     * @returns {number}
+     */
+    Renderer.countdownBounce = function (alterMs) {
+        return Renderer.bounce(alterMs, Renderer.COUNTDOWN_BOUNCE_MS,
+            Renderer.COUNTDOWN_OVERSHOOT);
+    };
+
+    /**
+     * Groesster Faktor, den eine Bounce-Kurve erreicht.
      *
      * ABGELEITET, nicht abgeschrieben: wer am Ueberschwinger dreht, aendert
-     * damit automatisch auch die Kollisionspruefung gegen die Koepfe. Genau
+     * damit automatisch die Kollisionspruefung gegen die Koepfe mit. Genau
      * die Kopplung, die sonst beim naechsten Feintuning vergessen wird.
      *
-     * Gerechnet wird sie einmal beim Laden ueber die Kurve selbst — die
-     * geschlossene Loesung waere kuerzer, aber sie muesste bei jeder
-     * Aenderung der Kurve mitgezogen werden.
+     * Gerechnet wird ueber die Kurve selbst — die geschlossene Loesung waere
+     * kuerzer, muesste aber bei jeder Aenderung der Kurve mitgezogen werden.
+     *
+     * @param   {number} dauerMs
+     * @param   {number} ueberschwinger
+     * @returns {number}
      */
-    Renderer.COUNTDOWN_SPITZE = (function () {
+    Renderer.spitzeVon = function (dauerMs, ueberschwinger) {
         let max = 1;
         for (let i = 0; i <= 200; i++) {
-            max = Math.max(max, Renderer.countdownBounce(
-                (i / 200) * Renderer.COUNTDOWN_BOUNCE_MS));
+            max = Math.max(max, Renderer.bounce(
+                (i / 200) * dauerMs, dauerMs, ueberschwinger));
         }
         return max;
-    })();
+    };
+
+    /** Groesster Faktor des Countdowns (siehe spitzeVon). */
+    Renderer.COUNTDOWN_SPITZE = Renderer.spitzeVon(
+        Renderer.COUNTDOWN_BOUNCE_MS, Renderer.COUNTDOWN_OVERSHOOT);
 
 
     /* -------------------------------------------------------------------------
@@ -6553,12 +6577,40 @@
     /**
      * Dauer EINES Bounces der Aufschlag-Aufforderung.
      *
-     * Bewusst derselbe Wert wie beim Countdown und dieselbe Kurve
-     * (countdownBounce): eine zweite Art von Animation im selben Bild waere
-     * ein Stilbruch. Was den Saal zum Hinsehen bringt, soll ueberall gleich
-     * aussehen.
+     * War 380 — derselbe Wert wie beim Countdown. Auf der Wand las sich das
+     * nicht als Schlag, sondern als Zucken: der Schriftzug ist mit 96 px nur
+     * ein Viertel so hoch wie die Ziffer, legt in derselben Zeit also einen
+     * viel kuerzeren Weg zurueck und wirkt dadurch hektisch statt schwer.
+     *
+     * 620 ms geben demselben Weg mehr Zeit: jeder Bounce liest sich als
+     * eigener Einschlag statt als Zucken. Zwei davon plus Ausblende dauern
+     * 1390 ms — die Aufforderung steht ohnehin nur, bis jemand singt.
+     * Startwert, auf der Wand gegenpruefen.
+     *
+     * DIE KURVENFORM BLEIBT DIE DES COUNTDOWNS: derselbe Ueberschwinger
+     * (COUNTDOWN_OVERSHOOT), nur ueber eine laengere Dauer. Entkoppelt ist
+     * das TEMPO, nicht die Form — eine zweite Art von Animation im selben
+     * Bild waere ein Stilbruch. Was den Saal zum Hinsehen bringt, soll aus
+     * einer Familie kommen.
+     *
+     * Renderer.bounce() nimmt die Dauer als Parameter; die frueher noetige
+     * Umrechnung auf die Countdown-Zeitachse entfaellt damit. Ohne eine der
+     * beiden waere die Kurve nach 380 ms fertig und stuende den Rest der
+     * Bounce-Dauer still — ein Plateau statt eines satteren Schlags.
      */
-    Renderer.SERVE_PROMPT_BOUNCE_MS = 380;
+    Renderer.SERVE_PROMPT_BOUNCE_MS = 620;
+
+    /**
+     * Groesster Faktor der Aufforderung.
+     *
+     * Identisch mit dem des Countdowns, weil beide DIESELBE Kurve benutzen —
+     * nur ueber eine andere Dauer. Steht trotzdem als eigener Name da: die
+     * Kollisionsbox der Aufforderung soll ihre eigene Spitze lesen und nicht
+     * die einer anderen Anzeige, falls die Kurven spaeter doch auseinander
+     * gehen.
+     */
+    Renderer.SERVE_PROMPT_SPITZE = Renderer.spitzeVon(
+        Renderer.SERVE_PROMPT_BOUNCE_MS, Renderer.COUNTDOWN_OVERSHOOT);
 
     /**
      * So oft bounct "AUFSCHLAG!", dann ist es weg.

@@ -282,12 +282,21 @@ check('Der Altbefund auf Sand wird nicht groesser (Messmarke, kein Soll)',
  * Gemessen wird an dem, was gezeichnet wird: der Schriftgrad im Text-Log
  * gibt die gefederte Groesse, die Deckkraft den Ausblendteil. */
 const BOUNCE = R.SERVE_PROMPT_BOUNCE_MS;
+/* Der Zeitpunkt der Spitze DIESER Kurve — nicht der des Countdowns. Beide
+   benutzen dieselbe Kurvenform, aber ueber verschiedene Dauern; mit argMax
+   des Countdowns (169 ms) traefe die Probe die Aufforderung im Anstieg und
+   nicht in ihrem groessten Moment. */
+let promptMax = 0, promptArg = 0;
+for (let ms = 0; ms <= BOUNCE; ms++) {
+    const v = R.bounce(ms, BOUNCE, R.COUNTDOWN_OVERSHOOT);
+    if (v > promptMax) { promptMax = v; promptArg = ms; }
+}
 const szene = {
     match,
     andreaX: physics.currentX,
     paddleAndrea: game.paddleAndrea,
     paddleAlex: game.paddleAlex,
-    aufschlagAnzeige: { aktiv: true, zentriert: false, prozent: 0.72 },
+    stimme: { aktiv: true, zentriert: false, prozent: 0.72, frei: false },
     raumpegel: 0.01,
 };
 
@@ -313,9 +322,9 @@ function aufforderung(ms) {
 }
 
 const ruheGroesse = R.SERVE_PROMPT_SIZE * renderer.viewport.scale;
-const spitze1 = aufforderung(argMax);
+const spitze1 = aufforderung(promptArg);
 const tal = aufforderung(BOUNCE - 1);
-const spitze2 = aufforderung(BOUNCE + argMax);
+const spitze2 = aufforderung(BOUNCE + promptArg);
 const nachZwei = aufforderung(2 * BOUNCE + 10);
 const weg = aufforderung(2 * BOUNCE + R.SERVE_PROMPT_FADE_MS + 10);
 const spaeter = aufforderung(6000);
@@ -326,6 +335,36 @@ console.log(`\nAufforderung: 1. Sprung ${spitze1.groesse.toFixed(0)} px, `
 
 check('Sie springt genau zweimal', R.SERVE_PROMPT_BOUNCES === 2,
     `${R.SERVE_PROMPT_BOUNCES}`);
+/* "Dieselbe Kurvenform" heisst: an derselben RELATIVEN Stelle derselbe Wert.
+   Nur die Achse ist gestreckt. Das ist exakt pruefbar und sagt mehr als ein
+   Vergleich der Spitzenwerte. */
+let formAbweichung = 0;
+for (let i = 0; i <= 20; i++) {
+    const x = i / 20;
+    formAbweichung = Math.max(formAbweichung, Math.abs(
+        R.bounce(x * BOUNCE, BOUNCE, R.COUNTDOWN_OVERSHOOT)
+        - R.bounce(x * R.COUNTDOWN_BOUNCE_MS, R.COUNTDOWN_BOUNCE_MS,
+            R.COUNTDOWN_OVERSHOOT)));
+}
+check('Sie benutzt DIESELBE Kurvenform wie der Countdown',
+    formAbweichung < 1e-12,
+    `groesste Abweichung ${formAbweichung.toExponential(1)}`);
+check('Aber ueber eine laengere Dauer — das war das Zucken',
+    BOUNCE > R.COUNTDOWN_BOUNCE_MS,
+    `${BOUNCE} ms je Schlag statt ${R.COUNTDOWN_BOUNCE_MS} ms`);
+check('Und erreicht ihre Spitze entsprechend spaeter',
+    promptArg > argMax * 1.3,
+    `nach ${promptArg} ms statt nach ${argMax} ms`);
+/* Der technische Haken der Entkopplung: die Kurve muss die LAENGERE Dauer
+   kennen. Waere sie weiter auf 380 ms normiert, stuende die Aufforderung
+   nach 380 ms fertig da und die restlichen 240 ms still — ein Plateau
+   statt eines satteren Schlags. */
+const beiKurz = R.bounce(R.COUNTDOWN_BOUNCE_MS, BOUNCE, R.COUNTDOWN_OVERSHOOT);
+check('Nach der Countdown-Dauer ist sie noch mitten in der Bewegung',
+    Math.abs(beiKurz - 1) > 0.05, `Faktor ${beiKurz.toFixed(3)} statt 1.000`);
+check('GEGENPROBE: der Countdown selbst ist dann exakt fertig',
+    R.bounce(R.COUNTDOWN_BOUNCE_MS, R.COUNTDOWN_BOUNCE_MS,
+        R.COUNTDOWN_OVERSHOOT) === 1);
 check('Der erste Sprung geht ueber die Ruhegroesse hinaus',
     spitze1.groesse > ruheGroesse * 1.3,
     `${spitze1.groesse.toFixed(0)} vs. ${ruheGroesse.toFixed(0)} px`);
