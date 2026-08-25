@@ -526,6 +526,13 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     bleiben 20 px auf zwei Köpfe verteilt — siehe die Notiz unter
     „Technische Schuld", das ist Geometrie und kein Fehler.
   - Gilt für Countdown **und** „AUFSCHLAG!" — beide rufen dieselbe Methode.
+  - **Nachgezogen:** der Schriftzug wird jetzt auch *vermessen*, nicht nur
+    mitgemeint. Geprüft war an ihm bisher allein das Zeitverhalten — die
+    auffällige Anzeige (Ziffer, 280 px) hatte ihre Probe, die unauffällige
+    (96 px) keine. Gemessen auf allen drei Plätzen, in Ruhe **und** im
+    Sprung: Überdeckung durchweg 0 px, freies Band 320–343 px gegen 145 px
+    Schrifthöhe, also 174–197 px Reserve. Die Probe steht als 3b in
+    `test-showschliff.js` und schlägt an, sobald `SERVE_PROMPT_SIZE` wächst.
 
 ---
 
@@ -535,7 +542,7 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 25.08.2026: 407 Zusicherungen, alle grün, Exit 0.** 25 Testdateien in
+**Stand 25.08.2026: 410 Zusicherungen, alle grün, Exit 0.** 25 Testdateien in
 27 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 | Zusicherungen | Test |

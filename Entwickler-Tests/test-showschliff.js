@@ -407,6 +407,89 @@ check('Der Zielzonen-Meter laeuft auch dann noch weiter',
 check('Die alten Pulskonstanten sind entfernt',
     R.SERVE_PROMPT_PULSE_MS === undefined && R.SERVE_PROMPT_PULSE_MAX === undefined);
 
+/* --- 3b. Und sie steht auf keinem Platz in einem Gesicht ------------------
+ * Die Aufforderung ruft DIESELBE Methode wie der Countdown (dodgeHeads), war
+ * aber nie gegen die Koepfe VERMESSEN worden — geprueft wurde bisher nur ihr
+ * Zeitverhalten. Genau so entsteht eine Luecke: der Countdown ist mit 280 px
+ * die auffaellige Anzeige und hat seine Probe (2b), die Aufforderung ist mit
+ * 96 px die unauffaellige und hatte keine. Wer spaeter an SERVE_PROMPT_SIZE
+ * dreht, faellt durch kein Netz.
+ *
+ * Gerechnet wird wie in 2b, nur mit dem Kasten aus drawServePrompt(): Breite
+ * aus measureText, Hoehe aus SERVE_PROMPT_SIZE, Ausweichweg immer aus der
+ * Spitze.
+ *
+ * DIE BREITE IST IM STUB GROB (feste Zeichenbreite, unabhaengig vom Grad).
+ * Das genuegt hier, weil sie nur entscheidet, OB ein Kopf ueberhaupt
+ * waagerecht im Weg steht — und bei zwei mittig stehenden Figuren, dem
+ * unguenstigsten Fall, steht er das in jeder Breite. Die Aussage der Probe
+ * ist die SENKRECHTE Lage, und die haengt an SERVE_PROMPT_SIZE und an der
+ * Spitze, nicht an der Schrift.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Die Lage der Aufforderung auf dem aktuellen Platz durchrechnen.
+ * @param {number} faktor Groessenfaktor (1 = Ruhe, SERVE_PROMPT_SPITZE = Sprung)
+ */
+function aufforderungslage(faktor) {
+    const p = renderer.viewport.toScreen(800, game.grenzen.midY, {});
+    const size = R.SERVE_PROMPT_SIZE * p.scale;
+    /* measureText ueber denselben Stub, den auch das Zeichnen benutzt —
+       eine getippte Breite waere eine zweite Quelle. */
+    const halb = zeichenprotokoll().ctx.measureText(R.SERVE_PROMPT_TEXT).width
+        * R.SERVE_PROMPT_SPITZE / 2;
+    const kasten = (f) => ({
+        left: p.x - halb, right: p.x + halb,
+        top: p.y - size * f * 0.5, bottom: p.y + size * f * 0.5,
+        hoehe: size * f,
+    });
+    const koepfe = [
+        renderer.headBox(800, game.paddleAndrea.y),
+        renderer.headBox(800, game.paddleAlex.y),
+    ];
+    /* Gezeichnet wird IMMER mit dem aus der Spitze gerechneten Weg. */
+    const weg = renderer.dodgeHeads(kasten(R.SERVE_PROMPT_SPITZE), koepfe,
+        R.COUNTDOWN_DODGE_MAX * p.scale);
+
+    const box = kasten(faktor);
+    const tiefe = (k) => (box.right < k.left || box.left > k.right) ? 0
+        : Math.max(0, Math.min(box.bottom + weg, k.bottom)
+            - Math.max(box.top + weg, k.top));
+    return {
+        weg, hoehe: box.hoehe, band: koepfe[0].top - koepfe[1].bottom,
+        ueber: tiefe(koepfe[0]) + tiefe(koepfe[1]), oben: box.top + weg,
+    };
+}
+
+const jePlatzPrompt = [];
+for (const name of Object.keys(game.PLAETZE)) {
+    game.setzePlatz(name);
+    const r = aufforderungslage(1);
+    const s = aufforderungslage(R.SERVE_PROMPT_SPITZE);
+    jePlatzPrompt.push({ name, band: r.band, hoehe: s.hoehe, weg: s.weg,
+        ruhe: r.ueber, spitze: s.ueber, oben: s.oben });
+}
+game.setzePlatz(Object.keys(game.PLAETZE)[0]);
+console.log('  "AUFSCHLAG!" je Platz (Band / im Sprung / Ueberdeckung Ruhe + Spitze):');
+jePlatzPrompt.forEach(x => console.log(`    ${x.name.padEnd(6)} ${x.band.toFixed(0)} px / `
+    + `${x.hoehe.toFixed(0)} px / ${x.ruhe.toFixed(0)} px + ${x.spitze.toFixed(0)} px`
+    + `  (Weg ${x.weg.toFixed(0)} px)`));
+
+check('Auf KEINEM Platz verdeckt "AUFSCHLAG!" einen Kopf — auch im Sprung nicht',
+    jePlatzPrompt.every(x => x.ruhe === 0 && x.spitze === 0),
+    jePlatzPrompt.map(x => `${x.name} ${x.ruhe.toFixed(0)}+${x.spitze.toFixed(0)} px`)
+        .join(', '));
+/* Der Unterschied zur Ziffer, und der Grund, warum hier ueberall 0 steht: der
+   Schriftzug ist selbst im Sprung nur gut ein Drittel so hoch wie das freie
+   Band. Auf dem Rasen fehlen der Ziffer 19 px — ihm bleiben ueber 170 uebrig.
+   Steht diese Probe eines Tages auf Rot, ist SERVE_PROMPT_SIZE gewachsen. */
+check('Sie passt dabei mit deutlicher Reserve zwischen die Koepfe',
+    jePlatzPrompt.every(x => x.hoehe < x.band),
+    jePlatzPrompt.map(x => `${x.name} ${(x.band - x.hoehe).toFixed(0)} px frei`).join(', '));
+check('Und bleibt auf jedem Platz im Bild',
+    jePlatzPrompt.every(x => x.oben > 0),
+    jePlatzPrompt.map(x => `${x.name} y ${x.oben.toFixed(0)}`).join(', '));
+
 /* --- 4. Der Einspiel-Hinweis ist verschwunden ---------------------------- *
  * Er stand fest im Bild, obwohl der Operator die Taste ohnehin kennt — und
  * das Publikum sieht eine Tastenbelegung. */
