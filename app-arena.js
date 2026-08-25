@@ -5540,7 +5540,6 @@
         drawTransitionLogo(wisch, dreh) {
             const ctx = this.ctx;
             const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2, this._p1);
-            const breite = Renderer.TRANS_LOGO_BREITE * p.scale;
 
             /* Weicher An- und Auslauf, und nach genau einer Umdrehung exakt
                wieder in Ausgangslage: smoothstep laeuft von 0 auf 1 mit
@@ -5550,17 +5549,60 @@
 
             const img = this.assets.isReady('transition_logo')
                 ? this.assets.get('transition_logo') : null;
-            const hoehe = img ? breite * (img.naturalHeight / img.naturalWidth)
-                : Renderer.TRANS_LOGO_BREITE * 0.22 * p.scale;
+
+            /* Die MASSE des Schriftzugs muessen gemessen werden, nicht
+               geraten: der Beschnitt des Wischs und die Einpassung weiter
+               unten rechnen beide damit, und ein zu klein angenommener
+               Schriftzug wuerde an genau denselben Kanten abgeschnitten, die
+               hier vermieden werden sollen. */
+            let breite = Renderer.TRANS_LOGO_BREITE * p.scale;
+            let hoehe;
+            if (img) {
+                hoehe = breite * (img.naturalHeight / img.naturalWidth);
+            } else {
+                ctx.font = this.font(Renderer.TRANS_TEXT_SIZE * p.scale);
+                breite = ctx.measureText(Renderer.TRANS_TEXT).width;
+                hoehe = Renderer.TRANS_TEXT_SIZE * p.scale;
+            }
+
+            /* --- Einpassung waehrend der Drehung ---------------------------
+             * Ein liegendes Logo braucht ueber Eck mehr Hoehe, als das Bild
+             * hat: 620 px Breite stehen bei 90 Grad senkrecht im Bild, die
+             * Maske des Wischs war aber nur 273 px hoch — genau daran wurde
+             * es oben und unten abgeschnitten.
+             *
+             * Statt die Maske mitzudrehen wird das Logo VERKLEINERT, solange
+             * es quer steht. Die umschliessende Achsenbox eines um `winkel`
+             * gedrehten Rechtecks misst
+             *     b*|cos| + h*|sin|   mal   b*|sin| + h*|cos|
+             * — daraus folgt der Faktor unmittelbar. Er ist stetig in
+             * `winkel` (Sinus und Kosinus sind es), springt also nie, und ist
+             * bei 0 und 360 Grad wieder 1, solange das ruhende Logo ins Bild
+             * passt. Genau deshalb steht hier ein Faktor und keine Fallunter-
+             * scheidung fuer "quer" und "laengs".
+             * -------------------------------------------------------------- */
+            const co = Math.abs(Math.cos(winkel));
+            const si = Math.abs(Math.sin(winkel));
+            const platzB = this.viewport.width * (1 - 2 * Renderer.TRANS_LOGO_RAND);
+            const platzH = this.viewport.height * (1 - 2 * Renderer.TRANS_LOGO_RAND);
+            const faktor = Math.min(1,
+                platzB / (breite * co + hoehe * si),
+                platzH / (breite * si + hoehe * co));
+            breite *= faktor;
+            hoehe *= faktor;
 
             ctx.save();
-            /* Der Wisch ist ein Beschnitt im BILDraum und liegt deshalb vor
-               der Drehung — waehrend gewischt wird, steht das Logo ohnehin
-               gerade (dreh = 0). */
-            const links = p.x - breite / 2;
-            ctx.beginPath();
-            ctx.rect(links, p.y - hoehe, breite * wisch, hoehe * 2);
-            ctx.clip();
+            /* Der Wisch ist ein Beschnitt im BILDraum und gilt deshalb NUR,
+               solange gewischt wird — dann steht das Logo gerade (dreh = 0)
+               und Maske und Logo decken sich. Waehrend der Drehung darf keine
+               Maske mehr stehen: sie wuerde sich nicht mitdrehen und das Logo
+               an ihren waagerechten Kanten abschneiden. Genau das war der
+               Befund aus dem Mitschnitt. */
+            if (wisch < 1) {
+                ctx.beginPath();
+                ctx.rect(p.x - breite / 2, p.y - hoehe, breite * wisch, hoehe * 2);
+                ctx.clip();
+            }
 
             ctx.translate(p.x, p.y);
             ctx.rotate(winkel);
@@ -5569,13 +5611,13 @@
                 ctx.drawImage(img, -breite / 2, -hoehe / 2, breite, hoehe);
             } else {
                 /* Fallback ohne Datei: derselbe Schriftzug wie frueher, mit
-                   identischer Zeitfuehrung — Wisch und Drehung gelten auch
-                   fuer ihn. */
+                   identischer Zeitfuehrung — Wisch, Drehung und Einpassung
+                   gelten auch fuer ihn. */
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.font = this.font(110 * p.scale);
+                ctx.font = this.font(Renderer.TRANS_TEXT_SIZE * p.scale * faktor);
                 ctx.fillStyle = ACCENT_PINK;
-                ctx.fillText('KARAOKOVIC', 0, 0);
+                ctx.fillText(Renderer.TRANS_TEXT, 0, 0);
             }
             ctx.restore();
         }
@@ -6469,6 +6511,21 @@
     Renderer.TRANS_DREH_BIS = 0.75;
     /** Breite des Logos in virtuellen Pixeln. */
     Renderer.TRANS_LOGO_BREITE = 620;
+
+    /**
+     * Sicherheitsrand des Blendenlogos, als Anteil je Bildkante.
+     *
+     * Auch in der unguenstigsten Drehlage bleibt so ringsum Luft. 5 % sind
+     * auf der Arena-Wand rund 460 px am langen Rand — genug, dass das Logo
+     * auch dann nicht an der Kante klebt, wenn der Beamer- oder
+     * LED-Beschnitt ein paar Pixel frisst.
+     */
+    Renderer.TRANS_LOGO_RAND = 0.05;
+
+    /** Ersatzschriftzug, solange die Logodatei fehlt. */
+    Renderer.TRANS_TEXT = 'KARAOKOVIC';
+    /** Schriftgrad des Ersatzschriftzugs in Weltpixeln. */
+    Renderer.TRANS_TEXT_SIZE = 110;
 
     /**
      * Ab wann das Bild vollstaendig schwarz ist.

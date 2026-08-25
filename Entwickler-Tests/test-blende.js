@@ -208,4 +208,102 @@ check('Danach genau einmal — und nicht in jedem Frame erneut',
 check('Der Belagwechsel haengt am selben Moment',
     wechsel === 1, `${wechsel} Mal`);
 
+/* --- 8. Das Logo wird waehrend der Drehung nicht beschnitten -------------
+ * BUEHNENBEFUND: "das Logo wird bei der Rotation oben und unten
+ * abgeschnitten." Zwei Ursachen, beide hier geprueft:
+ *
+ *   a) Die Maske des Wischs blieb waehrend der ganzen Drehung stehen — ein
+ *      Band von doppelter Logohoehe um die Bildmitte. Das quer stehende Logo
+ *      ragte oben und unten heraus und wurde abgeschnitten.
+ *   b) Ein breites Logo braucht ueber Eck mehr Platz, als das Bild hat.
+ *      Dagegen hilft nur, es waehrend der Drehung zu verkleinern.
+ * ------------------------------------------------------------------------ */
+const RAND = R.TRANS_LOGO_RAND;
+
+/**
+ * Umschliessende Achsenbox des gedrehten Logos in diesem Frame.
+ * Gerechnet aus dem, was tatsaechlich angewiesen wurde: Schriftgrad und
+ * Drehwinkel stehen im Zeichenprotokoll.
+ * @param {number} prog
+ */
+function logoBox(prog) {
+    const log = blende(prog);
+    const text = log.texte.find(t => t.text === R.TRANS_TEXT);
+    if (!text) return null;
+    const px = parseFloat(text.font.match(/([\d.]+)px/)[1]);
+    /* Dieselbe Schaetzung wie im Stub: measureText gibt 40 px je Zeichen bei
+       der dort gesetzten Groesse. Verhaeltnisse zaehlen, nicht Absolutwerte. */
+    const breite = R.TRANS_TEXT.length * 40 * (px / R.TRANS_TEXT_SIZE);
+    const hoehe = px;
+    const w = log.winkel.length ? log.winkel[0] : 0;
+    const co = Math.abs(Math.cos(w)), si = Math.abs(Math.sin(w));
+    return { w, breite: breite * co + hoehe * si, hoehe: breite * si + hoehe * co };
+}
+
+let maskeInDrehung = 0, groessteBreite = 0, groessteHoehe = 0;
+for (let i = 0; i <= 40; i++) {
+    const prog = A + (B - A) * (i / 40);
+    const log = blende(prog);
+    if (log.schnitte.length) maskeInDrehung++;
+    const box = logoBox(prog);
+    if (box) {
+        groessteBreite = Math.max(groessteBreite, box.breite);
+        groessteHoehe = Math.max(groessteHoehe, box.hoehe);
+    }
+}
+const platzB = renderer.viewport.width * (1 - 2 * RAND);
+const platzH = renderer.viewport.height * (1 - 2 * RAND);
+console.log(`\nLogo in der Drehung: groesste Ausdehnung `
+    + `${groessteBreite.toFixed(0)}x${groessteHoehe.toFixed(0)} px, `
+    + `erlaubt ${platzB.toFixed(0)}x${platzH.toFixed(0)} px`);
+
+check('Waehrend der Drehung steht keine Maske mehr im Weg',
+    maskeInDrehung === 0, `${maskeInDrehung} von 41 Frames mit Maske`);
+check('Im Wisch dagegen schon — sonst waere er keiner',
+    blende(A / 2).schnitte.length === 1);
+check('Das Logo bleibt in jeder Drehlage im Bild, mit Sicherheitsrand',
+    groessteBreite <= platzB + 0.5 && groessteHoehe <= platzH + 0.5,
+    `${groessteBreite.toFixed(0)}x${groessteHoehe.toFixed(0)} in `
+    + `${platzB.toFixed(0)}x${platzH.toFixed(0)}`);
+
+/* Bei 90 und 270 Grad steht das breite Logo senkrecht — die kritischen
+   Lagen. Und an den Enden der Drehung hat es wieder volle Groesse. */
+const quer = logoBox(A + (B - A) * 0.25);
+const gerade = logoBox(A + 0.001);
+console.log(`  bei 0.5pi: ${quer.hoehe.toFixed(0)} px hoch; `
+    + `bei 0: ${gerade.breite.toFixed(0)} px breit`);
+check('Auch quer (90 Grad) passt es vollstaendig ins Bild',
+    quer.hoehe <= platzH + 0.5, `${quer.hoehe.toFixed(0)} von ${platzH.toFixed(0)}`);
+check('Am Anfang und Ende der Drehung steht es in voller Groesse',
+    Math.abs(logoBox(A + 0.001).breite - logoBox(B - 0.001).breite) < 1,
+    `${logoBox(A + 0.001).breite.toFixed(0)} / ${logoBox(B - 0.001).breite.toFixed(0)}`);
+
+/* Stetig: kein Sprung in der Einpassung, sonst zuckt das Logo. */
+let sprung = 0, vorige = null;
+for (let i = 0; i < 100; i++) {
+    const box = logoBox(A + (B - A) * (i / 100));
+    if (vorige !== null) sprung = Math.max(sprung, Math.abs(box.breite - vorige));
+    vorige = box.breite;
+}
+check('Die Einpassung laeuft stetig, sie springt nicht',
+    sprung < platzB * 0.05, `groesster Schritt ${sprung.toFixed(1)} px`);
+
+/* GEGENPROBE: mit dem Ersatzschriftzug (400 px breit) greift die Klemme gar
+   nicht — er passt in jeder Lage. Sie ist die Versicherung fuer die noch
+   ausstehende Logodatei, und dass sie wirkt, muss geprueft sein, bevor die
+   Datei kommt. Also einmal mit einem absichtlich riesigen Schriftzug. */
+const echteGroesse = R.TRANS_TEXT_SIZE;
+R.TRANS_TEXT_SIZE = 600;                     // ~2200 px breit, viel zu gross
+let maxB = 0, maxH = 0;
+for (let i = 0; i <= 40; i++) {
+    const box = logoBox(A + (B - A) * (i / 41));
+    maxB = Math.max(maxB, box.breite);
+    maxH = Math.max(maxH, box.hoehe);
+}
+R.TRANS_TEXT_SIZE = echteGroesse;
+console.log(`  mit ueberbreitem Logo: ${maxB.toFixed(0)}x${maxH.toFixed(0)} px`);
+check('GEGENPROBE: auch ein viel zu breites Logo wird eingepasst',
+    maxB <= platzB + 1 && maxH <= platzH + 1,
+    `${maxB.toFixed(0)}x${maxH.toFixed(0)} in ${platzB.toFixed(0)}x${platzH.toFixed(0)}`);
+
 summary();
