@@ -490,7 +490,15 @@ class Browser {
             schritte.dannMikrofon = sichtbar('btnMic');
 
             document.getElementById('btnMic').click();
-            await new Promise(r => setTimeout(r, 1500));
+            /* Auf den Schritt WARTEN statt auf die Uhr. Die feste Pause von
+               1500 ms reichte, solange nur ein Chrome lief; im vollen Lauf
+               starten zwei nacheinander, und getUserMedia braucht unter Last
+               laenger. Ergebnis war eine Probe, die je nach Auslastung rot
+               oder gruen war — und eine flackernde Probe ist schlimmer als
+               keine, weil man aufhoert, ihr zu glauben. */
+            for (let i = 0; i < 60 && !sichtbar('btnLow'); i++) {
+                await new Promise(r => setTimeout(r, 100));
+            }
             schritte.dannEinsingen = sichtbar('btnLow');
 
             /* --- Abtastrate ---------------------------------------------
@@ -675,8 +683,12 @@ class Browser {
         if (ruhe.arena) {
             check('Countdown beginnt bei 2 statt bei 3',
                 ruhe.start === 2, `zeigt ${ruhe.start}`);
-            check('Die Ziffer ist 30 % kleiner',
-                ruhe.groesse === 280, `${ruhe.groesse} statt 400`);
+            /* Wegmarken 400 -> 280 -> 88. Der letzte Schritt ist gerechnet,
+               nicht gewaehlt: die Ziffer steht seit ARENA-20 zwischen Alex'
+               Kopf und der Netzoberkante, und auf dem Sandplatz ist dieses
+               Band 150 px hoch. Siehe Renderer.COUNTDOWN_SIZE. */
+            check('Die Ziffer passt zwischen Kopf und Netz',
+                ruhe.groesse === 88, `${ruhe.groesse} statt 280`);
             check('Die Ziffer springt aus dem Nichts und steht am Ende still',
                 Math.abs(ruhe.anfang) < 1e-9 && Math.abs(ruhe.ende - 1) < 1e-9,
                 `${ruhe.anfang} -> ${ruhe.ende}`);

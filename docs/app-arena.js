@@ -464,6 +464,13 @@
             horizont: -281.5, spanne: 659.3, tiefe: 0.3292,
             mitteX: 800, skala: 1.0, figur: 1.0,
             notenTief: 620, notenHoch: 300, tastenNah: 828, tastenFern: 10,
+            /* Oberkante des GEMALTEN Netzes auf der Feldachse — siehe
+               PLAETZE-Kopf. Eingemessen 25.08.2026 ueber das helle
+               Abschlussband: die Helligkeit springt in Zeile 321 von 114 auf
+               192 und erreicht in 323 ihr Maximum (232). Der Netzfuss liegt
+               bei 376, die gerechnete Netzlinie bei 378 — beides trifft sich,
+               die Kamera passt hier zum Bild. */
+            netzOben: 321,
             randRechts: (y) => 1216 + 1.035 * (Math.max(150, Math.min(330, y)) - 150),
             randLinks: () => 8,
             /* Bauchbinde: unten links, wie in der Vorlage gemessen. */
@@ -507,6 +514,11 @@
             horizont: -308.1, spanne: 820.1, tiefe: 0.2752,
             mitteX: 830.75, skala: 1.5921, figur: 0.80,
             notenTief: 660, notenHoch: 330, tastenNah: 832, tastenFern: 22,
+            /* Wie beim Hartplatz eingemessen: Sprung in Zeile 397 (81 -> 172),
+               Maximum in 400 (241). Deckt sich mit `netz.oben` weiter unten,
+               das an derselben Kante gemessen wurde — dort steht die Mitte des
+               Bandes (401), hier seine Oberkante. */
+            netzOben: 397,
             randRechts: (y) => (y <= 200 ? 1385
                 : y >= 280 ? 1596 : 1385 + (y - 200) * (1596 - 1385) / 80),
             randLinks: (y) => (y >= 560 ? 8 : 8 + (560 - y) * 0.6),
@@ -563,6 +575,10 @@
                Plaetzen: der Schiedsrichterstuhl belegt rechts die Hoehe
                y = 202..499, und genau dort haette sie sonst gestanden. */
             notenTief: 620, notenHoch: 560, tastenNah: 800, tastenFern: 20,
+            /* Eingemessen wie die anderen beiden: Sprung in Zeile 385
+               (74 -> 202), Maximum in 386. Der Netzfuss liegt bei 464 und
+               damit exakt auf der gerechneten Netzlinie. */
+            netzOben: 385,
             randRechts: (y) => (y <= 240 ? 1495
                 : y >= 420 ? 1596 : 1495 + (y - 240) * (1596 - 1495) / 180),
             randLinks: (y) => (y <= 240 ? 162
@@ -4774,13 +4790,19 @@
                die Figuren gehen im Schwarz unter und kommen mit dem Platz
                zurueck — ohne Sprung. */
 
+            /* GEZEICHNET WIRD AUF DER STANDLINIE, nicht auf der Grundlinie
+               — siehe Renderer.standY(). Die Schlaegerlinie der Physik bleibt
+               davon unberuehrt; hier aendert sich nur, wo die Figur steht. */
+            const yAndrea = Renderer.standY(scene.paddleAndrea.y, true);
+            const yAlex = Renderer.standY(scene.paddleAlex.y, false);
+
             /* Z-Sortierung: kleineres Y = weiter hinten = zuerst zeichnen. */
-            if (scene.paddleAlex.y < scene.paddleAndrea.y) {
-                this.drawPlayer(scene.paddleAlex.x, scene.paddleAlex.y, false, alexScale, alexEmotion, alexY);
-                this.drawPlayer(scene.andreaX, scene.paddleAndrea.y, true, andreaScale, andreaEmotion, andreaY);
+            if (yAlex < yAndrea) {
+                this.drawPlayer(scene.paddleAlex.x, yAlex, false, alexScale, alexEmotion, alexY);
+                this.drawPlayer(scene.andreaX, yAndrea, true, andreaScale, andreaEmotion, andreaY);
             } else {
-                this.drawPlayer(scene.andreaX, scene.paddleAndrea.y, true, andreaScale, andreaEmotion, andreaY);
-                this.drawPlayer(scene.paddleAlex.x, scene.paddleAlex.y, false, alexScale, alexEmotion, alexY);
+                this.drawPlayer(scene.andreaX, yAndrea, true, andreaScale, andreaEmotion, andreaY);
+                this.drawPlayer(scene.paddleAlex.x, yAlex, false, alexScale, alexEmotion, alexY);
             }
         }
 
@@ -5603,7 +5625,9 @@
          */
         drawServePrompt(scene) {
             const ctx = this.ctx;
-            const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_MID_Y, this._p1);
+            /* PLATZachse, nicht Bildmitte — siehe achseAuf(). Der Wortlaut
+               stand auf Sand und Rasen 31 px links der Mittellinie. */
+            const p = this.achseAuf(COURT_MID_Y, this._p1);
             const size = Renderer.SERVE_PROMPT_SIZE * p.scale;
 
             /* Zwei Bounces, dann weg. Gerechnet aus der Zeit IM ZUSTAND —
@@ -5617,8 +5641,16 @@
                 /* DIESELBE KURVE wie der Countdown, eigenes TEMPO: der
                    Ueberschwinger kommt aus COUNTDOWN_OVERSHOOT, die Dauer
                    aus SERVE_PROMPT_BOUNCE_MS. Eine zweite Kurvenform im
-                   selben Bild waere ein Stilbruch. */
-                promptScale = Renderer.bounce(el - nummer * bounceMs, bounceMs,
+                   selben Bild waere ein Stilbruch.
+
+                   pulse() STATT bounce(): der Einsprung aus dem Nichts wird
+                   uebersprungen. Bis ARENA-19 lief hier bounce(), und die
+                   beginnt bei Schriftgrad 0 — bei JEDEM der beiden Schlaege.
+                   Das Wort verschwand dadurch zwischen ihnen fuer einen
+                   Moment ganz und las sich als zwei getrennte Einblendungen.
+                   Jetzt steht es vom ersten Frame an voll da und bekommt
+                   zwei Schlaege. Siehe Renderer.pulse(). */
+                promptScale = Renderer.pulse(el - nummer * bounceMs, bounceMs,
                     Renderer.COUNTDOWN_OVERSHOOT);
             } else {
                 const seit = el - Renderer.SERVE_PROMPT_BOUNCES * bounceMs;
@@ -5641,10 +5673,8 @@
                 left: p.x - half, right: p.x + half,
                 top: p.y - size * spitze * 0.5, bottom: p.y + size * spitze * 0.5
             };
-            const offset = this.dodgeHeads(box, [
-                this.headBox(scene.andreaX, scene.paddleAndrea.y),
-                this.headBox(scene.paddleAlex.x, scene.paddleAlex.y)
-            ], Renderer.COUNTDOWN_DODGE_MAX * p.scale);
+            const offset = this.dodgeHeads(box, this.kopfBoxen(scene),
+                Renderer.COUNTDOWN_DODGE_MAX * p.scale);
 
             /* EIGENER Stil, nicht der des Countdowns. Dessen schwarze Füllung
                mit Schein funktioniert nur bei 400 px Höhe; bei 96 px auf dem
@@ -5708,11 +5738,43 @@
              * und genau dann wird er gebraucht. */
             const vorn = this.proj.project(VIRTUAL_WIDTH / 2, COURT_BOTTOM, 0, this._p3);
             const tiefenfaktor = linie.scale3D / vorn.scale3D;
-            const barY = linie.y
-                + Renderer.ZIELZONE_LINIENABSTAND * p.scale * tiefenfaktor;
             const barW = Renderer.ZIELZONE_BREITE * p.scale;
             const barH = Renderer.ZIELZONE_HOEHE * p.scale;
-            const barX = p.x - barW / 2;
+            /* MITTE DES PLATZES, nicht Mitte des BILDES. `linie` ist bereits
+               die projizierte Achse — bis ARENA-19 nahm der Meter trotzdem
+               `p.x` und stand auf Sand und Rasen 31 px daneben. Derselbe
+               Fehler wie beim Punkt-Banner, siehe achseAuf(). */
+            const barX = linie.x - barW / 2;
+
+            /* --- Er weicht der FIGUR aus ------------------------------------
+             * Seit die Figuren hinter ihrer Grundlinie stehen (ARENA-20), ist
+             * "knapp unterhalb der Grundlinie" genau die Stelle, an der die
+             * Aufschlaegerin steht. Nachgemessen bleiben unter Andreas
+             * Standlinie noch 146 / 31 / 70 px bis zur Bildkante — auf Sand
+             * ist fuer den Meter (76 px hoch mit Pfeil und Hinweiszeile)
+             * nirgends genug Platz.
+             *
+             * Ein neuer FESTER Abstand kann das nicht loesen: nach oben steht
+             * die Figur, nach unten das Bild zu Ende, und die Verhaeltnisse
+             * kippen von Platz zu Platz. Deshalb dasselbe Verfahren, das seit
+             * ARENA-18 die Countdown-Ziffer aus den Gesichtern haelt — freie
+             * Baender suchen und die Lage nehmen, die der Ruhelage am
+             * naechsten liegt. Die Ruhelage bleibt die eingemessene: knapp
+             * unter der Grundlinie des Aufschlaegers. Steht dort niemand,
+             * aendert sich gar nichts.
+             *
+             * DIE FIGUR IST DAS SPIEL: sie wird nicht verdeckt und sie
+             * verdeckt den Meter nicht. Der Meter geht aus dem Weg. */
+            const nennY = linie.y
+                + Renderer.ZIELZONE_LINIENABSTAND * p.scale * tiefenfaktor;
+            const gruppe = {
+                left: barX, right: barX + barW,
+                top: nennY - Renderer.ZIELZONE_PFEIL * p.scale,
+                bottom: nennY + barH + Renderer.ZIELZONE_HINWEIS * p.scale,
+            };
+            const barY = nennY + this.dodgeHeads(gruppe,
+                this.figurBoxen(scene).concat(this.randBoxen()),
+                Renderer.ZIELZONE_AUSWEICHWEG * p.scale);
             const halb = Physics.AUFSCHLAG_MITTE_BREITE / 2;
             const anz = scene.stimme;
             const zentriert = !!(anz && anz.zentriert);
@@ -5897,7 +5959,12 @@
          */
         drawPointBanner(match, scoreLine) {
             const ctx = this.ctx;
-            const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, Renderer.BANNER_Y, this._p1);
+            /* BUEHNENBEFUND (Live-Test 25.08.2026): "0 – 30 sitzt sichtbar
+               links der Platz-Mittelachse". Der Anker war die Mitte des
+               BILDES; die Mitte des FELDES liegt auf Sand und Rasen 31 px
+               weiter rechts. Beide Zeilen haengen jetzt an derselben
+               projizierten Achse — siehe achseAuf(). */
+            const p = this.achseAuf(COURT_MID_Y, this._p1);
 
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -5927,7 +5994,8 @@
          */
         drawWarmupBanner(match) {
             const ctx = this.ctx;
-            const p = this.viewport.toScreen(VIRTUAL_WIDTH / 2, Renderer.BANNER_Y, this._p1);
+            /* Dieselbe Achse wie das Punkt-Banner — siehe dort. */
+            const p = this.achseAuf(COURT_MID_Y, this._p1);
 
             ctx.save();
             ctx.textAlign = 'center';
@@ -6136,11 +6204,33 @@
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
 
-            const p = FEATURES.LEGACY_OVERLAY_LAYOUT
-                ? { x: (VIRTUAL_WIDTH / 2) * this.viewport.scale,
-                    y: COURT_MID_Y * this.viewport.scale,
-                    scale: this.viewport.scale }
-                : this.viewport.toScreen(VIRTUAL_WIDTH / 2, COURT_MID_Y, this._p1);
+            /* --- MITTIG UEBER DEM NETZ ------------------------------------
+             * BUEHNENBEFUND (Live-Test 25.08.2026): "Die Ziffer steht riesig
+             * in der Bildmitte und verdeckt Alex fast vollstaendig."
+             *
+             * Sie stand auf `COURT_MID_Y` — und das ist eine WELTkoordinate
+             * (500), die hier als BILDkoordinate benutzt wurde. Auf dem Schirm
+             * liegt die Netzlinie je nach Platz bei 378 / 512 / 464; 500 traf
+             * keine davon. Die Ziffer sass irgendwo in der Bildmitte, wich von
+             * dort einem Kopf aus und landete auf dem anderen.
+             *
+             * Jetzt haengt sie an der GEMESSENEN Oberkante des gemalten
+             * Netzes (PLATZ.netzOben) und steht mit ihrer Unterkante um
+             * COUNTDOWN_NETZ_ABSTAND darueber. Waagerecht auf der Platzachse,
+             * nicht in der Bildmitte — siehe achseAuf().
+             *
+             * Bezugspunkt ist die SPITZE der Federung, nicht die Ruhegroesse:
+             * die Unterkante darf auch im groessten Moment das Netz nicht
+             * beruehren.
+             *
+             * FEATURES.LEGACY_OVERLAY_LAYOUT gilt hier nicht mehr. Der
+             * Schalter bewahrte eine falsche Zentrierung des V36-Standes; die
+             * Ziffer haengt jetzt an einer ganz anderen Marke, und einen
+             * Rueckfallpfad auf eine Position, die es nie gab, kann es nicht
+             * geben. Fuer das Gamification-Wort oben wirkt er unveraendert.
+             * -------------------------------------------------------------- */
+            const achse = this.achseAuf(COURT_MID_Y, this._p1);
+            const netzY = this.viewport.toScreen(0, Renderer.NETZ_OBEN, this._p3).y;
 
             /* Drei Größen, und die Unterschiede sind wesentlich:
                `size`     ruhige Endgröße,
@@ -6155,8 +6245,16 @@
                alle hinsehen. Bis ARENA-15 stand hier die ruhige Größe; bei
                einem Überschwinger von 28 % fiel das nicht auf, bei 51 %
                schon. */
-            const size = Renderer.COUNTDOWN_SIZE * p.scale;
+            const size = Renderer.COUNTDOWN_SIZE * achse.scale;
             const spitze = size * Renderer.COUNTDOWN_SPITZE;
+            /* Unterkante im groessten Moment liegt COUNTDOWN_NETZ_ABSTAND
+               ueber dem Netz; daraus folgt die Mitte. */
+            const p = {
+                x: achse.x,
+                y: netzY - Renderer.COUNTDOWN_NETZ_ABSTAND * achse.scale
+                    - spitze * 0.4,
+                scale: achse.scale,
+            };
             const bounce = Renderer.countdownBounce(match.silenceDigitAge());
             const gefedert = size * bounce;
             ctx.font = this.font(gefedert, 'normal', Renderer.GOTHIC_FONT);
@@ -6174,10 +6272,8 @@
             };
             let offset = 0;
             if (scene) {
-                offset = this.dodgeHeads(box, [
-                    this.headBox(scene.andreaX, scene.paddleAndrea.y),
-                    this.headBox(scene.paddleAlex.x, scene.paddleAlex.y)
-                ], Renderer.COUNTDOWN_DODGE_MAX * p.scale);
+                offset = this.dodgeHeads(box, this.kopfBoxen(scene),
+                    Renderer.COUNTDOWN_DODGE_MAX * p.scale);
             }
 
             /* Kontur und Schein federn mit — sonst behielte eine winzige Ziffer
@@ -6267,6 +6363,104 @@
                 top: shoulder - HEAD_BOX.height * s,
                 bottom: shoulder
             };
+        }
+
+        /**
+         * Bildschirmpunkt der PLATZACHSE auf einer Welt-Tiefe.
+         *
+         * BUEHNENBEFUND (Live-Test 25.08.2026, Sandplatz): "0 – 30 sitzt
+         * sichtbar links der Platz-Mittelachse — der Bindestrich steht neben
+         * dem Netzpfosten-Mittelstueck, nicht darauf."
+         *
+         * Die Ursache ist eine Verwechslung von BILDmitte und FELDmitte. Alle
+         * mittigen Anzeigen standen auf `VIRTUAL_WIDTH / 2` = 800, also in der
+         * Mitte des Bildes. Nur auf dem Hartplatz ist das auch die Feldmitte;
+         * Sand liegt bei 830.75 und Rasen bei 831.2 — gemessen, siehe PLAETZE.
+         * Der Versatz betraegt dort 31 px, und in jedem Satz wechselt er.
+         *
+         * Projiziert statt fest, weil die Achse in der Tiefe wandert: sie
+         * laeuft nur an der Netzlinie durch PLATZ.mitteX, davor und dahinter
+         * traegt der Massstab mit.
+         *
+         * @param   {number} weltY
+         * @param   {Object} [out]
+         * @returns {ScreenPoint}
+         */
+        achseAuf(weltY, out) {
+            return this.proj.project(VIRTUAL_WIDTH / 2, weltY, 0, out);
+        }
+
+        /**
+         * Die Kopfboxen BEIDER Figuren, an ihrer Standlinie.
+         *
+         * EINZIGE Stelle, an der die Ausweichlogik erfaehrt, wo Koepfe
+         * stehen. Vorher rechneten Countdown und Aufforderung sie getrennt
+         * aus `paddle.y` — also aus der GRUNDlinie. Seit die Figuren hinter
+         * ihr stehen (siehe Renderer.standY) waeren beide Boxen um die
+         * Standtiefe daneben gelegen, und zwar lautlos: die Ziffer haette
+         * weiter einer Stelle ausgewichen, an der niemand mehr steht.
+         *
+         * @param   {Object} scene
+         * @returns {Array<Object>} [Andrea, Alex]
+         */
+        kopfBoxen(scene) {
+            return [
+                this.headBox(scene.andreaX, Renderer.standY(scene.paddleAndrea.y, true)),
+                this.headBox(scene.paddleAlex.x, Renderer.standY(scene.paddleAlex.y, false)),
+            ];
+        }
+
+        /**
+         * Die vollen Umrisse BEIDER Figuren, an ihrer Standlinie.
+         *
+         * Gegenstueck zu kopfBoxen(): dort geht es um Texte, die einem
+         * GESICHT ausweichen, hier um eine Anzeige, die der ganzen FIGUR
+         * ausweichen muss. Der Zielzonen-Meter ist keine Schrift ueber dem
+         * Platz, sondern ein Bedienelement — halb verdeckt ist er wertlos.
+         *
+         * Senkrecht reicht die Box vom Scheitel (Oberkante der Kopfbox) bis
+         * zu den Fuessen (Standlinie). WAAGERECHT wird die Kopfbreite
+         * benutzt, obwohl der Koerper etwas breiter ist: der Meter ist 240 px
+         * breit und mittig, er ueberlappt eine mittig stehende Figur in jeder
+         * Breite. Entschieden wird hier die SENKRECHTE Lage, und die ist
+         * exakt.
+         *
+         * @param   {Object} scene
+         * @returns {Array<Object>} [Andrea, Alex]
+         */
+        figurBoxen(scene) {
+            return this.kopfBoxen(scene).map((k, i) => ({
+                left: k.left, right: k.right, top: k.top,
+                bottom: this.proj.project(0, Renderer.standY(
+                    i === 0 ? scene.paddleAndrea.y : scene.paddleAlex.y,
+                    i === 0), 0, this._p3).y,
+            }));
+        }
+
+        /**
+         * Der Bildrand als Hindernis — oben und unten.
+         *
+         * Ohne ihn kennt dodgeHeads() nur Figuren und schiebt eine Anzeige im
+         * Zweifel aus dem Bild: gemessen wanderte der Zielzonen-Meter auf Sand
+         * 45 px unter die Bildkante, weil dort unter Andreas Standlinie nur
+         * noch 31 px frei sind. Aus dem Bild geschoben ist genauso unlesbar
+         * wie verdeckt.
+         *
+         * Gerechnet wird gegen das VIRTUELLE Bild (1600x900), nicht gegen den
+         * Canvas: dazwischen liegen die Letterbox-Balken, und die gehoeren
+         * nicht zur Spielflaeche.
+         *
+         * @returns {Array<Object>} zwei Kaesten, ueber und unter dem Bild
+         */
+        randBoxen() {
+            const o = this.viewport.toScreen(0, 0, this._p2);
+            const oben = o.y;
+            const unten = this.viewport.offsetY + VIRTUAL_HEIGHT * o.scale;
+            const weit = 10000 * o.scale;
+            return [
+                { left: -weit, right: weit, top: oben - weit, bottom: oben },
+                { left: -weit, right: weit, top: unten, bottom: unten + weit },
+            ];
         }
 
         /**
@@ -6639,6 +6833,63 @@
     Renderer.BODY_PADDING = {
         body_andrea: { top: 0.114, bottom: 0.085 },
         body_alex: { top: 0.070, bottom: 0.113 }
+    };
+
+    /**
+     * Wie weit HINTER ihrer Grundlinie eine Figur steht, in WELTpixeln.
+     *
+     * BUEHNENBEFUND (Live-Test 25.08.2026, Sandplatz): "Andrea steht sichtbar
+     * im Feld, etwa auf Hoehe der Aufschlaglinie."
+     *
+     * Nachgemessen, und der Befund stimmt — nur nicht seine Erklaerung. Die
+     * Fuesse standen exakt auf der gemalten Grundlinie: die Projektion trifft
+     * sie auf allen drei Plaetzen auf einen Pixel genau (Bildzeile 700/823/783
+     * gegen gerechnete 701/823/782, gemessen am Bild). Was im Feld steht, ist
+     * der KOERPER: er wird von den Fuessen aus nach oben gezeichnet und fuellt
+     * damit zwangslaeufig die Flaeche zwischen Grundlinie und Aufschlaglinie.
+     * Auf Sand reicht er von y 711 bis 823 — die Aufschlaglinie liegt bei 631.
+     *
+     * Der Bodenkontakt ist der einzige Ort, an dem eine 2.5D-Figur ueberhaupt
+     * "steht". Er wandert deshalb hinter die Linie; der Koerper folgt.
+     *
+     * 34 Weltpixel sind rund 1.2 m: COURT_HEIGHT = 660 Weltpixel entsprechen
+     * der Feldlaenge von 23.77 m, also 27.8 Weltpixel je Meter. Ein
+     * Rueckschlaeger steht ein bis zwei Meter hinter der Linie.
+     *
+     * AUF DEM SCHIRM sind das je Platz verschieden viel, weil die Kamera es
+     * ist — genau deshalb steht der Wert in WELTmass und nicht in Bildmass
+     * (Dateikopf: die Welt ist fest, die Kamera wechselt):
+     *   Hart   701 -> 754   (+52 px, danach 146 px bis zur Bildkante)
+     *   Sand   823 -> 869   (+46 px, danach  31 px)   <- der engste
+     *   Rasen  782 -> 830   (+48 px, danach  70 px)
+     * Auf allen dreien bleibt die Figur vollstaendig im Bild. Die 31 px auf
+     * Sand sind zugleich der Grund, warum der Zielzonen-Meter dort nicht mehr
+     * unter ihr Platz hat — siehe drawServePrompt().
+     *
+     * NICHT ZU VERWECHSELN mit der Schlaegerlinie: `paddle.y` bleibt die
+     * Grundlinie, und dort trifft der Ball weiterhin. Eine Figur, die knapp
+     * hinter der Linie steht und nach vorn schlaegt, ist genau das gewuenschte
+     * Bild.
+     */
+    Renderer.STANDLINIE_TIEFE = 34;
+
+    /**
+     * Welt-y, auf dem eine Figur GEZEICHNET wird.
+     *
+     * EINZIGE Stelle, die aus der Grundlinie die Standlinie macht. Alles, was
+     * die Figur im Bild verortet — die Figur selbst, ihre Kopfbox fuer die
+     * Ausweichlogik, der Zielzonen-Meter — liest von hier. Zwei getrennte
+     * Rechnungen waeren genau der Fehler, den die Ein-Quellen-Regel meint:
+     * eine Ziffer, die einem Kopf ausweicht, der 47 px weiter oben gar nicht
+     * mehr steht.
+     *
+     * @param   {number}  weltY     Grundlinie (paddle.y)
+     * @param   {boolean} istAndrea true = untere Figur (nach vorn zurueck)
+     * @returns {number} Welt-y der Standlinie
+     */
+    Renderer.standY = function (weltY, istAndrea) {
+        return weltY + (istAndrea ? Renderer.STANDLINIE_TIEFE
+            : -Renderer.STANDLINIE_TIEFE);
     };
 
     /* -------------------------------------------------------------------------
@@ -7038,8 +7289,44 @@
      * Ruhephase: Countdown und Neon-Schein
      * ---------------------------------------------------------------------- */
 
-    /** Schriftgröße des Countdowns in virtuellen Pixeln. War 400 (−30 %). */
-    Renderer.COUNTDOWN_SIZE = 280;
+    /**
+     * Schriftgroesse des Countdowns in virtuellen Pixeln.
+     *
+     * Wegmarken: 400, dann 280 (−30 %), jetzt 88. Der letzte Schritt ist
+     * keine Geschmacksfrage, sondern GERECHNET aus der Stelle, an der die
+     * Ziffer seit ARENA-20 steht: zwischen Alex' Kopf und der Oberkante des
+     * Netzes. Dieses Band ist eingemessen und je Platz verschieden:
+     *
+     *   Platz   Alex Kopfunterkante   Netzoberkante   freies Band
+     *   HART            127                 321          194 px
+     *   SAND            247                 397          150 px   <- bindend
+     *   RASEN           186                 385          199 px
+     *
+     * Der Sandplatz entscheidet. Von seinen 150 px gehen zweimal
+     * COUNTDOWN_NETZ_ABSTAND ab (16 px zum Netz, ebenso viel Reserve zum
+     * Kopf), bleiben 118 px. Die Ziffer belegt im GROESSTEN Moment
+     * 0.8 · Groesse · COUNTDOWN_SPITZE — bei 88 sind das 107 px, es bleiben
+     * 11 px Luft. Bei 96 waeren es 116 und damit nicht einmal 2 px.
+     *
+     * WAS DAS KOSTET, und es steht hier statt in einer Fussnote: die Ziffer
+     * ist damit kleiner als "AUFSCHLAG!" (96) und kreuzt auf dem Sandplatz im
+     * Ruhezustand Alex' Schienbeine — sein KOPF bleibt frei, sein Koerper
+     * nicht ganz. Beides zugleich geht geometrisch nicht: zwischen seinen
+     * Fuessen und dem Netz sind auf Sand nur 76 px, das ergaebe Groesse 36 und
+     * waere auf der Wand unlesbar. Wer die Ziffer groesser will, muss sie
+     * woanders hinstellen — nicht diesen Wert erhoehen.
+     */
+    Renderer.COUNTDOWN_SIZE = 88;
+
+    /**
+     * Abstand der Ziffer-Unterkante zur Netzoberkante, in virtuellen Pixeln.
+     *
+     * Gilt im GROESSTEN Moment der Federung — in Ruhe ist der Abstand
+     * entsprechend groesser. 16 px sind auf der Wand rund ein Prozent der
+     * Bildhoehe: genug, dass die Ziffer sichtbar ueber dem Netz schwebt und
+     * nicht darauf sitzt.
+     */
+    Renderer.COUNTDOWN_NETZ_ABSTAND = 16;
 
     /** Dauer des Einsprungs einer Ziffer in Millisekunden. */
     Renderer.COUNTDOWN_BOUNCE_MS = 380;
@@ -7141,6 +7428,41 @@
     };
 
     /**
+     * Derselbe Schlag, aber OHNE Einsprung: von 1 auf die Spitze und
+     * zurueck auf 1.
+     *
+     * BUEHNENBEFUND (Live-Test 25.08.2026): "AUFSCHLAG! blendet zweimal auf
+     * und wirkt wie zwei getrennte Einblendungen desselben Worts."
+     *
+     * Nachgerechnet, und die Ursache ist NICHT die Deckkraft — die stand
+     * waehrend beider Schlaege bereits auf 1. Es ist die GROESSE: bounce()
+     * beginnt bauartbedingt bei exakt 0 (t = 0 ergibt 1 - c3 + c1 = 0), und
+     * das gilt fuer JEDEN Schlag. Der zweite begann also wieder bei
+     * Schriftgrad 0, und ein Wort der Groesse 0 ist unsichtbar. Was wie eine
+     * Blende aussah, war ein Schrumpfen auf nichts.
+     *
+     * Diese Kurve ueberspringt genau den Anlauf. Der Nulldurchgang von
+     * bounce() liegt bei k = -c1/c3, also bei t = 1/(u+1) — ABGELEITET aus
+     * dem Ueberschwinger und nicht abgeschrieben, damit ein anderer
+     * Ueberschwinger die Kurve automatisch mitzieht. Ab dort laeuft dieselbe
+     * Kurve, nur gestaucht: Anfang 1, Spitze unveraendert, Ende 1.
+     *
+     * Die Spitze ist damit dieselbe wie bei bounce() — spitzeVon() gilt fuer
+     * beide, und die Kollisionsrechnung braucht keinen zweiten Wert.
+     *
+     * @param   {number} alterMs
+     * @param   {number} dauerMs
+     * @param   {number} ueberschwinger
+     * @returns {number}
+     */
+    Renderer.pulse = function (alterMs, dauerMs, ueberschwinger) {
+        const t = Math.min(1, Math.max(0, alterMs / dauerMs));
+        const start = 1 / (ueberschwinger + 1);
+        return Renderer.bounce((start + (1 - start) * t) * dauerMs,
+            dauerMs, ueberschwinger);
+    };
+
+    /**
      * Die Kurve des Countdowns — der Bezugspunkt der Familie.
      * @param   {number} alterMs
      * @returns {number}
@@ -7224,6 +7546,40 @@
      * aber sichtbar daran.
      */
     Renderer.ZIELZONE_LINIENABSTAND = 34;
+
+    /**
+     * Hoehe des Tracer-Pfeils UEBER dem Balken, in virtuellen Pixeln.
+     *
+     * Steht als Konstante da, weil die Ausweichrechnung die volle Ausdehnung
+     * der Gruppe braucht — mit der blossen Balkenhoehe geriete der Pfeil
+     * hinter die Figur, und ausgerechnet er zeigt den Ton an. Der Wert ist
+     * derselbe, mit dem der Pfeil gezeichnet wird (13 px Spitze).
+     */
+    Renderer.ZIELZONE_PFEIL = 13;
+
+    /**
+     * Groesster Ausweichweg des Meters, in virtuellen Pixeln.
+     *
+     * Deutlich groesser als der der Ziffer (COUNTDOWN_DODGE_MAX = 220): der
+     * Meter muss im Zweifel ueber eine ganze Figur hinweg, und die ist auf
+     * Sand 226 px hoch. Gemessen wird der noetige Weg — hier steht nur die
+     * Obergrenze, damit er nicht unbegrenzt wandern kann.
+     *
+     * 400 px reichen fuer den weitesten gemessenen Fall (Sand, Andrea am
+     * Aufschlag: 277 px nach oben) mit Reserve und bleiben unter der halben
+     * Bildhoehe.
+     */
+    Renderer.ZIELZONE_AUSWEICHWEG = 400;
+
+    /**
+     * Wie weit die Gruppe UNTER dem Balken reicht, in virtuellen Pixeln.
+     *
+     * Abstand der Hinweiszeile (30) plus ihre halbe Schrifthoehe (17). Sie
+     * erscheint nur bei einem abgewiesenen Versuch, gehoert aber trotzdem in
+     * die Ausweichrechnung: sonst weicht der Meter aus und die Zeile bleibt
+     * auf der Figur liegen — genau dann, wenn sie gelesen werden muss.
+     */
+    Renderer.ZIELZONE_HINWEIS = 47;
     /* Eingemessen an der VORDEREN Grundlinie. An der hinteren wird der Wert
        mit dem Verhaeltnis der Tiefenmassstaebe verrechnet — siehe
        drawServePrompt. Wer hier dreht, veraendert beide Seiten zugleich. */
@@ -7740,7 +8096,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-19 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-20 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**
@@ -9112,6 +9468,11 @@
 
         /* Netzhoehe auf dem Schirm — Anker der Banner zwischen den Punkten. */
         Renderer.BANNER_Y = PLATZ.horizont + PLATZ.spanne;
+
+        /* Oberkante des gemalten Netzes — Anker der Countdown-Ziffer.
+           Wie BANNER_Y eine reine Kameragroesse: sie wechselt mit dem Platz
+           und wird nirgends sonst gerechnet. */
+        Renderer.NETZ_OBEN = PLATZ.netzOben;
 
         Renderer.PITCH_NOTE_Y_LOW = PLATZ.notenTief;
         Renderer.PITCH_NOTE_Y_HIGH = PLATZ.notenHoch;

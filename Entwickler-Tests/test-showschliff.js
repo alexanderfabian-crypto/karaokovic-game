@@ -145,50 +145,68 @@ check('GEGENPROBE: der alte Wert federte spuerbar schwaecher',
     gemesseneSpitze > altSpitze + 0.15,
     `${gemesseneSpitze.toFixed(3)} statt ${altSpitze.toFixed(3)}`);
 
-/* --- 2b. Und bleibt trotzdem von den Gesichtern weg ----------------------
- * Die Ziffer steht in der Bildmitte — genau dort, wo auch Andreas Kopf steht,
- * wenn sie mittig singt. Sie weicht deshalb aus (dodgeHeads).
+/* --- 2b. Sie steht ueber dem Netz und verdeckt niemanden -----------------
+ * BUEHNENBEFUND (Live-Test 25.08.2026): "Die Ziffer steht riesig in der
+ * Bildmitte und verdeckt Alex fast vollstaendig."
  *
- * ARENA-17 rechnet den Ausweichweg aus der TATSAECHLICHEN Ueberlappung statt
- * ihn fest vorzugeben. Der feste Weg von 170 px war fuer die Geometrie EINES
- * Platzes eingemessen und konnte auf den anderen beiden nicht stimmen: auf
- * Sand schob er die ruhende Ziffer 42 px auf die hintere Figur, und zwar in
- * jedem Satz, weil der Platz mit dem Satz wechselt.
+ * Sie hing an `COURT_MID_Y` — einer WELTkoordinate (500), die als
+ * BILDkoordinate benutzt wurde. Die Netzlinie liegt auf dem Schirm je nach
+ * Platz bei 378 / 512 / 464; 500 traf keine davon. Von dort wich die Ziffer
+ * dem einen Kopf aus und landete auf dem anderen.
  *
- * Drei Dinge muessen stimmen, und alle drei brauchen die echten Bildmasse der
- * Koepfe — der Node-Test kann das, weil headBox() rein geometrisch rechnet:
+ * Seit ARENA-20 haengt sie an der eingemessenen Oberkante des GEMALTEN
+ * Netzes und ist so bemessen, dass sie zwischen Alex' Kopf und das Netz
+ * passt. Vier Dinge muessen stimmen, und alle vier brauchen die echten
+ * Bildmasse — der Node-Test kann das, weil headBox() rein geometrisch
+ * rechnet:
  *
- *   - Der Weg wird aus der SPITZE gerechnet, nicht aus der jeweiligen Groesse.
- *     Nur so ist er waehrend der ganzen Federung derselbe; sonst spraenge die
- *     Ziffer genau im Einsprung zur Seite.
- *   - In Ruhe — also fast die gesamte Anzeigedauer — steht sie ueberall frei.
- *   - Im groessten Moment ebenfalls, SOWEIT die Geometrie es hergibt. Auf dem
- *     Rasenplatz gibt sie es nicht her, und das ist beziffert statt beschoenigt.
+ *   - Sie steht auf der PLATZachse, nicht in der Bildmitte.
+ *   - Ihre Unterkante bleibt ueber dem Netz, auch im groessten Moment.
+ *   - Sie beruehrt auf keinem Platz eine Kopfbox, in Ruhe wie im Einsprung.
+ *   - Ausweichen muss sie dafuer NICHT mehr. Die Logik bleibt als
+ *     Sicherheitsnetz, aber sie schlaegt an dieser Position nicht mehr an.
  * ------------------------------------------------------------------------ */
+
+/** Die Szene, die der Renderer fuer Kopf- und Figurboxen braucht. */
+function boxenSzene() {
+    return {
+        match, andreaX: 800,
+        paddleAndrea: game.paddleAndrea, paddleAlex: game.paddleAlex,
+        stimme: physics.stimme, abweisung: physics.abweisung,
+    };
+}
 
 /**
  * Die Lage der Ziffer auf dem aktuellen Platz durchrechnen.
+ *
+ * Rechnet Schritt fuer Schritt nach, was drawSilenceCheck() tut — Achse,
+ * Netzanker, Kasten aus der Spitze, Ausweichweg.
+ *
  * @param {number} faktor Groessenfaktor (1 = Ruhe, COUNTDOWN_SPITZE = Einsprung)
  */
 function ziffernlage(faktor) {
-    const p = renderer.viewport.toScreen(800, game.grenzen.midY, {});
+    const achse = renderer.proj.project(800, game.grenzen.midY, 0, {});
+    const size = R.COUNTDOWN_SIZE * achse.scale;
+    const spitze = size * R.COUNTDOWN_SPITZE;
+    const netzY = renderer.viewport.toScreen(0, R.NETZ_OBEN, {}).y;
+    /* Unterkante im groessten Moment liegt COUNTDOWN_NETZ_ABSTAND ueber dem
+       Netz — daraus die Mitte. */
+    const cy = netzY - R.COUNTDOWN_NETZ_ABSTAND * achse.scale - spitze * 0.4;
+
     const kasten = (f) => {
-        const gross = R.COUNTDOWN_SIZE * p.scale * f;
+        const gross = size * f;
         return {
-            left: p.x - gross * 0.4, right: p.x + gross * 0.4,
-            top: p.y - gross * 0.4, bottom: p.y + gross * 0.4,
+            left: achse.x - gross * 0.4, right: achse.x + gross * 0.4,
+            top: cy - gross * 0.4, bottom: cy + gross * 0.4,
             hoehe: gross * 0.8,
         };
     };
     /* Beide Figuren mittig — der unguenstigste Fall: dann stehen Ziffer und
        Kopf uebereinander. */
-    const koepfe = [
-        renderer.headBox(800, game.paddleAndrea.y),
-        renderer.headBox(800, game.paddleAlex.y),
-    ];
+    const koepfe = renderer.kopfBoxen(boxenSzene());
     /* Gezeichnet wird IMMER mit dem aus der Spitze gerechneten Weg. */
     const weg = renderer.dodgeHeads(kasten(R.COUNTDOWN_SPITZE), koepfe,
-        R.COUNTDOWN_DODGE_MAX * p.scale);
+        R.COUNTDOWN_DODGE_MAX * achse.scale);
 
     const box = kasten(faktor);
     const tiefe = (k) => {
@@ -197,12 +215,11 @@ function ziffernlage(faktor) {
             - Math.max(box.top + weg, k.top));
     };
     return {
-        weg, hoehe: box.hoehe,
+        weg, hoehe: box.hoehe, achseX: achse.x, netzY,
         band: koepfe[0].top - koepfe[1].bottom,
-        kopfhoehe: koepfe[0].bottom - koepfe[0].top,
         inAndrea: tiefe(koepfe[0]),
         inAlex: tiefe(koepfe[1]),
-        obenImBild: box.top + weg,
+        unten: box.bottom + weg, oben: box.top + weg,
     };
 }
 
@@ -210,33 +227,33 @@ const lageRuhe = ziffernlage(1);
 const lageSpitze = ziffernlage(R.COUNTDOWN_SPITZE);
 
 console.log(`\nZiffer: Ruhe ${lageRuhe.hoehe.toFixed(0)} px, Einsprung `
-    + `${lageSpitze.hoehe.toFixed(0)} px, freies Band ${lageRuhe.band.toFixed(0)} px, `
+    + `${lageSpitze.hoehe.toFixed(0)} px, Netzoberkante ${lageRuhe.netzY.toFixed(0)}, `
     + `Ausweichen ${lageSpitze.weg.toFixed(0)} px`);
 
-check('Sie weicht Andreas Kopf ueberhaupt aus', lageSpitze.weg !== 0,
+check('Sie muss keinem Kopf mehr ausweichen', lageSpitze.weg === 0,
     `${lageSpitze.weg.toFixed(0)} px`);
-check('Der Weg ist ueber die ganze Federung derselbe',
-    lageRuhe.weg === lageSpitze.weg,
-    `${lageRuhe.weg.toFixed(1)} / ${lageSpitze.weg.toFixed(1)}`);
 check('In Ruhe steht sie voellig frei',
     lageRuhe.inAndrea === 0 && lageRuhe.inAlex === 0,
     `${lageRuhe.inAndrea.toFixed(1)} / ${lageRuhe.inAlex.toFixed(1)} px`);
 check('Und im Einsprung auf dem Referenzplatz ebenfalls',
     lageSpitze.inAndrea === 0 && lageSpitze.inAlex === 0,
     `${lageSpitze.inAndrea.toFixed(1)} / ${lageSpitze.inAlex.toFixed(1)} px`);
-check('Sie bleibt dabei im Bild', lageSpitze.obenImBild > 0,
-    `Oberkante bei y ${lageSpitze.obenImBild.toFixed(0)}`);
+check('Sie bleibt dabei im Bild', lageSpitze.oben > 0,
+    `Oberkante bei y ${lageSpitze.oben.toFixed(0)}`);
 
-/* GEGENPROBE gegen den alten, FESTEN Ausweichweg — und zwar auf dem SAND-
-   platz, wo der Befund herkommt: derselbe Kasten, dieselben Koepfe, aber die
-   Lage wird nicht gerechnet, sondern auf 170 px gesetzt. Genau so lief es bis
-   ARENA-16. */
+/* GEGENPROBE gegen den alten Anker — mit den ZAHLEN VON DAMALS und nicht mit
+   den heutigen. Eine Gegenprobe, die aus aktuellen Konstanten rechnet, ist
+   keine: sie wuerde beim naechsten Feintuning still ihre eigene Aussage
+   verlieren. Damals: Schriftgrad 280, Mitte auf Bildkoordinate 500, fester
+   Ausweichweg 170 px nach oben. Geprueft auf dem SANDplatz, wo der Befund
+   herkommt. */
 game.setzePlatz('SAND');
 const altTiefe = (() => {
     const p = renderer.viewport.toScreen(800, game.grenzen.midY, {});
     const altWeg = -170 * p.scale;
-    const gross = R.COUNTDOWN_SIZE * p.scale;
+    const gross = 280 * p.scale;
     const box = { top: p.y - gross * 0.4, bottom: p.y + gross * 0.4 };
+    /* Kopfbox an der GRUNDlinie — die Figuren standen damals dort. */
     const k = renderer.headBox(800, game.paddleAlex.y);
     return Math.max(0, Math.min(box.bottom + altWeg, k.bottom)
         - Math.max(box.top + altWeg, k.top));
@@ -254,39 +271,35 @@ for (const name of Object.keys(game.PLAETZE)) {
     const l = ziffernlage(R.COUNTDOWN_SPITZE);
     jePlatz.push({ name, ruhe: r.inAndrea + r.inAlex,
         spitze: l.inAndrea + l.inAlex, band: r.band, hoehe: l.hoehe,
-        weg: l.weg, oben: l.obenImBild });
+        weg: l.weg, oben: l.oben, netzLuft: l.netzY - l.unten,
+        achse: r.achseX, mitteX: game.PLAETZE[name].mitteX });
 }
 game.setzePlatz(Object.keys(game.PLAETZE)[0]);
-console.log('  je Platz (Band / Ziffer im Einsprung / Ueberdeckung Ruhe + Spitze):');
+console.log('  je Platz (Band Kopf..Netz / Ziffer im Einsprung / Ueberdeckung Ruhe + Spitze / Luft zum Netz):');
 jePlatz.forEach(x => console.log(`    ${x.name.padEnd(6)} ${x.band.toFixed(0)} px / `
-    + `${x.hoehe.toFixed(0)} px / ${x.ruhe.toFixed(0)} px + ${x.spitze.toFixed(0)} px`
-    + `  (Weg ${x.weg.toFixed(0)} px)`));
+    + `${x.hoehe.toFixed(0)} px / ${x.ruhe.toFixed(0)} px + ${x.spitze.toFixed(0)} px / `
+    + `${x.netzLuft.toFixed(0)} px  (Weg ${x.weg.toFixed(0)} px)`));
 
 check('Auf KEINEM Platz verdeckt die ruhige Ziffer einen Kopf',
     jePlatz.every(x => x.ruhe === 0),
     jePlatz.map(x => `${x.name} ${x.ruhe.toFixed(0)} px`).join(', '));
+check('Auch im Einsprung nicht — auf keinem der drei',
+    jePlatz.every(x => x.spitze === 0),
+    jePlatz.map(x => `${x.name} ${x.spitze.toFixed(0)} px`).join(', '));
 check('Die Ziffer bleibt auf jedem Platz im Bild',
     jePlatz.every(x => x.oben > 0),
     jePlatz.map(x => `${x.name} y ${x.oben.toFixed(0)}`).join(', '));
-
-/* WO ES NICHT AUFGEHT, steht die Zahl. Auf dem Rasenplatz ist das freie Band
-   320 px hoch und die Ziffer im Einsprung 339 px — 19 px zu viel. Zentrieren
-   teilt sie gleichmaessig auf beide Koepfe auf; das ist die kleinstmoegliche
-   Stoerung, aber eben nicht null. Zu beseitigen waere sie nur ueber
-   COUNTDOWN_SIZE (264 statt 280) oder COUNTDOWN_OVERSHOOT (4.3 statt 5.0) —
-   beides Werte, die auf der Buehne bewusst so gewaehlt wurden. */
-const eng = jePlatz.filter(x => x.hoehe > x.band);
-console.log(`  zu enge Plaetze: ${eng.map(x => `${x.name} (fehlen `
-    + `${(x.hoehe - x.band).toFixed(0)} px)`).join(', ') || 'keiner'}`);
-check('Wo das Band reicht, ist auch der Einsprung frei',
-    jePlatz.filter(x => x.hoehe <= x.band).every(x => x.spitze === 0),
-    jePlatz.filter(x => x.hoehe <= x.band)
-        .map(x => `${x.name} ${x.spitze.toFixed(0)} px`).join(', '));
-check('Wo es nicht reicht, wird die Stoerung geteilt statt aufgeladen',
-    eng.every(x => Math.abs(x.spitze - (x.hoehe - x.band)) < 1.5),
-    eng.map(x => `${x.name} ${x.spitze.toFixed(0)} px auf zwei Koepfe`).join(', ')
-        || 'kein enger Platz');
-check('GEGENPROBE: der alte feste Weg lag auf Sand 42 px auf der hinteren Figur',
+/* Das Netz bleibt frei — sonst haenge die Ziffer darin statt darueber. */
+check('Und sie verdeckt das Netz nicht, auch nicht im groessten Moment',
+    jePlatz.every(x => Math.abs(x.netzLuft - R.COUNTDOWN_NETZ_ABSTAND) < 0.5),
+    jePlatz.map(x => `${x.name} ${x.netzLuft.toFixed(0)} px`).join(', '));
+/* Sie haengt an der PLATZachse. Auf dem Hartplatz faellt die mit der
+   Bildmitte zusammen, auf den anderen beiden nicht — genau daran war der
+   alte Anker nicht zu erkennen. */
+check('Sie steht auf der Platzachse, nicht in der Bildmitte',
+    jePlatz.every(x => Math.abs(x.achse - x.mitteX) < 0.01),
+    jePlatz.map(x => `${x.name} ${x.achse.toFixed(1)} = ${x.mitteX}`).join(', '));
+check('GEGENPROBE: der alte Anker lag auf Sand 42 px auf der hinteren Figur',
     altTiefe > 40 && altTiefe < 45, `${altTiefe.toFixed(0)} px`);
 check('Und genau dieser Altbefund ist erledigt',
     neuTiefe === 0, `${neuTiefe.toFixed(0)} px`);
@@ -301,7 +314,9 @@ const BOUNCE = R.SERVE_PROMPT_BOUNCE_MS;
    nicht in ihrem groessten Moment. */
 let promptMax = 0, promptArg = 0;
 for (let ms = 0; ms <= BOUNCE; ms++) {
-    const v = R.bounce(ms, BOUNCE, R.COUNTDOWN_OVERSHOOT);
+    /* pulse(), nicht bounce() — seit ARENA-20 zeichnet der Renderer damit.
+       Mit der falschen Kurve traefe die Probe die Spitze um 100 ms daneben. */
+    const v = R.pulse(ms, BOUNCE, R.COUNTDOWN_OVERSHOOT);
     if (v > promptMax) { promptMax = v; promptArg = ms; }
 }
 const szene = {
@@ -362,11 +377,53 @@ for (let i = 0; i <= 20; i++) {
 check('Sie benutzt DIESELBE Kurvenform wie der Countdown',
     formAbweichung < 1e-12,
     `groesste Abweichung ${formAbweichung.toExponential(1)}`);
+
+/* --- 3a. EIN Wort, zwei Schlaege ---------------------------------------- *
+ * BUEHNENBEFUND (Live-Test 25.08.2026): "Das Wort blendet zweimal auf und
+ * wirkt wie zwei getrennte Einblendungen desselben Worts."
+ *
+ * Die Ursache war NICHT die Deckkraft — die stand waehrend beider Schlaege
+ * schon auf 1. Es war die GROESSE: bounce() beginnt bauartbedingt bei exakt
+ * 0, und zwar bei jedem Schlag. Ein Wort mit Schriftgrad 0 ist unsichtbar.
+ * Deshalb pulse(): dieselbe Kurve ohne den Anlauf.
+ *
+ * Geprueft wird an der Kurve UND an dem, was tatsaechlich gezeichnet wird. */
+check('pulse() beginnt und endet bei voller Groesse',
+    Math.abs(R.pulse(0, BOUNCE, R.COUNTDOWN_OVERSHOOT) - 1) < 1e-12
+    && Math.abs(R.pulse(BOUNCE, BOUNCE, R.COUNTDOWN_OVERSHOOT) - 1) < 1e-12,
+    `${R.pulse(0, BOUNCE, R.COUNTDOWN_OVERSHOOT).toFixed(3)} -> `
+    + `${R.pulse(BOUNCE, BOUNCE, R.COUNTDOWN_OVERSHOOT).toFixed(3)}`);
+let pulseMin = Infinity, pulseSpitze = 0;
+for (let i = 0; i <= 400; i++) {
+    const v = R.pulse(i / 400 * BOUNCE, BOUNCE, R.COUNTDOWN_OVERSHOOT);
+    pulseMin = Math.min(pulseMin, v);
+    pulseSpitze = Math.max(pulseSpitze, v);
+}
+check('Und faellt dazwischen nie darunter',
+    pulseMin >= 1 - 1e-12, `kleinster Wert ${pulseMin.toFixed(4)}`);
+check('GEGENPROBE: bounce() faellt genau dort auf null',
+    Math.abs(R.bounce(0, BOUNCE, R.COUNTDOWN_OVERSHOOT)) < 1e-12,
+    `${R.bounce(0, BOUNCE, R.COUNTDOWN_OVERSHOOT).toFixed(3)}`);
+/* Die Spitze ist DIESELBE, weil pulse() nur die Zeitachse umparametrisiert
+   und der Abschnitt die Spitze enthaelt. Verglichen werden zwei ABTASTUNGEN
+   derselben Kurve (hier 400 Schritte, in spitzeVon 200) — sie treffen den
+   Scheitel unterschiedlich genau. Die Toleranz deckt genau diesen
+   Abtastfehler ab und nichts weiter: eine echte Abweichung der Kurven laege
+   um Groessenordnungen darueber. */
+check('Die Spitze bleibt dieselbe — spitzeVon() gilt fuer beide',
+    Math.abs(pulseSpitze - R.SERVE_PROMPT_SPITZE) < 1e-3,
+    `${pulseSpitze.toFixed(5)} vs. ${R.SERVE_PROMPT_SPITZE.toFixed(5)}`);
 check('Aber ueber eine laengere Dauer — das war das Zucken',
     BOUNCE > R.COUNTDOWN_BOUNCE_MS,
     `${BOUNCE} ms je Schlag statt ${R.COUNTDOWN_BOUNCE_MS} ms`);
+/* Sie erreicht ihre Spitze spaeter als der Countdown — aber nicht mehr um
+   den vollen Dauerfaktor. Bis ARENA-19 stand hier `> argMax * 1.3`; seit die
+   Aufforderung mit pulse() den Anlauf ueberspringt, sitzt ihr Scheitel
+   FRUEHER im eigenen Schlag (207 von 620 ms statt 276), und der Faktor
+   schrumpft von 1.6 auf 1.2. Die Aussage bleibt, ihre Schaerfe nicht —
+   deshalb hier der schlichte Vergleich mit den Zahlen daneben. */
 check('Und erreicht ihre Spitze entsprechend spaeter',
-    promptArg > argMax * 1.3,
+    promptArg > argMax,
     `nach ${promptArg} ms statt nach ${argMax} ms`);
 /* Der technische Haken der Entkopplung: die Kurve muss die LAENGERE Dauer
    kennen. Waere sie weiter auf 380 ms normiert, stuende die Aufforderung
