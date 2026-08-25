@@ -147,20 +147,23 @@ check('GEGENPROBE: der alte Wert federte spuerbar schwaecher',
 
 /* --- 2b. Und bleibt trotzdem von den Gesichtern weg ----------------------
  * Die Ziffer steht in der Bildmitte — genau dort, wo auch Andreas Kopf steht,
- * wenn sie mittig singt. Sie weicht deshalb aus (dodgeHeads). Der staerkere
- * Ueberschwinger aendert daran drei Dinge, die alle stimmen muessen:
+ * wenn sie mittig singt. Sie weicht deshalb aus (dodgeHeads).
  *
- *   - Der Ausweichweg wird aus der SPITZE gerechnet, nicht aus der jeweiligen
- *     Groesse. Nur so ist er waehrend der ganzen Federung derselbe; sonst
- *     spraenge die Ziffer genau im Einsprung zur Seite.
- *   - In Ruhe — also fast die gesamte Anzeigedauer — steht sie frei.
- *   - Im groessten Moment darf sie die Kopfbox oben streifen. Das ist der
- *     Preis der Wucht und ausdruecklich gewollt; er ist hier beziffert,
- *     damit ein weiteres Aufdrehen auffaellt und nicht durchrutscht.
+ * ARENA-17 rechnet den Ausweichweg aus der TATSAECHLICHEN Ueberlappung statt
+ * ihn fest vorzugeben. Der feste Weg von 170 px war fuer die Geometrie EINES
+ * Platzes eingemessen und konnte auf den anderen beiden nicht stimmen: auf
+ * Sand schob er die ruhende Ziffer 42 px auf die hintere Figur, und zwar in
+ * jedem Satz, weil der Platz mit dem Satz wechselt.
  *
- * headBox() und dodgeHeads() rechnen rein geometrisch und brauchen kein
- * geladenes Bild — deshalb geht diese Probe in Node, mit Skalierung 1 und
- * ohne die Streuung eines echten Browserfensters.
+ * Drei Dinge muessen stimmen, und alle drei brauchen die echten Bildmasse der
+ * Koepfe — der Node-Test kann das, weil headBox() rein geometrisch rechnet:
+ *
+ *   - Der Weg wird aus der SPITZE gerechnet, nicht aus der jeweiligen Groesse.
+ *     Nur so ist er waehrend der ganzen Federung derselbe; sonst spraenge die
+ *     Ziffer genau im Einsprung zur Seite.
+ *   - In Ruhe — also fast die gesamte Anzeigedauer — steht sie ueberall frei.
+ *   - Im groessten Moment ebenfalls, SOWEIT die Geometrie es hergibt. Auf dem
+ *     Rasenplatz gibt sie es nicht her, und das ist beziffert statt beschoenigt.
  * ------------------------------------------------------------------------ */
 
 /**
@@ -169,10 +172,13 @@ check('GEGENPROBE: der alte Wert federte spuerbar schwaecher',
  */
 function ziffernlage(faktor) {
     const p = renderer.viewport.toScreen(800, game.grenzen.midY, {});
-    const gross = R.COUNTDOWN_SIZE * p.scale * faktor;
-    const box = {
-        left: p.x - gross * 0.4, right: p.x + gross * 0.4,
-        top: p.y - gross * 0.4, bottom: p.y + gross * 0.4,
+    const kasten = (f) => {
+        const gross = R.COUNTDOWN_SIZE * p.scale * f;
+        return {
+            left: p.x - gross * 0.4, right: p.x + gross * 0.4,
+            top: p.y - gross * 0.4, bottom: p.y + gross * 0.4,
+            hoehe: gross * 0.8,
+        };
     };
     /* Beide Figuren mittig — der unguenstigste Fall: dann stehen Ziffer und
        Kopf uebereinander. */
@@ -181,102 +187,109 @@ function ziffernlage(faktor) {
         renderer.headBox(800, game.paddleAlex.y),
     ];
     /* Gezeichnet wird IMMER mit dem aus der Spitze gerechneten Weg. */
-    const spitzeGross = R.COUNTDOWN_SIZE * p.scale * R.COUNTDOWN_SPITZE;
-    const weg = renderer.dodgeHeads({
-        left: p.x - spitzeGross * 0.4, right: p.x + spitzeGross * 0.4,
-        top: p.y - spitzeGross * 0.4, bottom: p.y + spitzeGross * 0.4,
-    }, koepfe, R.COUNTDOWN_DODGE * p.scale);
+    const weg = renderer.dodgeHeads(kasten(R.COUNTDOWN_SPITZE), koepfe,
+        R.COUNTDOWN_DODGE_MAX * p.scale);
 
-    /* Wie tief ragt die verschobene Box in einen Kopf hinein? */
+    const box = kasten(faktor);
     const tiefe = (k) => {
         if (box.right < k.left || box.left > k.right) return 0;
-        const oben = Math.max(box.top + weg, k.top);
-        const unten = Math.min(box.bottom + weg, k.bottom);
-        return Math.max(0, unten - oben);
+        return Math.max(0, Math.min(box.bottom + weg, k.bottom)
+            - Math.max(box.top + weg, k.top));
     };
     return {
-        weg, hoehe: gross * 0.8,
+        weg, hoehe: box.hoehe,
+        band: koepfe[0].top - koepfe[1].bottom,
         kopfhoehe: koepfe[0].bottom - koepfe[0].top,
         inAndrea: tiefe(koepfe[0]),
         inAlex: tiefe(koepfe[1]),
+        obenImBild: box.top + weg,
     };
 }
 
 const lageRuhe = ziffernlage(1);
 const lageSpitze = ziffernlage(R.COUNTDOWN_SPITZE);
-const anteil = lageSpitze.inAndrea / lageSpitze.kopfhoehe;
 
 console.log(`\nZiffer: Ruhe ${lageRuhe.hoehe.toFixed(0)} px, Einsprung `
-    + `${lageSpitze.hoehe.toFixed(0)} px, Ausweichen ${lageSpitze.weg} px`);
-console.log(`  Ueberdeckung der Kopfbox: Ruhe ${lageRuhe.inAndrea.toFixed(0)} px, `
-    + `Einsprung ${lageSpitze.inAndrea.toFixed(0)} px `
-    + `(${(anteil * 100).toFixed(0)} % der Kopfhoehe)`);
+    + `${lageSpitze.hoehe.toFixed(0)} px, freies Band ${lageRuhe.band.toFixed(0)} px, `
+    + `Ausweichen ${lageSpitze.weg.toFixed(0)} px`);
 
 check('Sie weicht Andreas Kopf ueberhaupt aus', lageSpitze.weg !== 0,
-    `${lageSpitze.weg} px`);
+    `${lageSpitze.weg.toFixed(0)} px`);
+check('Der Weg ist ueber die ganze Federung derselbe',
+    lageRuhe.weg === lageSpitze.weg,
+    `${lageRuhe.weg.toFixed(1)} / ${lageSpitze.weg.toFixed(1)}`);
 check('In Ruhe steht sie voellig frei',
     lageRuhe.inAndrea === 0 && lageRuhe.inAlex === 0,
     `${lageRuhe.inAndrea.toFixed(1)} / ${lageRuhe.inAlex.toFixed(1)} px`);
-check('Im Einsprung streift sie hoechstens den Scheitel',
-    anteil < 0.25, `${(anteil * 100).toFixed(0)} % der Kopfhoehe`);
-check('Die hintere Figur bleibt dabei unberuehrt',
-    lageSpitze.inAlex === 0, `${lageSpitze.inAlex.toFixed(1)} px`);
+check('Und im Einsprung auf dem Referenzplatz ebenfalls',
+    lageSpitze.inAndrea === 0 && lageSpitze.inAlex === 0,
+    `${lageSpitze.inAndrea.toFixed(1)} / ${lageSpitze.inAlex.toFixed(1)} px`);
+check('Sie bleibt dabei im Bild', lageSpitze.obenImBild > 0,
+    `Oberkante bei y ${lageSpitze.obenImBild.toFixed(0)}`);
 
-/* GEGENPROBE: warum 5.0 und nicht mehr. Bei 6.0 waechst genau diese
-   Ueberdeckung ueber das Vertretbare — das ist die Grenze, an der die
-   Entscheidung haengt. */
-R.COUNTDOWN_OVERSHOOT = 6.0;
-let spitze6 = 1;
-for (let ms = 0; ms <= R.COUNTDOWN_BOUNCE_MS; ms += 1) {
-    spitze6 = Math.max(spitze6, R.countdownBounce(ms));
-}
-const echteSpitze = R.COUNTDOWN_SPITZE;
-R.COUNTDOWN_SPITZE = spitze6;
-const lage6 = ziffernlage(spitze6);
-R.COUNTDOWN_SPITZE = echteSpitze;
-R.COUNTDOWN_OVERSHOOT = NEU;
-const anteil6 = lage6.inAndrea / lage6.kopfhoehe;
-console.log(`  zum Vergleich bei 6.0: ${lage6.inAndrea.toFixed(0)} px `
-    + `(${(anteil6 * 100).toFixed(0)} %)`);
-check('GEGENPROBE: bei 6.0 schoebe sie sich spuerbar weiter ins Gesicht',
-    anteil6 > anteil * 1.4,
-    `${(anteil6 * 100).toFixed(0)} % statt ${(anteil * 100).toFixed(0)} %`);
+/* GEGENPROBE gegen den alten, FESTEN Ausweichweg — und zwar auf dem SAND-
+   platz, wo der Befund herkommt: derselbe Kasten, dieselben Koepfe, aber die
+   Lage wird nicht gerechnet, sondern auf 170 px gesetzt. Genau so lief es bis
+   ARENA-16. */
+game.setzePlatz('SAND');
+const altTiefe = (() => {
+    const p = renderer.viewport.toScreen(800, game.grenzen.midY, {});
+    const altWeg = -170 * p.scale;
+    const gross = R.COUNTDOWN_SIZE * p.scale;
+    const box = { top: p.y - gross * 0.4, bottom: p.y + gross * 0.4 };
+    const k = renderer.headBox(800, game.paddleAlex.y);
+    return Math.max(0, Math.min(box.bottom + altWeg, k.bottom)
+        - Math.max(box.top + altWeg, k.top));
+})();
+const neuTiefe = ziffernlage(1).inAlex;
+game.setzePlatz('HART');
+console.log(`  Sandplatz, ruhende Ziffer auf der hinteren Figur: `
+    + `alt ${altTiefe.toFixed(0)} px -> neu ${neuTiefe.toFixed(0)} px`);
 
-/* Und auf allen drei Plaetzen — die Kameras unterscheiden sich, die Regel
- * darf es nicht.
- *
- * ALTBEFUND, NICHT AUS DIESEM SPRINT: auf dem Sandplatz liegt die ruhige
- * Ziffer 42 px auf der Kopfbox der HINTEREN Figur. Nachgerechnet mit dem
- * alten Ueberschwinger 3.2 kommt exakt derselbe Wert heraus — der Grund ist
- * nicht die Wucht, sondern der feste Ausweichweg COUNTDOWN_DODGE = 170 px:
- * dodgeHeads() probiert nur "gar nicht / hoch / runter" und nimmt bei zwei
- * belegten Richtungen "hoch" als kleineres Uebel. Auf Sand steht die hintere
- * Figur genau dort. Ein Ausweichen um das noetige Mass statt um einen festen
- * Betrag wuerde es loesen; das ist eine eigene Entscheidung und steht hier
- * nur als Messwert, damit es nicht unbemerkt schlimmer wird.
- * ------------------------------------------------------------------------ */
+/* --- Und auf allen drei Plaetzen ----------------------------------------- */
 const jePlatz = [];
 for (const name of Object.keys(game.PLAETZE)) {
     game.setzePlatz(name);
-    const l = ziffernlage(R.COUNTDOWN_SPITZE);
     const r = ziffernlage(1);
-    jePlatz.push({ name, ruheAndrea: r.inAndrea, ruheAlex: r.inAlex,
-        anteil: l.inAndrea / l.kopfhoehe });
+    const l = ziffernlage(R.COUNTDOWN_SPITZE);
+    jePlatz.push({ name, ruhe: r.inAndrea + r.inAlex,
+        spitze: l.inAndrea + l.inAlex, band: r.band, hoehe: l.hoehe,
+        weg: l.weg, oben: l.obenImBild });
 }
 game.setzePlatz(Object.keys(game.PLAETZE)[0]);
-console.log('  je Platz (Ruhe: Andrea/Alex, Einsprung: Anteil Kopf): '
-    + jePlatz.map(x => `${x.name} ${x.ruheAndrea.toFixed(0)}/`
-        + `${x.ruheAlex.toFixed(0)} px, ${(x.anteil * 100).toFixed(0)} %`).join('; '));
+console.log('  je Platz (Band / Ziffer im Einsprung / Ueberdeckung Ruhe + Spitze):');
+jePlatz.forEach(x => console.log(`    ${x.name.padEnd(6)} ${x.band.toFixed(0)} px / `
+    + `${x.hoehe.toFixed(0)} px / ${x.ruhe.toFixed(0)} px + ${x.spitze.toFixed(0)} px`
+    + `  (Weg ${x.weg.toFixed(0)} px)`));
 
-check('Auf keinem Platz verdeckt die ruhige Ziffer Andreas Gesicht',
-    jePlatz.every(x => x.ruheAndrea === 0),
-    jePlatz.filter(x => x.ruheAndrea > 0).map(x => x.name).join(', ') || 'alle frei');
-check('Und nirgends verdeckt der Einsprung mehr als ein Viertel ihres Kopfes',
-    jePlatz.every(x => x.anteil < 0.25),
-    jePlatz.map(x => `${x.name} ${(x.anteil * 100).toFixed(0)} %`).join(', '));
-check('Der Altbefund auf Sand wird nicht groesser (Messmarke, kein Soll)',
-    jePlatz.every(x => x.ruheAlex <= 45),
-    jePlatz.map(x => `${x.name} ${x.ruheAlex.toFixed(0)} px`).join(', '));
+check('Auf KEINEM Platz verdeckt die ruhige Ziffer einen Kopf',
+    jePlatz.every(x => x.ruhe === 0),
+    jePlatz.map(x => `${x.name} ${x.ruhe.toFixed(0)} px`).join(', '));
+check('Die Ziffer bleibt auf jedem Platz im Bild',
+    jePlatz.every(x => x.oben > 0),
+    jePlatz.map(x => `${x.name} y ${x.oben.toFixed(0)}`).join(', '));
+
+/* WO ES NICHT AUFGEHT, steht die Zahl. Auf dem Rasenplatz ist das freie Band
+   320 px hoch und die Ziffer im Einsprung 339 px — 19 px zu viel. Zentrieren
+   teilt sie gleichmaessig auf beide Koepfe auf; das ist die kleinstmoegliche
+   Stoerung, aber eben nicht null. Zu beseitigen waere sie nur ueber
+   COUNTDOWN_SIZE (264 statt 280) oder COUNTDOWN_OVERSHOOT (4.3 statt 5.0) —
+   beides Werte, die auf der Buehne bewusst so gewaehlt wurden. */
+const eng = jePlatz.filter(x => x.hoehe > x.band);
+console.log(`  zu enge Plaetze: ${eng.map(x => `${x.name} (fehlen `
+    + `${(x.hoehe - x.band).toFixed(0)} px)`).join(', ') || 'keiner'}`);
+check('Wo das Band reicht, ist auch der Einsprung frei',
+    jePlatz.filter(x => x.hoehe <= x.band).every(x => x.spitze === 0),
+    jePlatz.filter(x => x.hoehe <= x.band)
+        .map(x => `${x.name} ${x.spitze.toFixed(0)} px`).join(', '));
+check('Wo es nicht reicht, wird die Stoerung geteilt statt aufgeladen',
+    eng.every(x => Math.abs(x.spitze - (x.hoehe - x.band)) < 1.5),
+    eng.map(x => `${x.name} ${x.spitze.toFixed(0)} px auf zwei Koepfe`).join(', ')
+        || 'kein enger Platz');
+check('GEGENPROBE: der alte feste Weg lag auf Sand 42 px auf der hinteren Figur',
+    altTiefe > 40 && altTiefe < 45, `${altTiefe.toFixed(0)} px`);
+check('Und genau dieser Altbefund ist erledigt',
+    neuTiefe === 0, `${neuTiefe.toFixed(0)} px`);
 
 /* --- 3. "AUFSCHLAG!" springt zweimal und ist dann weg --------------------- *
  * Gemessen wird an dem, was gezeichnet wird: der Schriftgrad im Text-Log

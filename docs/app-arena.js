@@ -5556,7 +5556,7 @@
             const offset = this.dodgeHeads(box, [
                 this.headBox(scene.andreaX, scene.paddleAndrea.y),
                 this.headBox(scene.paddleAlex.x, scene.paddleAlex.y)
-            ], Renderer.COUNTDOWN_DODGE * p.scale);
+            ], Renderer.COUNTDOWN_DODGE_MAX * p.scale);
 
             /* EIGENER Stil, nicht der des Countdowns. Dessen schwarze Füllung
                mit Schein funktioniert nur bei 400 px Höhe; bei 96 px auf dem
@@ -6089,7 +6089,7 @@
                 offset = this.dodgeHeads(box, [
                     this.headBox(scene.andreaX, scene.paddleAndrea.y),
                     this.headBox(scene.paddleAlex.x, scene.paddleAlex.y)
-                ], Renderer.COUNTDOWN_DODGE * p.scale);
+                ], Renderer.COUNTDOWN_DODGE_MAX * p.scale);
             }
 
             /* Kontur und Schein federn mit — sonst behielte eine winzige Ziffer
@@ -6184,26 +6184,97 @@
         /**
          * Senkrechter Versatz, mit dem ein Text allen Köpfen ausweicht.
          *
-         * Bewusst simpel: probiert der Reihe nach "gar nicht", "nach oben",
-         * "nach unten" und nimmt die erste kollisionsfreie Lage. Mehr braucht
-         * es nicht — es gibt genau zwei Köpfe und einen großen Text.
+         * Ausgewichen wird um das NOETIGE Mass, nicht um einen festen Betrag.
+         *
+         * Bis ARENA-17 probierte diese Methode der Reihe nach "gar nicht",
+         * "170 px hoch", "170 px runter" und nahm die erste freie Lage; waren
+         * beide Richtungen belegt, gewann "hoch" als kleineres Uebel. Auf dem
+         * Sandplatz stand dort aber die hintere Figur, und die ruhende
+         * Countdown-Ziffer lag 42 px auf ihrer Kopfbox — jeden Satz aufs
+         * Neue, weil der Platz mit dem Satz wechselt. Der feste Betrag war
+         * fuer die Geometrie EINES Platzes eingemessen und konnte auf den
+         * anderen beiden nicht stimmen.
+         *
+         * Jetzt werden die freien BAENDER zwischen den Koepfen bestimmt und
+         * darin die Lage gesucht, die der Ruhelage am naechsten liegt. Das
+         * Optimum sitzt immer entweder bei 0 oder buendig an einer Kopfkante
+         * — dazwischen wird es nicht besser, deshalb genuegen diese
+         * Kandidaten.
+         *
+         * PASST DER TEXT IN KEIN BAND, wird er im groessten Band ZENTRIERT.
+         * Das ist der Fall, der sich nicht wegrechnen laesst: auf dem
+         * Rasenplatz ist das freie Band zwischen den Koepfen 320 px hoch, die
+         * Ziffer im Einsprung 339 px. Zentrieren teilt die 19 px gleichmaessig
+         * auf beide Koepfe auf, statt sie einem allein aufzuladen — die
+         * kleinstmoegliche Stoerung. Wer sie ganz beseitigen will, muss an der
+         * Ziffer drehen (COUNTDOWN_SIZE oder COUNTDOWN_OVERSHOOT), nicht hier.
+         *
+         * KEIN SICHERHEITSRAND: die Kopfbox ist mit HEAD_BOX bereits die
+         * grosszuegige Aussenkante des Fotos, und auf dem Rasen ist ohnehin
+         * kein Pixel uebrig.
          *
          * @param   {{left:number,right:number,top:number,bottom:number}} box
          * @param   {Array<Object>} heads
-         * @param   {number} dodge Ausweichweite in Bildschirmpixeln
+         * @param   {number} maxDodge Groesster zulaessiger Versatz (Bildpixel)
          * @returns {number} Versatz in Bildschirmpixeln (0 = keine Kollision)
          */
-        dodgeHeads(box, heads, dodge) {
-            const hits = (offset) => heads.some(h =>
-                box.left < h.right && box.right > h.left
-                && box.top + offset < h.bottom && box.bottom + offset > h.top);
+        dodgeHeads(box, heads, maxDodge) {
+            /* Nur Koepfe, die waagerecht ueberhaupt im Weg stehen. */
+            const imWeg = heads.filter(h =>
+                box.left < h.right && box.right > h.left);
+            if (!imWeg.length) return 0;
 
-            if (!hits(0)) return 0;
-            if (!hits(-dodge)) return -dodge;
-            if (!hits(dodge)) return dodge;
-            /* Beide Richtungen belegt — nach oben ist das kleinere Übel, dort
-               steht nur die hintere Figur und die ist deutlich kleiner. */
-            return -dodge;
+            const trifft = (o) => imWeg.some(h =>
+                box.top + o < h.bottom && box.bottom + o > h.top);
+            if (!trifft(0)) return 0;
+
+            /* Freie Baender: ueber dem obersten Kopf, zwischen je zwei
+               aufeinanderfolgenden, unter dem untersten. */
+            const sortiert = imWeg.slice().sort((a, b) => a.top - b.top);
+            const baender = [];
+            let kante = -Infinity;
+            for (const h of sortiert) {
+                baender.push({ von: kante, bis: h.top });
+                kante = Math.max(kante, h.bottom);
+            }
+            baender.push({ von: kante, bis: Infinity });
+
+            /* Jeden Kandidaten BEWERTEN statt den ersten passenden zu
+               nehmen. Der Unterschied ist nicht theoretisch: mit "erste freie
+               Lage" und einem zu knappen Deckel blieb auf dem Hartplatz gar
+               keine Lage uebrig, und die Methode fiel auf 0 zurueck — also
+               ausgerechnet auf die Lage, in der die Ziffer den Kopf
+               VOLLSTAENDIG verdeckt. Bewertet wird nach Ueberdeckung zuerst,
+               bei Gleichstand nach dem kuerzeren Weg. */
+            const bewerte = (roh) => {
+                const o = Math.max(-maxDodge, Math.min(maxDodge, roh));
+                let ueber = 0;
+                for (const h of imWeg) {
+                    ueber += Math.max(0, Math.min(box.bottom + o, h.bottom)
+                        - Math.max(box.top + o, h.top));
+                }
+                return { o, ueber };
+            };
+
+            let beste = bewerte(0);
+            const pruefe = (roh) => {
+                const k = bewerte(roh);
+                if (k.ueber < beste.ueber - 1e-9
+                    || (k.ueber < beste.ueber + 1e-9
+                        && Math.abs(k.o) < Math.abs(beste.o))) {
+                    beste = k;
+                }
+            };
+
+            for (const b of baender) {
+                /* Zulaessiger Bereich des Versatzes fuer dieses Band. */
+                const lo = b.von === -Infinity ? -Infinity : b.von - box.top;
+                const hi = b.bis === Infinity ? Infinity : b.bis - box.bottom;
+                /* Passt der Text hinein, ist der beste Punkt der, der 0 am
+                   naechsten liegt; passt er nicht, die Mitte des Bandes. */
+                pruefe(lo <= hi ? Math.min(Math.max(0, lo), hi) : (lo + hi) / 2);
+            }
+            return beste.o;
         }
 
         /**
@@ -6788,16 +6859,22 @@
     Renderer.GOTHIC_PASSES = 2;
 
     /**
-     * Ausweichweite des Countdowns, wenn ein Kopf im Weg steht (virtuelle Px).
+     * GROESSTER zulaessiger Ausweichweg, wenn ein Kopf im Weg steht
+     * (virtuelle Pixel).
      *
-     * Nachgerechnet statt geschätzt: die Ziffer belegt bei 400 px Schriftgröße
-     * y 340 bis 660, Andreas Kopfbox liegt bei 507 bis 599, Alex' bei 70 bis
-     * 138. Um Andrea zu räumen, muss die Unterkante über 507 — das verlangt
-     * mindestens 153 px. Die zunächst angesetzten 150 hätten um drei Pixel
-     * NICHT gereicht. 170 räumt beide Köpfe mit Abstand: die Ziffer steht dann
-     * bei 170 bis 490, also unter Alex und über Andrea.
+     * War bis ARENA-17 der FESTE Ausweichweg und als solcher fuer die
+     * Geometrie des Hartplatzes eingemessen — auf Sand schob er die ruhende
+     * Ziffer damit 42 px auf die hintere Figur. dodgeHeads() rechnet den Weg
+     * jetzt aus der tatsaechlichen Ueberlappung; diese Zahl ist nur noch der
+     * Deckel, damit die Ziffer nicht aus dem Bild wandert.
+     *
+     * 220 px statt der frueheren 170: gebraucht werden auf dem Hartplatz 190
+     * px, um die Ziffer im Einsprung ueber Andreas Kopf zu heben. Mit dem
+     * alten Deckel blieb dort gar keine freie Lage uebrig — nachgemessen,
+     * nicht vermutet. Weiter oben ist Platz: die Ziffer steht dann bei
+     * Bildschirm-y 140 bis 480, der obere Rand liegt bei 0.
      */
-    Renderer.COUNTDOWN_DODGE = 170;
+    Renderer.COUNTDOWN_DODGE_MAX = 220;
 
     /* -------------------------------------------------------------------------
      * TV-Bauchbinde unten links (siehe Renderer.drawHud)
@@ -7575,7 +7652,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-17 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-18 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**

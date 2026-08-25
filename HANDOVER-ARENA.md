@@ -503,6 +503,29 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     der Grundlinie. Dazu zwei Dämpfungen, beide nur nach dem Punkt: 0,5 an der
     Wand und 0,82 Rollreibung je Bodenkontakt — ohne sie pendelte der Ball
     für immer zwischen den Wänden.
+- **ARENA-18** — `dodgeHeads()` weicht um das nötige Maß aus.
+  Der Ausweichweg großer Texte war ein FESTER Betrag (170 px), eingemessen für
+  die Geometrie des Hartplatzes. Auf den anderen beiden konnte er nicht
+  stimmen: auf Sand schob er die ruhende Countdown-Ziffer 42 px auf die
+  Kopfbox der hinteren Figur — in jedem Satz neu, weil der Platz mit dem Satz
+  wechselt.
+  - Jetzt werden die freien **Bänder** zwischen den Köpfen bestimmt und darin
+    die Lage gesucht, die der Ruhelage am nächsten liegt. Das Optimum sitzt
+    immer bei 0 oder bündig an einer Kopfkante — dazwischen wird es nicht
+    besser, deshalb genügen diese Kandidaten.
+  - *Ein zweiter Fehler kam dabei heraus, und er war der gefährlichere:* die
+    alte Methode nahm die **erste freie** Lage. Mit dem Deckel von 170 px
+    blieb auf dem Hartplatz im Einsprung gar keine übrig (nötig sind 190 px) —
+    sie fiel dann auf 0 zurück, also ausgerechnet auf die Lage, in der die
+    Ziffer den Kopf **vollständig** verdeckt. Jetzt wird jeder Kandidat
+    bewertet: Überdeckung zuerst, bei Gleichstand der kürzere Weg. Der Deckel
+    steht auf 220 px (`COUNTDOWN_DODGE_MAX`), die Ziffer bleibt damit auf
+    jedem Platz im Bild.
+  - *Ergebnis, gemessen:* Überdeckung in Ruhe **0 px auf allen drei Plätzen**
+    (vorher 42 px auf Sand), im Einsprung 0 px auf Hart und Sand. Auf Rasen
+    bleiben 20 px auf zwei Köpfe verteilt — siehe die Notiz unter
+    „Technische Schuld", das ist Geometrie und kein Fehler.
+  - Gilt für Countdown **und** „AUFSCHLAG!" — beide rufen dieselbe Methode.
 
 ---
 
@@ -512,7 +535,7 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 25.08.2026: 404 Zusicherungen, alle grün, Exit 0.** 25 Testdateien in
+**Stand 25.08.2026: 407 Zusicherungen, alle grün, Exit 0.** 25 Testdateien in
 27 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 | Zusicherungen | Test |
@@ -640,7 +663,7 @@ ein.
   geschützten Stelle muss zweimal gedacht werden. Solange V41 eingefroren
   bleibt, ist das beherrschbar — es ist aber der Punkt, an dem später ein
   Fehler doppelt gesucht wird.
-- **`app-arena.js` sind 9086 Zeilen in einer IIFE.** Eine Aufteilung ohne
+- **`app-arena.js` sind 9163 Zeilen in einer IIFE.** Eine Aufteilung ohne
   Build-Schritt wäre möglich (mehrere `<script>`-Tags, gemeinsames Namensraum-
   objekt), kostet aber die Kapselung, die die IIFE heute liefert.
 - **Kein `localStorage`, keine Wiederaufnahme.** Ein versehentlicher Reload
@@ -658,15 +681,15 @@ ein.
   sonst dreht irgendwann jemand an einer Zahl, die nichts mehr tut. Das
   Entfernen ist ein eigener Durchgang mit eigenem Testlauf; der lebende Regler
   heißt `Physics.AUFSCHLAG_MITTE_BREITE`.
-- **`dodgeHeads()` weicht um einen festen Betrag aus, nicht um das nötige
-  Maß.** `COUNTDOWN_DODGE = 170 px`, probiert wird „gar nicht / hoch / runter";
-  sind beide Richtungen belegt, gewinnt „hoch" als kleineres Übel. Auf dem
-  **Sandplatz** steht dort die hintere Figur, und die ruhige Countdown-Ziffer
-  liegt 42 px auf deren Kopfbox. Kein Nebeneffekt von ARENA-16 — mit dem alten
-  Überschwinger 3,2 kommt derselbe Wert heraus. Der Umbau auf einen minimalen
-  Versatz wäre klein, betrifft aber auch die Aufforderung „AUFSCHLAG!" und
-  gehört deshalb in einen eigenen Durchgang. `test-showschliff.js` führt den
-  Wert als Messmarke mit (Grenze 45 px), damit er nicht unbemerkt wächst.
+- **Die Countdown-Ziffer passt auf dem Rasenplatz nicht zwischen die Köpfe.**
+  Kein Fehler mehr, sondern eine gemessene Enge: das freie Band zwischen den
+  beiden Kopfboxen misst dort 320 px, die Ziffer im Einsprung 339 px — 19 px
+  zu viel. `dodgeHeads()` teilt die Störung seit ARENA-18 gleichmäßig auf
+  beide Köpfe auf (je rund 10 px am Scheitel, für die ~170 ms des
+  Überschwingers); in Ruhe steht sie auf allen drei Plätzen frei. Ganz zu
+  beseitigen wäre es nur über die Ziffer selbst: `COUNTDOWN_SIZE` 264 statt
+  280, oder `COUNTDOWN_OVERSHOOT` 4,3 statt 5,0. Beides sind bewusst gewählte
+  Bühnenwerte — deshalb steht hier die Zahl und nicht eine stille Korrektur.
 - **Zwei Optimierungen sind bewusst zurückgestellt, bis gemessen ist.** Beide
   aus der Durchsicht zu ARENA-11, beide mit einem klaren Auslöser:
   - *Countdown-Glow vorrendern.* `gothicText()` zeichnet in jedem Frame der
