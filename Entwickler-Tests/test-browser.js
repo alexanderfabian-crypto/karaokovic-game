@@ -943,6 +943,67 @@ class Browser {
         }
 
         /* --- 10. Nichts ist unterwegs geflogen -------------------------- */
+        /* --- Klavier-Modus: das Onboarding und das echte Laden ----------
+         * ZULETZT und nicht zwischendrin: das Onboarding ist ein Einbahnweg,
+         * und ein Abzweig in der Mitte haette den ganzen restlichen Durchlauf
+         * verstellt. Hier ist es laengst ausgeblendet, die Pruefung stoert
+         * nichts mehr.
+         *
+         * Der Tonweg selbst wird hier NICHT gemessen — der Browsertest laeuft
+         * mit --allow-file-access-from-files, und genau dieses Flag
+         * entscheidet die Frage. Dafuer gibt es klavierweg.js. */
+        {
+            const kl = await b.werteAus(`(async () => {
+                const K = window.KARAOKOVIC;
+                /* Die eingefrorene Fassung V41 kennt den Modus nicht — wie bei
+                   der Platzwahl entscheidet die gepruefte SEITE, ob es das
+                   Merkmal gibt. */
+                if (!K.Klavier) return { arena: false };
+                const da = (id) => !!document.getElementById(id);
+                const schritte = {
+                    knopf: da('btnModeKlavier'),
+                    stueck1: da('btnStueck1'), stueck2: da('btnStueck2'),
+                    kopfhoerer: da('chkKopfhoerer'),
+                    weiter: da('btnKlavierWeiter'),
+                    /* Die Bestaetigung ist eine SPERRE: der Weiter-Knopf ist
+                       gesperrt, solange sie nicht gesetzt ist. */
+                    weiterGesperrt: document.getElementById('btnKlavierWeiter').disabled,
+                    stuecke: K.Klavier.STUECKE.slice(),
+                    arena: true,
+                };
+                /* Das echte Stueck laden — unter file://, mit der echten
+                   Datei. Fehlt sie, greift der Rueckfall, und genau das ist
+                   dann das Ergebnis. */
+                schritte.geladen = await K.klavier.laden(1);
+                schritte.dauer = K.klavier.el ? Math.round(K.klavier.el.duration) : 0;
+                schritte.rundlauf = !!(K.klavier.el && K.klavier.el.loop);
+                schritte.grund = K.klavier.grund;
+                return schritte;
+            })()`);
+
+            if (kl.arena) {
+            check('Der vierte Menüpunkt steht im Onboarding', kl.knopf);
+            check('Und dahinter Stückwahl und Kopfhörer-Bestätigung',
+                kl.stueck1 && kl.stueck2 && kl.kopfhoerer && kl.weiter);
+            check('Die Kopfhörer-Bestätigung ist eine Sperre, kein Hinweis',
+                kl.weiterGesperrt);
+            console.log(`      Stücke: ${kl.stuecke.join(', ')}`);
+            if (kl.geladen) {
+                check('Das Klavierstück lädt im echten Browser unter file://',
+                    kl.dauer > 0, `${kl.dauer} s`);
+                /* Beide Stuecke sind laenger als das Sieben-Minuten-Segment —
+                   der Rundlauf ist eine Zusicherung, keine Erwartung. Fallen
+                   darf er trotzdem nicht: ein Auftritt, der in Stille endet,
+                   ist der eine Fall, den niemand auffangen kann. */
+                check('Es läuft im Rundlauf und ist länger als das Segment',
+                    kl.rundlauf && kl.dauer > 420, `${kl.dauer} s, Rundlauf ${kl.rundlauf}`);
+            } else {
+                console.log(`ÜBERSPRUNGEN  Klavierstück nicht ladbar `
+                    + `(${kl.grund}) — der Rückfall greift, das Spiel läuft.`);
+            }
+            }
+        }
+
         check('Keine Exception und kein console.error während des Laufs',
             b.fehler.length === 0, b.fehler.join(' | ') || 'sauber');
 

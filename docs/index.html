@@ -77,6 +77,7 @@
             <p>Wie wird gespielt?</p>
             <div class="modusZeile">
                 <button id="btnModeArcade" class="cyan">Arcade<br><small>gegen Alex</small></button>
+                <button id="btnModeKlavier" class="cyan">Klavier<br><small>Auftritt mit Begleitung</small></button>
                 <button id="btnModeOnline" class="gesperrt">Online 1:1<br><small>in Vorbereitung</small></button>
                 <button id="btnModeVersus">1:1 Bühne<br><small>Xperion, zwei Mikros</small></button>
             </div>
@@ -85,6 +86,38 @@
                 Auf der Bühne steuert Spieler 1 die untere und Spieler 2 die obere
                 Figur. Nötig ist ein zweikanaliger Eingang an EINEM Rechner:
                 Spieler 1 auf dem linken, Spieler 2 auf dem rechten Kanal.
+            </p>
+        </div>
+
+        <!-- Schritt 1b: nur im Klavier-Modus. Stueck und Kopfhoerer.
+             Die Kopfhoerer-Bestaetigung ist PFLICHT und kein Hinweis: Klavier
+             im Mikrofon blockiert die Ruhepruefung dauerhaft, und zwar
+             garantiert (siehe app-arena.js, Klasse Klavier). -->
+        <div id="stepKlavier" class="step">
+            <h3>SCHRITT 1b: BEGLEITUNG</h3>
+            <p>Welches Stück?</p>
+            <div class="modusZeile">
+                <button id="btnStueck1" class="cyan">Stück 1</button>
+                <button id="btnStueck2" class="cyan">Stück 2</button>
+            </div>
+            <p id="klavierLade" class="hinweis"></p>
+
+            <p style="color: #aaa; margin-top: 22px;">
+                <label>
+                    <input type="checkbox" id="chkKopfhoerer">
+                    Die Sängerin trägt Kopfhörer, und das Klavier läuft
+                    <b>ausschließlich</b> darauf.
+                </label>
+            </p>
+            <button id="btnKlavierWeiter" disabled style="opacity: 0.3;">Weiter</button>
+
+            <p class="hinweis">
+                Kommt das Klavier ins Gesangsmikrofon, folgt die Steuerung dem
+                Klavier statt der Stimme — <b>und die Ruheprüfung wird nie
+                fertig</b>: sie lernt den Raumpegel nur aus Tönen ohne Grundton,
+                Klavier hat einen. Das Spiel bliebe im Countdown stehen.
+                In der Arena muss der Klavierweg zur PA deshalb ein
+                <b>Mix-Minus</b> sein.
             </p>
         </div>
 

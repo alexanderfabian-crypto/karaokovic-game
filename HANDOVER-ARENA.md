@@ -617,6 +617,57 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     SATZ 40:15" für die volle Punktphase, „SATZ n" über dem Netz mit der
     Aufblende. Nach Einstand steht dort **„NACH EINSTAND"** — „ADV:40" als
     Endstand wäre Unsinn, ein Spiel endet nie im Vorteil.
+- **ARENA-23** — der **Klavier-Modus**: das Spiel bekommt seine erste eigene
+  Tonquelle. Bis hierher hat es nur zugehört. Vierter Menüpunkt, dahinter
+  Stückwahl und Kopfhörer-Bestätigung; gespielt wird wie im Arcade-Modus, es
+  ändert sich **keine Spielregel**.
+  - *Warum ein vierter Modus-Wert gefahrlos ist,* und das ist nachgezählt und
+    nicht gehofft: **jede** Modusabfrage im Spielcode prüft gegen `VERSUS`
+    (17×), es gibt **keine** positive Abfrage auf `ARCADE`. Ein vierter Wert
+    fällt deshalb überall automatisch in den Arcade-Zweig. `test-klavier.js`
+    hält genau diese Eigenschaft fest.
+  - **Der Befund, der die Architektur bestimmt** (gemessen 27.08.2026, Skript
+    `Entwickler-Tests/klavierweg.js`): der naheliegende Weg
+    `<audio> → createMediaElementSource → Gain → Ausgang` ist unter `file://`
+    **stumm**. Chrome behandelt eine `file://`-Datei gegenüber einer
+    `file://`-Seite als fremder Herkunft und lässt den Knoten Stille liefern —
+    und `createMediaElementSource` trennt das Element dabei vom Ausgang. Auf
+    dem Show-Rechner (Doppelklick) wäre das Klavier damit **vollständig
+    unhörbar**, ohne Fehler, ohne Meldung; das Element meldet weiter „spielt".
+
+    | Betrieb | MP3 lädt | Web-Audio | Element |
+    |---|---|---|---|
+    | Doppelklick (`file://`, **die Show**) | `readyState 4` | **RMS 0** | spielt |
+    | mit `--allow-file-access-from-files` | `readyState 4` | RMS 0,027 | spielt |
+
+  - Daraus: **der Direktweg ist der Regelfall** (`element.volume`), die
+    Web-Audio-Kette wird nur benutzt, wo sie **nachweislich klingt**.
+    Nachgewiesen wird das *gemessen* (`Klavier.probeGraph`, unhörbar hinter
+    einem Gain auf 0) und nicht an `location.protocol` geraten — die
+    Vermutung wäre falsch, sobald der Rechner mit dem Flag startet oder die
+    Seite doch von einem Server kommt. Welcher Weg es wurde, steht im
+    Protokoll.
+  - **Start** mit dem Wechsel in die Match-Phase, ohne zweiten Cue — erkannt
+    am **Match-Anlauf** (`matchLauf`) statt an zwei angehängten Aufrufen,
+    damit Startknopf *und* Regie-Cue ohne eigene Verdrahtung erfasst sind.
+    Kein Klavier im Einspielen. Es läuft über Punkte, Blenden, Satzwechsel
+    und Countdowns **durch**.
+  - **Ende:** das Spiel kennt keinen Sieger-Zustand. Was es kennt, ist die
+    Platzfolge — drei Plätze, jeder genau einmal. Sind alle gespielt, blendet
+    die Musik über 2 s aus. Ein **Reset** ist ein frischer Anlauf und startet
+    sie neu; sie nur zu beenden wäre eine Sackgasse, weil nach dem Reset die
+    Phase bereits auf `MATCH` steht und der Regie-Cue nicht mehr greift.
+  - **Rundlauf:** beide Stücke sind länger als das Sieben-Minuten-Segment
+    (599 s und 493 s) — der Loop ist eine Zusicherung, keine Erwartung.
+    Erkannt wird er am zurückspringenden Zeitstempel (`ended` feuert bei
+    `loop = true` nicht) und steht im Protokoll, damit ein hörbarer Bruch im
+    Mitschnitt wiederzufinden ist. Ob der Übergang auf einem Taktschlag
+    sitzt, entscheidet der Schnitt der MP3 — nicht dieser Code.
+  - **Fehlt die MP3,** läuft das Spiel vollständig weiter und sagt es als
+    `ASSET`-Zeile. Genau dieser Rückfall greift auf der Website: die Stücke
+    werden **nicht** ausgeliefert (`MUSIK_AUSLIEFERN = false` in
+    `webseite-bauen.js`) — ob 15 MB Musik öffentlich liegen dürfen, ist eine
+    Frage an die Produktion und nicht an ein Bauskript.
 
 ---
 
@@ -626,8 +677,13 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 25.08.2026: 467 Zusicherungen, alle grün, Exit 0.** 27 Testdateien in
-29 Läufen (zwei laufen doppelt, einmal je Fassung).
+**Stand 27.08.2026: 512 Zusicherungen, alle grün, Exit 0.** 28 Testdateien in
+30 Läufen (zwei laufen doppelt, einmal je Fassung).
+
+Daneben liegen **Messskripte**, die nicht Teil der Suite sind, weil sie nichts
+über den Spielcode beweisen, sondern eine Eigenschaft der Umgebung messen:
+`rueckwand.py` (Bodenkante je Platzbild) und `klavierweg.js` (trägt die
+Web-Audio-Kette unter `file://` Ton?).
 
 | Zusicherungen | Test |
 |---:|---|
@@ -719,6 +775,35 @@ gelesen** statt gepflegt.
 **Ladezeit gemessen:** 11 Bilder nach 6,3 s bei kaltem Cache, 2,8 s mit Cache
 — die drei Platzbilder sind je rund 2,5 MB. Wer die Seite zum ersten Mal
 aufruft, sieht den Platz mit einigen Sekunden Verzug.
+
+---
+
+## 9b. Betrieb: Mix-Minus im Klavier-Modus — showkritisch
+
+**Das Klavier darf niemals ins Gesangsmikrofon.** Der bekannte Grund ist die
+Tonhöhenerkennung: die Steuerung folgte dem Klavier statt der Stimme. Der
+zweite ist gravierender und **garantiert** einen Ausfall:
+
+Die adaptive Stillegrenze lernt den Raumpegel ausdrücklich **nur aus Frames
+ohne erkennbaren Grundton** — das war ein eigener Fix, damit Gesang die Grenze
+nicht anhebt. Klavier *hat* einen Grundton. Die Grenze wächst also **nicht**
+mit, während der gemessene Pegel dauerhaft darüber liegt. Folge: **die
+Ruheprüfung wird nie fertig, das Spiel hängt im Countdown** — reproduzierbar,
+jedes Mal.
+
+Deshalb:
+
+- **In der Arena muss der Klavierweg zur PA ein Mix-Minus sein**: das Signal,
+  das die Spielerinnen-Mikrofone abgreifen, darf das Klavier nicht enthalten.
+  Das ist eine Frage an die Tontechnik und vor der Show zu klären.
+- Im Spiel ist die **Kopfhörer-Bestätigung eine Sperre** und kein Hinweis —
+  ohne sie geht es im Onboarding nicht weiter.
+- Hängt der Countdown im Klavier-Modus länger als 8 s, nennt die Warnung den
+  Verdacht ausdrücklich („KLAVIER IM MIKROFON? Mix-Minus prüfen"), im
+  Protokoll **und** im Bild. Der Operator schaut auf die Wand, nicht ins
+  Protokoll.
+- Der **Notausgang bleibt** `Ctrl+Shift+A`: er schlägt auch dann auf, wenn die
+  Ruhe nie fertig wird.
 
 ---
 

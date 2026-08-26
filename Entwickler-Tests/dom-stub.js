@@ -100,6 +100,96 @@ defineGlobal('Image', class {
 defineGlobal('navigator', {
     mediaDevices: { getUserMedia: async () => { throw new Error('kein Mikrofon im Test'); } }
 });
+/* -------------------------------------------------------------------------
+ * Klavier-Attrappen
+ *
+ * Der Klavier-Modus braucht ein <audio>-Element und einen AudioContext.
+ * Beides gibt es in Node nicht. Die Attrappen sind absichtlich duenn: sie
+ * bilden GENAU das nach, worauf die Klavierklasse sich stuetzt — Laden,
+ * Abspielen, Zeitstempel, und einen Analyser, dessen Pegel der Test vorgibt.
+ *
+ * Der vorgegebene Pegel ist der eigentliche Zweck: das Spiel entscheidet
+ * MESSEND, ob es das Klavier durch die Web-Audio-Kette schickt oder direkt
+ * ueber das Element (unter file:// liefert die Kette Stille). Genau diese
+ * Verzweigung muss ein Test in beide Richtungen fahren koennen.
+ * ---------------------------------------------------------------------- */
+
+/** Steuerung der Attrappen durch den Test. */
+const klavierAttrappe = {
+    /** 'ok' | 'fehler' | 'stumm' — wie sich das naechste Laden verhaelt. */
+    laden: 'ok',
+    /** Dauer, die ein geladenes Element meldet. */
+    dauer: 600,
+    /** RMS, den der Analyser der Probe liefert. 0 = Kette ist stumm. */
+    probeRms: 0.03,
+    /** Alle erzeugten Elemente, damit der Test sie steuern kann. */
+    elemente: [],
+};
+
+class FakeAudio {
+    constructor(src) {
+        this.loop = false;
+        this.preload = '';
+        this.volume = 1;
+        this.paused = true;
+        this.currentTime = 0;
+        this.duration = klavierAttrappe.dauer;
+        this.readyState = 0;
+        this._handler = {};
+        klavierAttrappe.elemente.push(this);
+        if (src !== undefined) this.src = src;
+    }
+    addEventListener(ev, fn) { this._handler[ev] = fn; }
+    removeEventListener(ev) { delete this._handler[ev]; }
+    load() {
+        /* Sofort und synchron: der Test soll nicht auf eine Uhr warten. */
+        if (klavierAttrappe.laden === 'fehler') {
+            this.readyState = 0;
+            if (this._handler.error) this._handler.error();
+            return;
+        }
+        if (klavierAttrappe.laden === 'stumm') return;   // meldet nie etwas
+        this.readyState = 4;
+        if (this._handler.canplaythrough) this._handler.canplaythrough();
+    }
+    play() { this.paused = false; return Promise.resolve(); }
+    pause() { this.paused = true; }
+}
+
+class FakeAnalyser {
+    constructor() { this.fftSize = 2048; }
+    connect() {} disconnect() {}
+    getFloatTimeDomainData(buf) {
+        /* Ein Gleichanteil in Hoehe des vorgegebenen RMS — der Betrag ist
+           genau das, was probeGraph() misst. */
+        buf.fill(klavierAttrappe.probeRms);
+    }
+}
+
+class FakeAudioContext {
+    constructor(opts) {
+        this.sampleRate = (opts && opts.sampleRate) || 48000;
+        this.state = 'running';
+        this.destination = { connect: noop, disconnect: noop };
+        this.sinkId = '';
+    }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+    createAnalyser() { return new FakeAnalyser(); }
+    createGain() {
+        return { gain: { value: 1 }, connect: noop, disconnect: noop };
+    }
+    createMediaElementSource() { return { connect: noop, disconnect: noop }; }
+    createMediaStreamDestination() { return { stream: {}, connect: noop }; }
+    createBiquadFilter() {
+        return { type: '', frequency: { value: 0 }, Q: { value: 0 },
+            connect: noop, disconnect: noop };
+    }
+}
+
+defineGlobal('Audio', FakeAudio);
+defineGlobal('AudioContext', FakeAudioContext);
+
 defineGlobal('requestAnimationFrame', noop);
 defineGlobal('alert', noop);
 if (typeof globalThis.performance === 'undefined') {
@@ -202,4 +292,5 @@ function zeichenprotokoll() {
     return { ctx, log };
 }
 
-module.exports = { el, loadGame, check, summary, fakeCtx, zeichenprotokoll };
+module.exports = { el, loadGame, check, summary, fakeCtx, zeichenprotokoll,
+    klavierAttrappe };

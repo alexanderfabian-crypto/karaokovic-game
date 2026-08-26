@@ -57,6 +57,34 @@ const SEITEN = [
 ];
 const SKRIPTE = ['app-arena.js', 'app.js'];
 
+/* -------------------------------------------------------------------------
+ * Kommen die Klavierstuecke mit ins Netz?
+ *
+ * NEIN, und das ist eine Entscheidung und kein Vergessen. Die Seite ist
+ * oeffentlich; die beiden MP3s sind zusammen rund 15 MB Musik, und ob die
+ * oeffentlich liegen darf, ist eine Frage an die Produktion und nicht an
+ * dieses Skript. Der Show-Rechner braucht sie ohnehin nicht von hier — dort
+ * liegt die MP3 im selben Ordner wie die Seite.
+ *
+ * Ohne sie greift im Netz genau der Rueckfall, der dafuer gebaut und geprueft
+ * ist: das Spiel laeuft vollstaendig, es klingt nur nichts dazu, und im
+ * Protokoll steht eine ASSET-Zeile. Wer sie doch ausliefern will, setzt
+ * diesen einen Wert auf true.
+ * ---------------------------------------------------------------------- */
+const MUSIK_AUSLIEFERN = false;
+
+/**
+ * Die Klavierstuecke, GELESEN aus dem Spielcode — wie die Bilder.
+ * @returns {string[]}
+ */
+function stueckeAus() {
+    const text = fs.readFileSync(path.join(WURZEL, 'app-arena.js'), 'utf8');
+    const block = text.match(/Klavier\.STUECKE\s*=\s*\[([^\]]*)\]/);
+    if (!block) return [];
+    return (block[1].match(/'([^']+\.mp3)'/g) || []).map((s) => s.slice(1, -1));
+}
+const stuecke = stueckeAus();
+
 const bilder = [...new Set([...assetsAus('app-arena.js'), ...assetsAus('app.js')])].sort();
 
 /**
@@ -88,7 +116,8 @@ fs.mkdirSync(ZIEL, { recursive: true });
 for (const [quelle, name] of SEITEN) {
     fs.copyFileSync(path.join(WURZEL, quelle), path.join(ZIEL, name));
 }
-for (const datei of [...SKRIPTE, ...bilder]) {
+for (const datei of [...SKRIPTE, ...bilder,
+    ...(MUSIK_AUSLIEFERN ? stuecke : [])]) {
     const von = path.join(WURZEL, datei);
     /* Noch nicht gelieferte Bilder halten den Bau nicht auf — siehe
        `optionaleBilder` oben. Gemeldet werden sie unten trotzdem. */
@@ -108,6 +137,11 @@ for (const d of fs.readdirSync(ZIEL)) summe += fs.statSync(path.join(ZIEL, d)).s
 console.log(`docs/ neu gebaut — ${fs.readdirSync(ZIEL).length} Dateien, `
     + `${(summe / 1024 / 1024).toFixed(1)} MB`);
 console.log(`  Startseite  index.html  -> ARENA-1 (drei Plätze)`);
+console.log(`  Klavier     ${stuecke.length} Stück(e) `
+    + (MUSIK_AUSLIEFERN
+        ? 'ausgeliefert'
+        : 'NICHT ausgeliefert (MUSIK_AUSLIEFERN = false) — '
+          + 'im Netz greift der Rückfall'));
 console.log(`  daneben     v41.html    -> V41 (nur Hartplatz)`);
 console.log(`  Bilder      ${bilder.length} aus dem Spielcode gelesen`);
 

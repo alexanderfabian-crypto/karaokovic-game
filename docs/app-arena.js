@@ -124,6 +124,12 @@
          */
         mode: 'ARCADE',
 
+        /**
+         * Gewaehltes Klavierstueck (1 oder 2), nur im Klavier-Modus benutzt.
+         * Wird im Onboarding gesetzt und danach nicht mehr veraendert.
+         */
+        klavierStueck: 1,
+
         volumeGate: 0.02,
         /* Faktor, mit dem die Ruhegrenze ueber dem gemessenen Raumpegel
            liegt. 1.6 ist gut ein Drittel lauter als das Rauschen und immer
@@ -872,6 +878,26 @@
          * Frames und liefe sonst auseinander) und einen Umgang mit Latenz.
          */
         ONLINE: 'ONLINE',
+        /**
+         * Live-Auftritt mit Klavierbegleitung.
+         *
+         * GESPIELT WIRD WIE IM ARCADE-MODUS: KI-Gegner, ein Mikrofon. Der
+         * Modus aendert keine einzige Spielregel — er fuegt eine TONQUELLE
+         * hinzu. Bis hierher hatte das Spiel gar keinen eigenen Ton.
+         *
+         * WARUM DAS GEFAHRLOS IST, und das ist nachgezaehlt und nicht
+         * gehofft: JEDE Modusabfrage in dieser Datei prueft gegen VERSUS
+         * (`=== MODE.VERSUS`, einmal `!== MODE.VERSUS`). Es gibt nirgends
+         * eine positive Abfrage auf ARCADE. Ein vierter Wert faellt deshalb
+         * ueberall automatisch in den Arcade-Zweig — genau das, was hier
+         * gewollt ist. test-klavier.js haelt diese Eigenschaft fest, damit
+         * sie nicht beim naechsten Umbau verlorengeht.
+         *
+         * Eine Duell-Variante gibt es bewusst nicht: sie verlangte eine
+         * zweite Kopfhoererstrecke und einen zweiten Mix-Minus-Weg, und der
+         * Auftritt braucht beides nicht.
+         */
+        KLAVIER: 'KLAVIER',
     };
 
     /**
@@ -1486,6 +1512,48 @@
         }
 
         /**
+         * Den AUSGABEweg ins Protokoll schreiben — soweit der Browser ihn
+         * preisgibt.
+         *
+         * Gegenstueck zu protokolliereTrack(), das den Eingang festhaelt. Im
+         * Klavier-Modus ist der Ausgang zum ersten Mal showkritisch: laeuft er
+         * versehentlich auf die Rechnerlautsprecher statt auf die Kopfhoerer,
+         * steht das Klavier im Mikrofon und die Ruhepruefung wird nie fertig.
+         *
+         * Der Browser gibt wenig preis: `sinkId` kennt Chrome erst ab 110 und
+         * liefert bei der Standardausgabe einen leeren String, und die
+         * Geraetenamen stehen nur mit erteilter Berechtigung da. Genau deshalb
+         * ist die Kopfhoerer-Bestaetigung im Onboarding eine Sperre und diese
+         * Zeile nur eine Notiz — sie kann nichts garantieren, aber sie
+         * beantwortet hinterher die Frage, worauf es lief.
+         *
+         * Wirft nicht.
+         *
+         * @param {AudioContext} ctx
+         * @returns {Promise<void>}
+         */
+        static async protokolliereAusgang(ctx) {
+            try {
+                const sink = (ctx && 'sinkId' in ctx)
+                    ? (ctx.sinkId || '(Standardausgabe)')
+                    : '(sinkId unbekannt, Chrome < 110)';
+                let namen = '(nicht auslesbar)';
+                if (navigator.mediaDevices
+                    && navigator.mediaDevices.enumerateDevices) {
+                    const alle = await navigator.mediaDevices.enumerateDevices();
+                    const aus = alle.filter((d) => d.kind === 'audiooutput');
+                    namen = aus.length
+                        ? aus.map((d) => d.label || 'ohne Namen').join(' | ')
+                        : '(kein Ausgabegeraet gemeldet)';
+                }
+                Protokoll.schreib('KLAVIER',
+                    `Ausgabeweg ${sink} — vorhanden: ${namen}`);
+            } catch (err) {
+                Protokoll.schreib('KLAVIER', `Ausgabeweg nicht auslesbar: ${err}`);
+            }
+        }
+
+        /**
          * Track-Ereignisse ins Protokoll haengen.
          *
          * `ended` feuert, wenn das Geraet verschwindet (Dante Virtual
@@ -1849,6 +1917,462 @@
     AudioEngine.CALIB_AUSREISSER_HALBTOENE = 6;
 
     /* =========================================================================
+     * 5b. KLAVIER — die erste eigene Tonquelle des Spiels
+     * ====================================================================== */
+
+    /**
+     * Die Klavierbegleitung des Klavier-Modus.
+     *
+     * Das Spiel hatte bis hierher GAR KEINEN eigenen Ton. Es hat nur zugehoert.
+     * Deshalb steht hier eine eigene Klasse und kein Anhaengsel an der
+     * AudioEngine: die beiden haben nichts miteinander zu tun ausser dem
+     * AudioContext, und die AudioEngine ist an ihren geschuetzten Stellen das
+     * Letzte, was noch einen zweiten Zweck bekommen sollte.
+     *
+     * -------------------------------------------------------------------------
+     * DER BEFUND, DER DIE ARCHITEKTUR BESTIMMT (gemessen 27.08.2026)
+     *
+     * Naheliegend waere: <audio> -> createMediaElementSource -> zwei
+     * Gain-Wege -> Ausgang. Unter `file://` ist dieser Weg STUMM.
+     *
+     * Gemessen in Chrome headless, Seite und MP3 im selben Verzeichnis, ueber
+     * einen AnalyserNode in der Kette:
+     *
+     *   Betrieb                              MP3 laedt   Web-Audio   direkt
+     *   Doppelklick (file://, die Show)      readyState 4   RMS 0     spielt
+     *   mit --allow-file-access-from-files   readyState 4   RMS 0.027 spielt
+     *
+     * Chrome behandelt eine `file://`-Ressource gegenueber einer
+     * `file://`-Seite als fremder Herkunft und laesst
+     * MediaElementAudioSourceNode dann Stille liefern. Das Element meldet
+     * dabei `paused: false`, `readyState 4`, und `currentTime` laeuft weiter —
+     * es wirft nichts, es sagt nichts, es klingt nur nicht. Schlimmer noch:
+     * createMediaElementSource trennt das Element vom Ausgang. Der naive Weg
+     * macht das Klavier auf dem Show-Rechner also VOLLSTAENDIG unhoerbar, und
+     * zwar lautlos.
+     *
+     * Deshalb:
+     *   - DIREKTER WEG IST DER REGELFALL. Das Element spielt selbst, der Pegel
+     *     haengt an `element.volume`. Der funktioniert ueberall.
+     *   - DIE WEB-AUDIO-KETTE wird nur benutzt, wo sie nachweislich klingt.
+     *     Nachgewiesen wird das GEMESSEN und nicht am Protokoll der Seite
+     *     geraten (siehe probeGraph): ein stiller Weg ist genau der Fehler,
+     *     den man nicht sieht. Wo sie steht, gibt es die zwei getrennt
+     *     regelbaren Wege des Briefings; wo nicht, gibt es einen, und das
+     *     steht im Protokoll.
+     *
+     * Auf GitHub Pages (https) und in der Testumgebung greift die Kette, auf
+     * dem Show-Rechner der Direktweg. Beide sind hoerbar — das ist der Punkt.
+     * -------------------------------------------------------------------------
+     */
+    class Klavier {
+        constructor() {
+            /** @type {HTMLAudioElement|null} */
+            this.el = null;
+            /** @type {AudioNode|null} */
+            this.quelle = null;
+            /** @type {GainNode|null} Weg zu den Kopfhoerern der Spielerin. */
+            this.kopfGain = null;
+            /** @type {GainNode|null} Weg zur Publikumssumme. */
+            this.publikumGain = null;
+            /**
+             * @type {MediaStreamAudioDestinationNode|null}
+             * UEBERGABEPUNKT fuer den Uebertragungsteil, der NICHT in diesem
+             * Sprint ist: in der Show kommt der Publikumston vom Pult, nicht
+             * aus dem Browser. Der Knoten steht hier, weil die Testumgebung
+             * genau an dieser Stelle ihren WebRTC-Weg angehaengt hat — dann
+             * ist es ein Einstecken und kein Umbau. Heute hoert niemand daran.
+             */
+            this.publikumZiel = null;
+
+            /** @type {boolean} Laeuft der Ton durch die Web-Audio-Kette? */
+            this.ueberGraph = false;
+            /** @type {boolean} MP3 geladen und spielbereit. */
+            this.bereit = false;
+            /** @type {boolean} Spielt gerade. */
+            this.laeuft = false;
+            /** @type {string} Dateiname des geladenen Stuecks. */
+            this.datei = '';
+            /** @type {string} Warum es nicht spielt, falls es nicht spielt. */
+            this.grund = 'noch nicht geladen';
+
+            /** @type {number} Zeitstempel im Stueck aus dem vorigen Frame. */
+            this._letzteZeit = 0;
+            /** @type {number} Wie oft das Stueck bereits umgelaufen ist. */
+            this.rundlaeufe = 0;
+            /** @type {Object|null} Laufende Blende, siehe tick(). */
+            this._blende = null;
+            /** @type {{kopf:number, publikum:number}} Eingestellte Pegel. */
+            this.pegelwerte = { kopf: Klavier.PEGEL_KOPF,
+                publikum: Klavier.PEGEL_PUBLIKUM };
+            /** @type {number} Gemeinsamer Blendenfaktor ueber beiden Wegen. */
+            this._blendfaktor = 0;
+        }
+
+        /**
+         * Dateiname eines Stuecks.
+         * @param   {number} stueck 1 oder 2
+         * @returns {string}
+         */
+        static dateiFuer(stueck) {
+            return Klavier.STUECKE[stueck === 2 ? 1 : 0];
+        }
+
+        /**
+         * Das Stueck laden — BEIM BETRETEN DES MODUS, nicht beim Match-Cue.
+         *
+         * Ein Nachladeruckler im Moment des Cues waere auf der Buehne
+         * sichtbar; hier ist Zeit dafuer, der Bediener klickt sich ohnehin
+         * durch Platzwahl, Mikrofon und Kalibrierung.
+         *
+         * FEHLT DIE DATEI, spielt kein Klavier und das Spiel laeuft normal
+         * weiter — Hausordnung. Im Protokoll steht eine ASSET-Zeile, damit das
+         * Fehlen nicht lautlos ist.
+         *
+         * @param   {number} stueck 1 oder 2
+         * @returns {Promise<boolean>} true, wenn spielbereit
+         */
+        laden(stueck) {
+            this.datei = Klavier.dateiFuer(stueck);
+            this.bereit = false;
+            const el = new Audio();
+            /* Rundlauf uebernimmt der Browser. Ob der Uebergang auf einem
+               Taktschlag sitzt, entscheidet der Schnitt der MP3 und nicht
+               dieser Code — siehe das Briefing. */
+            el.loop = true;
+            el.preload = 'auto';
+            el.src = this.datei;
+            this.el = el;
+
+            return new Promise((fertig) => {
+                let entschieden = false;
+                const schluss = (ok, grund) => {
+                    if (entschieden) return;
+                    entschieden = true;
+                    this.bereit = ok;
+                    this.grund = grund;
+                    fertig(ok);
+                };
+                el.addEventListener('canplaythrough', () => {
+                    Protokoll.schreib('KLAVIER',
+                        `"${this.datei}" geladen — ${el.duration.toFixed(0)} s`);
+                    schluss(true, '');
+                }, { once: true });
+                el.addEventListener('error', () => {
+                    Protokoll.schreib('ASSET',
+                        `Klavierstueck fehlt oder ist defekt: ${this.datei} — `
+                        + `das Spiel laeuft ohne Begleitung weiter`);
+                    console.warn(`[Klavier] ${this.datei} nicht ladbar.`);
+                    schluss(false, 'Datei fehlt oder ist defekt');
+                }, { once: true });
+                /* Zeitlimit, damit der Bediener nicht vor einem Knopf steht,
+                   der nie weitergeht. Ohne Zeitlimit haengt das Onboarding an
+                   einem Ereignis, das bei einer halb geschriebenen Datei nie
+                   kommt. */
+                setTimeout(() => {
+                    if (entschieden) return;
+                    Protokoll.schreib('ASSET',
+                        `Klavierstueck ${this.datei} laedt seit `
+                        + `${Klavier.LADE_ZEITLIMIT_MS} ms nicht fertig — `
+                        + `weiter ohne Begleitung`);
+                    schluss(false, 'Zeitlimit beim Laden');
+                }, Klavier.LADE_ZEITLIMIT_MS);
+                el.load();
+            });
+        }
+
+        /**
+         * Messen, ob die Web-Audio-Kette unter DIESER Herkunft ueberhaupt Ton
+         * fuehrt — siehe den Befund im Klassenkopf.
+         *
+         * Gemessen und nicht geraten: eine Abfrage auf `location.protocol`
+         * waere eine Vermutung ueber Chrome, und sie waere falsch, sobald der
+         * Rechner mit `--allow-file-access-from-files` startet oder die Seite
+         * doch von einem Server kommt.
+         *
+         * DIE PROBE IST NIE HOERBAR, und zwar in beiden Ausgaengen des
+         * Versuchs: klingt die Kette, liegt hinter dem Analyser ein Gain auf
+         * 0; klingt sie nicht, ist ohnehin Stille. Sie laeuft auf einem
+         * EIGENEN Element, weil createMediaElementSource pro Element nur
+         * einmal geht und sich nicht rueckgaengig machen laesst.
+         *
+         * Wirft nicht: im Zweifel gilt "Kette klingt nicht", und dann greift
+         * der Direktweg.
+         *
+         * @param   {AudioContext} ctx
+         * @param   {string} datei
+         * @returns {Promise<number>} groesster gemessener RMS
+         */
+        static async probeGraph(ctx, datei) {
+            let el = null;
+            try {
+                el = new Audio(datei);
+                el.loop = true;
+                const quelle = ctx.createMediaElementSource(el);
+                const analyser = ctx.createAnalyser();
+                analyser.fftSize = 2048;
+                const stumm = ctx.createGain();
+                stumm.gain.value = 0;
+                quelle.connect(analyser);
+                analyser.connect(stumm);
+                stumm.connect(ctx.destination);
+
+                await el.play();
+                const buf = new Float32Array(analyser.fftSize);
+                let max = 0;
+                const schritte = Math.ceil(Klavier.PROBE_MS / 20);
+                for (let i = 0; i < schritte; i++) {
+                    await new Promise((r) => setTimeout(r, 20));
+                    analyser.getFloatTimeDomainData(buf);
+                    let s = 0;
+                    for (let k = 0; k < buf.length; k++) s += buf[k] * buf[k];
+                    max = Math.max(max, Math.sqrt(s / buf.length));
+                }
+                el.pause();
+                quelle.disconnect();
+                analyser.disconnect();
+                stumm.disconnect();
+                return max;
+            } catch (err) {
+                Protokoll.schreib('KLAVIER', `Probe der Web-Audio-Kette `
+                    + `fehlgeschlagen (${err && err.name || err}) — Direktweg`);
+                if (el) { try { el.pause(); } catch (_) { /* egal */ } }
+                return 0;
+            }
+        }
+
+        /**
+         * Die Klavierkette an den BESTEHENDEN AudioContext haengen.
+         *
+         * Kein zweiter Kontext: die Mikrofonkette liegt bereits in diesem, und
+         * zwei Kontexte haetten zwei Uhren und zwei Abtastraten.
+         *
+         * Aufgerufen NACH der Mikrofonfreigabe — vorher gibt es keinen
+         * Kontext. Und lange vor dem Match-Cue, damit die Probe dort keine
+         * Zeit kostet.
+         *
+         * @param   {AudioContext} ctx
+         * @returns {Promise<void>}
+         */
+        async verbinden(ctx) {
+            if (!this.bereit || !ctx) return;
+
+            const rms = await Klavier.probeGraph(ctx, this.datei);
+            this.ueberGraph = rms >= Klavier.PROBE_SCHWELLE;
+
+            if (!this.ueberGraph) {
+                Protokoll.schreib('KLAVIER',
+                    `Web-Audio-Kette liefert Stille (RMS ${rms.toFixed(5)}) — `
+                    + `Klavier laeuft direkt ueber das Element. Der Weg zur `
+                    + `Publikumssumme steht damit NICHT zur Verfuegung; in der `
+                    + `Show kommt er ohnehin vom Pult.`);
+                this.setzePegel();
+                return;
+            }
+
+            this.quelle = ctx.createMediaElementSource(this.el);
+            this.kopfGain = ctx.createGain();
+            this.publikumGain = ctx.createGain();
+            this.quelle.connect(this.kopfGain);
+            this.quelle.connect(this.publikumGain);
+            this.kopfGain.connect(ctx.destination);
+            try {
+                this.publikumZiel = ctx.createMediaStreamDestination();
+                this.publikumGain.connect(this.publikumZiel);
+            } catch (err) {
+                /* Ohne diesen Knoten fehlt nur der Uebergabepunkt fuer
+                   spaeter — das Klavier klingt trotzdem. */
+                Protokoll.schreib('KLAVIER',
+                    `Publikumsweg nicht anlegbar: ${err}`);
+            }
+            /* Das Element spielt ab jetzt NUR noch in die Kette. Sein eigener
+               Pegel muss deshalb offen stehen, geregelt wird ueber die
+               Gains. */
+            this.el.volume = 1;
+            this.setzePegel();
+            Protokoll.schreib('KLAVIER',
+                `Web-Audio-Kette steht (Probe-RMS ${rms.toFixed(4)}) — `
+                + `zwei getrennte Wege, Kopfhoerer und Publikumssumme`);
+        }
+
+        /**
+         * Pegel setzen. Wirkt auf dem Weg, der gerade traegt.
+         *
+         * @param {number} [kopf]     0..1
+         * @param {number} [publikum] 0..1
+         */
+        setzePegel(kopf, publikum) {
+            if (kopf !== undefined) this.pegelwerte.kopf = kopf;
+            if (publikum !== undefined) this.pegelwerte.publikum = publikum;
+            const f = this._blendfaktor;
+            if (this.ueberGraph && this.kopfGain) {
+                this.kopfGain.gain.value = this.pegelwerte.kopf * f;
+                this.publikumGain.gain.value = this.pegelwerte.publikum * f;
+            } else if (this.el) {
+                this.el.volume = Math.max(0, Math.min(1,
+                    this.pegelwerte.kopf * f));
+            }
+        }
+
+        /**
+         * Losspielen — beim Wechsel in die Match-Phase, sonst nie.
+         *
+         * Kurz eingeblendet statt hart eingeschaltet: eine MP3 beginnt selten
+         * exakt bei null, und ein Knacks im ersten Moment des Auftritts ist
+         * genau der Moment, in dem alle hinhoeren.
+         */
+        start() {
+            if (!this.bereit || !this.el || this.laeuft) return;
+            this.laeuft = true;
+            this._blendfaktor = 0;
+            this.setzePegel();
+            this._letzteZeit = 0;
+            this.rundlaeufe = 0;
+            this._blende = { von: 0, nach: 1, start: Uhr.jetzt(),
+                dauer: Klavier.EINBLENDE_MS, danach: null };
+            this.el.currentTime = 0;
+            const p = this.el.play();
+            if (p && p.catch) {
+                p.catch((err) => {
+                    this.laeuft = false;
+                    Protokoll.schreib('KLAVIER',
+                        `Wiedergabe abgelehnt: ${err && err.name || err}`);
+                });
+            }
+            Protokoll.schreib('KLAVIER', `Start (${this.datei}, `
+                + `${this.ueberGraph ? 'Web-Audio-Kette' : 'Direktweg'})`);
+        }
+
+        /**
+         * Sauber ausblenden und danach anhalten.
+         * @param {number} [dauer] Millisekunden
+         */
+        beenden(dauer) {
+            if (!this.laeuft) return;
+            this._blende = {
+                von: this._blendfaktor, nach: 0, start: Uhr.jetzt(),
+                dauer: dauer === undefined ? Klavier.AUSBLENDE_MS : dauer,
+                danach: 'halt',
+            };
+            Protokoll.schreib('KLAVIER',
+                `Ausblende ueber ${this._blende.dauer} ms`);
+        }
+
+        /**
+         * Einen Frame mitlaufen: Blende fahren, Rundlauf protokollieren.
+         *
+         * Der Rundlauf wird am ZURUECKSPRINGENDEN Zeitstempel erkannt. Ein
+         * Ereignis gibt es dafuer nicht: `ended` feuert bei `loop = true`
+         * nicht. Die Zeile im Protokoll ist keine Zierde — sie ist der einzige
+         * Weg, einen hoerbaren Bruch spaeter im Mitschnitt wiederzufinden.
+         */
+        tick() {
+            if (!this.el) return;
+
+            if (this._blende) {
+                const b = this._blende;
+                const t = b.dauer <= 0 ? 1
+                    : Math.min(1, (Uhr.jetzt() - b.start) / b.dauer);
+                this._blendfaktor = b.von + (b.nach - b.von) * t;
+                this.setzePegel();
+                if (t >= 1) {
+                    this._blende = null;
+                    if (b.danach === 'halt') {
+                        this.el.pause();
+                        this.laeuft = false;
+                        Protokoll.schreib('KLAVIER',
+                            `gestoppt nach ${this.rundlaeufe} Rundlauf/Rundlaeufen`);
+                    }
+                }
+            }
+
+            if (!this.laeuft) return;
+            const jetzt = this.el.currentTime;
+            if (jetzt + Klavier.RUNDLAUF_TOLERANZ_S < this._letzteZeit) {
+                this.rundlaeufe++;
+                Protokoll.schreib('KLAVIER',
+                    `Rundlauf ${this.rundlaeufe} — Stueck beginnt von vorn`);
+            }
+            this._letzteZeit = jetzt;
+        }
+    }
+
+    /**
+     * Dauer der Ausblende am Matchende, in Millisekunden.
+     *
+     * Zwei Sekunden sind der Wert aus dem Briefing und derselbe Takt, den auch
+     * die Uebergangsblende hat (TIMING.TRANSITION_MS) — ein Auftritt, der
+     * hart abgeschnitten wird, klingt nach Stromausfall. Nach der ersten Probe
+     * nachziehbar.
+     */
+    /**
+     * Die beiden Stuecke, in der Reihenfolge der Knoepfe im Onboarding.
+     *
+     * AUSGESCHRIEBEN und nicht zusammengebaut: `webseite-bauen.js` liest die
+     * Dateinamen aus dem Spielcode statt eine zweite Liste zu pflegen, und ein
+     * Name aus einer Zeichenkettenvorlage steht dort nirgends zum Lesen. Eine
+     * getippte Liste im Bauskript waere nach dem ersten neuen Stueck falsch,
+     * und der Fehler fiele erst dem Publikum auf.
+     *
+     * Gemessen am 27.08.2026: Stueck 1 dauert 599 s, Stueck 2 493 s. BEIDE
+     * sind laenger als die Segmentgrenze von sieben Minuten (420 s) — der
+     * Rundlauf ist damit eine Zusicherung und keine Erwartung. Er darf
+     * trotzdem nicht wegfallen: ein Auftritt, der in Stille endet, waere der
+     * eine Fall, den niemand auffangen kann.
+     */
+    Klavier.STUECKE = ['Karaokovic_Klavier_1.mp3', 'Karaokovic_Klavier_2.mp3'];
+
+    Klavier.AUSBLENDE_MS = 2000;
+
+    /**
+     * Dauer der Einblende beim Match-Cue.
+     *
+     * Kurz genug, dass es als "sofort" gelesen wird, lang genug gegen den
+     * Knacks am Anfang der Datei. Das Briefing verlangt einen Start ohne
+     * hoerbaren Ruckler — ein Sprung von Stille auf vollen Pegel IST einer.
+     */
+    Klavier.EINBLENDE_MS = 300;
+
+    /** Grundpegel beider Wege. Feineinstellung gehoert auf das Pult. */
+    Klavier.PEGEL_KOPF = 1.0;
+    Klavier.PEGEL_PUBLIKUM = 1.0;
+
+    /**
+     * Wie lange die Probe der Web-Audio-Kette misst.
+     *
+     * 300 ms sind rund fuenfzehn Messungen — genug, um eine Anlaufstille am
+     * Dateianfang von echter Stille zu unterscheiden, und kurz genug, dass
+     * niemand im Onboarding darauf wartet.
+     */
+    Klavier.PROBE_MS = 300;
+
+    /**
+     * Ab welchem RMS die Kette als hoerbar gilt.
+     *
+     * Der Unterschied ist kein Grenzfall: gemessen wurden 0.027 (klingt) gegen
+     * exakt 0 (klingt nicht). 0.0005 liegt weit unter dem einen und weit ueber
+     * dem anderen und faengt zugleich einen leisen Dateianfang ab.
+     */
+    Klavier.PROBE_SCHWELLE = 0.0005;
+
+    /**
+     * Wie lange auf `canplaythrough` gewartet wird, bevor ohne Begleitung
+     * weitergemacht wird. Ohne Zeitlimit haengt das Onboarding an einem
+     * Ereignis, das bei einer halb geschriebenen Datei nie kommt.
+     */
+    Klavier.LADE_ZEITLIMIT_MS = 15000;
+
+    /**
+     * Ab wie vielen Sekunden Ruecksprung ein Rundlauf erkannt wird.
+     *
+     * Der Zeitstempel eines Medienelements steht zwischen zwei Frames auch
+     * mal still oder springt um Millisekunden; eine halbe Sekunde Ruecksprung
+     * kommt nur beim Umlauf vor.
+     */
+    Klavier.RUNDLAUF_TOLERANZ_S = 0.5;
+
+
+    /* =========================================================================
      * 6. MATCH STATE — Punkte, Sätze, Historie, State Machine
      * ====================================================================== */
 
@@ -1917,6 +2441,16 @@
             this.satzAngesagt = 0;
             /** @type {number} Bis wann "SATZ n" stehen bleibt (ms). */
             this.satzAnzeigeBis = 0;
+            /**
+             * @type {number} Wievielter Match-Anlauf laeuft gerade.
+             *
+             * Zaehlt hoch bei jedem frischen Beginn — startMatch() und
+             * hardReset(). Die Klavierbegleitung haengt daran: sie beginnt mit
+             * einem neuen Anlauf von vorn. Ein Vergleich statt eines
+             * Ereignisses, damit BEIDE Einstiege (Startknopf und Regie-Cue
+             * Enter+Leertaste) ohne eigene Verdrahtung erfasst sind.
+             */
+            this.matchLauf = 0;
             /** @type {number} Index in GAMIFICATION_WORDS. */
             this.currentWordIndex = 0;
             /**
@@ -1958,6 +2492,7 @@
                Ansage bekommt, nicht erst Satz 2. */
             this.satzAngesagt = 0;
             this.satzAnzeigeBis = 0;
+            this.matchLauf++;
         }
 
         /**
@@ -2104,6 +2639,14 @@
             this.history.length = 0;
             this.currentWordIndex = 0;
             this.server = PLAYER.ANDREA;
+            this.satzErgebnis = '';
+            this.satzAngesagt = 0;
+            /* Ein Reset ist ein frischer Anlauf — die Begleitung beginnt
+               dann von vorn. Sie NUR zu beenden waere eine Sackgasse: nach
+               dem Reset steht die Phase bereits auf MATCH, der Regie-Cue
+               greift nicht mehr, und die Show haette keinen Weg zurueck zur
+               Musik. */
+            this.matchLauf++;
         }
 
         /**
@@ -6708,6 +7251,15 @@
                     `Raumpegel ${(scene.raumpegel || 0).toFixed(3)}`
                     + '   ·   Ctrl+Shift+A schlägt trotzdem auf',
                     p.x, y + 30 * p.scale);
+                /* Der Operator schaut auf die Wand, nicht ins Protokoll. Im
+                   Klavier-Modus hat ein haengender Countdown fast immer
+                   dieselbe Ursache — sie gehoert deshalb dorthin, wo sie
+                   gelesen wird. */
+                if (scene.klavierVerdacht) {
+                    ctx.font = this.font(24 * p.scale, 'bold');
+                    ctx.fillText('KLAVIER IM MIKROFON? MIX-MINUS PRÜFEN',
+                        p.x, y + 62 * p.scale);
+                }
                 ctx.restore();
             }
         }
@@ -8406,6 +8958,15 @@
              * @type {AudioEngine}
              */
             this.audio2 = new AudioEngine();
+            /**
+             * Die Klavierbegleitung. Existiert immer, spielt aber nur im
+             * Klavier-Modus — geladen wird sie erst beim Betreten des Modus.
+             */
+            this.klavier = new Klavier();
+            /** @type {number} Match-Anlauf, fuer den die Begleitung laeuft. */
+            this._klavierLauf = 0;
+            /** @type {boolean} Fuer diesen Anlauf bereits ausgeblendet. */
+            this._klavierBeendet = false;
             this.match = new MatchState();
 
             this.ball = new Ball();
@@ -8571,7 +9132,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-22 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-23 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
         }
 
         /**
@@ -8634,13 +9195,66 @@
                 CONFIG.mode = modus;
                 if (modusHinweis) modusHinweis.innerText = '';
                 document.getElementById('step0').classList.remove('active');
-                document.getElementById('stepPlatz').classList.add('active');
+                /* Der Klavier-Modus schiebt einen Schritt ein: Stueck und
+                   Kopfhoerer-Bestaetigung. Alles danach ist unveraendert —
+                   gespielt wird wie im Arcade-Modus. */
+                document.getElementById(
+                    modus === MODE.KLAVIER ? 'stepKlavier' : 'stepPlatz')
+                    .classList.add('active');
                 console.info(`[Karaokovic] Modus: ${modus}`);
             };
             document.getElementById('btnModeArcade')
                 .addEventListener('click', () => waehleModus(MODE.ARCADE));
             document.getElementById('btnModeVersus')
                 .addEventListener('click', () => waehleModus(MODE.VERSUS));
+            document.getElementById('btnModeKlavier')
+                .addEventListener('click', () => waehleModus(MODE.KLAVIER));
+
+            /* --- Schritt 1b: Stueck und Kopfhoerer ------------------------
+             * Die Kopfhoerer-Bestaetigung ist eine SPERRE und kein Hinweis.
+             * Klavier im Gesangsmikrofon verfaelscht nicht nur die
+             * Tonhoehenerkennung — es blockiert die Ruhepruefung dauerhaft:
+             * die adaptive Stillegrenze lernt den Raumpegel ausdruecklich nur
+             * aus Frames OHNE erkennbaren Grundton (damit Gesang sie nicht
+             * anhebt), und Klavier hat einen Grundton. Die Grenze waechst also
+             * nicht mit, waehrend der gemessene Pegel dauerhaft darueber
+             * liegt. Der Countdown wird nie fertig, jedes Mal, reproduzierbar.
+             * ---------------------------------------------------------------- */
+            const ladeAnzeige = document.getElementById('klavierLade');
+            const chkKopf = document.getElementById('chkKopfhoerer');
+            const btnWeiter = document.getElementById('btnKlavierWeiter');
+            let stueckGewaehlt = false;
+            const pruefeWeiter = () => {
+                const frei = stueckGewaehlt && chkKopf.checked;
+                btnWeiter.disabled = !frei;
+                btnWeiter.style.opacity = frei ? '1' : '0.3';
+            };
+            const waehleStueck = async (nr) => {
+                CONFIG.klavierStueck = nr;
+                stueckGewaehlt = true;
+                pruefeWeiter();
+                ladeAnzeige.innerText = `Stück ${nr} wird geladen …`;
+                const ok = await this.klavier.laden(nr);
+                ladeAnzeige.innerText = ok
+                    ? `✓ Stück ${nr} geladen `
+                      + `(${Math.round(this.klavier.el.duration)} s)`
+                    : `Stück ${nr} nicht ladbar (${this.klavier.grund}) — `
+                      + `das Spiel läuft ohne Begleitung weiter.`;
+                /* Auch ohne Datei geht es weiter: das Spiel funktioniert
+                   vollstaendig, es klingt nur nichts dazu. Hausordnung. */
+                pruefeWeiter();
+            };
+            document.getElementById('btnStueck1')
+                .addEventListener('click', () => waehleStueck(1));
+            document.getElementById('btnStueck2')
+                .addEventListener('click', () => waehleStueck(2));
+            chkKopf.addEventListener('change', pruefeWeiter);
+            btnWeiter.addEventListener('click', () => {
+                Protokoll.schreib('KLAVIER',
+                    `Kopfhoerer bestaetigt, Stueck ${CONFIG.klavierStueck}`);
+                document.getElementById('stepKlavier').classList.remove('active');
+                document.getElementById('stepPlatz').classList.add('active');
+            });
 
             /* Der Online-Modus bleibt bewusst ANKLICKBAR, obwohl er nicht geht.
                Ein toter Knopf laesst den Bediener zweifeln, ob er kaputt ist
@@ -8702,6 +9316,15 @@
                         }
                     } else {
                         await this.audio.init();
+                    }
+                    /* Erst jetzt gibt es einen AudioContext — vorher laesst
+                       sich weder der Ausgangsweg auslesen noch die
+                       Klavierkette anhaengen. Beides liegt bewusst hier und
+                       nicht beim Match-Cue: dort duerfte nichts mehr Zeit
+                       kosten. */
+                    if (CONFIG.mode === MODE.KLAVIER) {
+                        await AudioEngine.protokolliereAusgang(this.audio.audioCtx);
+                        await this.klavier.verbinden(this.audio.audioCtx);
                     }
                     document.getElementById('step1').classList.remove('active');
                     document.getElementById('step2').classList.add('active');
@@ -9169,6 +9792,11 @@
                     this._pulsZuvor = puls;
                 }
 
+                /* Blende fahren und Rundlauf protokollieren. Ausserhalb des
+                   Klavier-Modus faellt der Aufruf sofort durch — er kostet
+                   dort einen Nullvergleich. */
+                this.klavier.tick();
+
                 if (this.calibrating) {
                     /* Angezeigt wird der Kanal DESSEN, der gerade einsingt —
                        sonst sieht Spieler 2 die Töne von Spieler 1. */
@@ -9201,6 +9829,8 @@
                     this._scene.ruheHaengt = !!this.ruheHaengt;
                     this._scene.raumpegel = this.raumpegel();
                     this._scene.audioTot = this.audioTot;
+                    this._scene.klavierVerdacht = CONFIG.mode === MODE.KLAVIER
+                        && this.klavier.laeuft && !!this.ruheHaengt;
                     this.renderer.render(this._scene);
                 }
             } catch (err) {
@@ -9378,6 +10008,7 @@
         step() {
             const match = this.match;
             this.satzAnsagePruefen();
+            this.klavierNachfuehren();
 
             switch (match.state) {
                 /* --- GESCHÜTZT: 3 Sekunden absolute Ruhe ---------------------- */
@@ -9446,10 +10077,25 @@
                         this._ruheGemeldet = false;
                     } else if (!this._ruheGemeldet) {
                         this._ruheGemeldet = true;
+                        /* IM KLAVIER-MODUS STEHT DER VERDACHT DABEI. Ein
+                           haengender Countdown hat dort fast immer dieselbe
+                           Ursache: das Klavier liegt auf dem Mikrofon. Die
+                           Stillegrenze kann das nicht ausgleichen — sie lernt
+                           den Raum nur aus Frames ohne Grundton, und Klavier
+                           hat einen. Ohne diesen Satz muesste die Ursache
+                           hinterher wieder aus Pegeln zurueckgerechnet
+                           werden. */
+                        const klavierLaeuft = CONFIG.mode === MODE.KLAVIER
+                            && this.klavier.laeuft;
                         Protokoll.schreib('WARNUNG',
                             `Ruhe seit 8 s nicht erreicht — Raumpegel `
                             + `${this.raumpegel().toFixed(3)}, Grenze `
-                            + `${grenze.toFixed(3)}. Eingang zu leise oder Raum zu laut.`);
+                            + `${grenze.toFixed(3)}. Eingang zu leise oder Raum zu laut.`
+                            + (klavierLaeuft
+                                ? ' KLAVIER IM MIKROFON? Mix-Minus pruefen —'
+                                  + ' die Stillegrenze waechst mit Klavier NICHT'
+                                  + ' mit, weil es einen Grundton hat.'
+                                : ''));
                     }
                     this.ruheHaengt = haengt;
 
@@ -9658,6 +10304,47 @@
             if (match.state !== STATE.POINT_SCORED
                 && match.state !== STATE.TRANSITION) {
                 this.pruefePlatzwechsel();
+            }
+        }
+
+        /**
+         * Die Klavierbegleitung an die Match-Phase haengen.
+         *
+         * EINE STELLE FUER BEIDE EINSTIEGE. Die Match-Phase beginnt entweder
+         * ueber den Startknopf oder ueber den Regie-Cue (Enter+Leertaste), und
+         * beide rufen `startMatch()`. Statt an zwei Stellen einen Start
+         * anzuhaengen, wird hier der ANLAUF verglichen — damit ist auch ein
+         * dritter Einstieg von selbst erfasst, sollte einer dazukommen.
+         *
+         * IM EINSPIELEN SPIELT NICHTS. Dort wird eingesungen und justiert; da
+         * stoert Musik, und der Ton der Saengerin soll die einzige Groesse
+         * sein, auf die sie hoert.
+         *
+         * ENDE DES MATCHES: das Spiel kennt keinen Sieger-Zustand — Saetze
+         * werden gezaehlt, aber nichts erklaert das Match fuer beendet. Was es
+         * kennt, ist die PLATZFOLGE: drei Plaetze, jeder genau einmal. Sind
+         * alle gespielt, ist der letzte Satz vorbei, und genau dann blendet
+         * die Musik aus. Das ist aus vorhandenem Zustand abgeleitet und keine
+         * neu erfundene Regel — eine Sieger-Regel einzufuehren waere in einem
+         * Ton-Sprint der falsche Ort.
+         */
+        klavierNachfuehren() {
+            if (CONFIG.mode !== MODE.KLAVIER) return;
+            const m = this.match;
+            if (m.isWarmup) return;
+
+            if (this._klavierLauf !== m.matchLauf) {
+                this._klavierLauf = m.matchLauf;
+                this._klavierBeendet = false;
+                this.klavier.start();
+                return;
+            }
+            if (!this._klavierBeendet
+                && this._gespielteSaetze >= this.platzFolge.length) {
+                this._klavierBeendet = true;
+                Protokoll.schreib('KLAVIER', `Match zu Ende `
+                    + `(${this._gespielteSaetze} Saetze) — Musik blendet aus`);
+                this.klavier.beenden();
             }
         }
 
@@ -10107,6 +10794,12 @@
        Regler, wenn sich die Trefferzone in der Probe zu eng oder zu weit
        anfuehlt — ohne Neuladen wirksam. */
     game.PADDLE = PADDLE;
+
+    /* Die Begleitung fuer die Buehne: KARAOKOVIC.klavier.setzePegel(0.8, 1)
+       stellt Kopfhoerer- und Publikumsweg getrennt, .beenden() blendet aus.
+       Ohne diesen Zugriff muesste zum Nachregeln die Datei bearbeitet und neu
+       geladen werden. */
+    game.Klavier = Klavier;
 
     game.grenzen = {
         left: COURT_LEFT, right: COURT_RIGHT,
