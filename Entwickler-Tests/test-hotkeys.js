@@ -47,11 +47,15 @@ function taste(code, mod) {
     return verhindert;
 }
 
-/* --- 1. Beide Wege schalten die Messanzeige ------------------------------ */
+/* --- 1. Beide Wege schalten das Operator-Panel --------------------------- *
+ * Der Schalter heisst weiter SHOW_AUDIO_METER — er steckt in den Tests und im
+ * Uebergabeprotokoll, und umbenennen waere reine Beschriftungskosmetik mit
+ * Bruchrisiko. Geschaltet wird seit ARENA-24 das DOM-Panel; im Canvas steht
+ * ohnehin nichts Diagnostisches mehr. */
 const vorher = R.SHOW_AUDIO_METER;
 
 taste('KeyM', { ctrl: true, shift: true });
-check('Ctrl+Shift+M schaltet die Messanzeige um',
+check('Ctrl+Shift+M schaltet das Operator-Panel um',
     R.SHOW_AUDIO_METER !== vorher, `${vorher} -> ${R.SHOW_AUDIO_METER}`);
 
 taste('KeyM', { alt: true, shift: true });
@@ -103,8 +107,8 @@ game.input.handleKeyUp({ code: 'Enter' });
 game.input.handleKeyUp({ code: 'Space' });
 
 /* --- 6. Die Eingriffe stehen im Protokoll -------------------------------- */
-check('Die Messanzeige-Umschaltung ist protokolliert',
-    /OPERATOR.*Messanzeige/.test(game.protokoll()));
+check('Die Panel-Umschaltung ist protokolliert',
+    /OPERATOR.*Operator-Panel/.test(game.protokoll()));
 check('Der erzwungene Aufschlag ebenso',
     /OPERATOR.*von Hand erzwungen/.test(game.protokoll()));
 

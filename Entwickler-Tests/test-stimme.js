@@ -202,21 +202,16 @@ check('Auch nicht ohne Ton', texte(rotLog).length === 1,
 check('Gruen zeichnet gruen, rot zeichnet rot',
     balkenfarbe(gruenLog) === R.METER_OK && balkenfarbe(rotLog) === R.METER_BAD,
     `${balkenfarbe(gruenLog)} / ${balkenfarbe(rotLog)}`);
-/* Das Operator-Messgeraet behaelt seine Hertzzeilen — es ist ein Werkzeug
-   und keine Show-Grafik. */
-const messLog = (() => {
-    const { ctx, log } = zeichenprotokoll();
-    const echt = renderer.ctx;
-    renderer.ctx = ctx;
-    audio.smoothedPitch = 220; audio.livePitch = 220;
-    audio.heldPitch = 220; audio.heldPitchAt = game.uhr.jetzt();
-    try { renderer.drawAudioDebug(audio, match, audio2); }
-    finally { renderer.ctx = echt; }
-    return log;
-})();
-check('Das Operator-Messgeraet zeigt weiterhin Hertz',
-    messLog.texte.some(t => /Hz/.test(t.text)),
-    messLog.texte.map(t => t.text).join(' | '));
+/* Die Hertzwerte gibt es weiterhin — seit ARENA-24 aber im Operator-Panel
+   statt im Canvas. Das ist der Unterschied, auf den es ankommt: ein Werkzeug
+   fuer den Operator, keine Grafik fuer die Wand. */
+audio.smoothedPitch = 220; audio.livePitch = 220;
+audio.heldPitch = 220; audio.heldPitchAt = game.uhr.jetzt();
+game.Renderer.SHOW_AUDIO_METER = true;
+const messLage = game.panelLage();
+game.Renderer.SHOW_AUDIO_METER = false;
+check('Das Operator-Panel zeigt weiterhin Hertz',
+    /Hz/.test(messLage.mess[0].wert), messLage.mess[0].wert);
 
 /* Der eigentliche Beweis der Ein-Quellen-Regel: die Anzeige folgt `frei`
    auch dann, wenn die uebrigen Felder etwas anderes nahelegen. Sie rechnet

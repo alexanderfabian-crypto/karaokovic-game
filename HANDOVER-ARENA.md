@@ -668,6 +668,66 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     werden **nicht** ausgeliefert (`MUSIK_AUSLIEFERN = false` in
     `webseite-bauen.js`) — ob 15 MB Musik öffentlich liegen dürfen, ist eine
     Frage an die Produktion und nicht an ein Bauskript.
+- **ARENA-24** — **das Sendebild trägt keine Diagnose mehr.** Der Canvas geht
+  auf die LED-Wand, ins Programm und auf die latenzfreien Spielermonitore. Bis
+  ARENA-23 stand dort „AUDIOEINGANG TOT — KARAOKOVIC.audioNeustart()" groß
+  unten rechts, die Messanzeige mit PITCH und VOL, und im hängenden Countdown
+  „RAUM ZU LAUT — ES BRAUCHT RUHE" samt Raumpegel, Hotkey-Namen und
+  Klavierverdacht. Das liest das Publikum mit, und auf einer Aufzeichnung
+  bleibt es stehen.
+  - **`drawBedienebene()` zeichnet nichts mehr** und bleibt als Marke stehen —
+    samt ihren zwei Aufrufen in `render()`, auch dem im Blenden-Sonderfall.
+    `drawAudioDebug()` ist ohne Aufrufer und ausdrücklich als Leiche
+    gekennzeichnet; das Entfernen ist ein eigener Durchgang.
+  - **Statt der Diagnose sagt die Wand einen Satz:** „Quiet, please." — der des
+    Schiedsrichters. Serifen (Georgia), dunkles Band, auf der **projizierten
+    Platzachse**, 17 % der Feldlänge **vor** dem Netz (der Countdown steht
+    darüber), weicht den Köpfen mit derselben `dodgeHeads` aus wie Ziffer und
+    Aufforderung. Er **blendet über 400 ms ein** — acht Sekunden ohne Ruhe sind
+    ein schleichender Zustand, kein Ereignis; die Blendzeit kommt aus
+    *derselben* Uhr, die über `ruheHaengt` entscheidet.
+  - **Neu: `OperatorPanel` (Abschnitt 9b)** — ein `<div>` im DOM, kein
+    `innerHTML`, DOM-Schreibvorgänge nur bei Änderung, `pointer-events: none`
+    (ein Klick darauf zöge den Tastaturfokus aus dem Fenster, und dann käme
+    `Ctrl+Shift+A` nicht mehr an). **Zwei Riegel statt einem:** es steht nicht
+    im Canvas *und* ist im Regelfall aus.
+  - **Zehn Lampen E-01…E-10, jede an der Bedingung ihres Auslösers** — die
+    Ein-Quellen-Regel, angewandt auf die Diagnose. Die Codes sind fest und
+    werden nicht neu vergeben: auf der Bühne wird „E-03" gerufen, nicht der
+    Wortlaut.
+
+    | | | |
+    |---|---|---|
+    | E-01 | Audioeingang tot | `audioTot` |
+    | E-02 | Ruheprüfung hängt | `ruheHaengt` |
+    | E-03 | Klavier im Mikrofon? | `klavierVerdacht` **oder** Hänger bei anliegendem Grundton |
+    | E-04 | Tastaturfokus weg | `input.fokus` |
+    | E-05 | Bildkette unterbrochen | `_letzteLuecke` (10 s Nachlauf) |
+    | E-06 | Anzeigeskalierung | `devicePixelRatio`, live gelesen |
+    | E-07 | Bildrate | `_diag.hz` |
+    | E-08 | Nur ein Kanal | `_kanaele` (ruht außerhalb Duell) |
+    | E-09 | Pflicht-Asset fehlt | `assets.failed` minus die optionalen |
+    | E-10 | Klavierstück fehlt | `klavier.bereit` (ruht außerhalb Klavier) |
+
+    **E-03 ist bewusst breiter als der Klavier-Modus:** die adaptive
+    Stillegrenze lernt den Raum nur aus Frames *ohne* Grundton — ein Instrument
+    im Mikrofon hält sie also fest, während der Pegel darüber liegt. Die Lampe
+    greift damit auch, wenn im Arcade- oder Duell-Betrieb ein Klavier live
+    daneben steht. Benutzt wird dafür **dasselbe Prädikat**, mit dem `loop()`
+    den Raumpegel filtert.
+  - Dazu die Messzeilen P1/P2 PITCH und VOL, RAUM, GRENZE und RUHE-REST. Die
+    Pegelampel steht seit ARENA-24 in `pegelAmpel()` — **eine** Quelle für
+    Panel und die noch liegende Messanzeige.
+  - `Ctrl+Shift+M` schaltet jetzt das Panel; der Schalter heißt weiter
+    `Renderer.SHOW_AUDIO_METER` (er steckt in Tests und Protokoll, umbenennen
+    wäre Kosmetik mit Bruchrisiko). Das Panel läuft **auch im Onboarding** mit
+    — dort wird eingepegelt, und genau dafür ist es da.
+  - `test-sendebild.js` ist neu: kein Wort Diagnose im Canvas (mit Gegenprobe,
+    dass das Spielbild sehr wohl gezeichnet wird), der Satz samt Schrift, Achse,
+    Lage vor dem Netz und Einblendkurve, alle zehn Lampen einzeln an ihrer
+    Quelle, die „ruht"-Zeilen, und dass das ausgeschaltete Panel nicht mehr
+    mitrechnet. Der Browsertest prüft das, was Node nicht kann: dass die Knoten
+    entstehen, der Schalter sie sichtbar macht und `pointer-events: none` steht.
 
 ---
 
@@ -677,8 +737,8 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 27.08.2026: 512 Zusicherungen, alle grün, Exit 0.** 28 Testdateien in
-30 Läufen (zwei laufen doppelt, einmal je Fassung).
+**Stand 28.08.2026: 557 Zusicherungen, alle grün, Exit 0.** 29 Testdateien in
+31 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 Daneben liegen **Messskripte**, die nicht Teil der Suite sind, weil sie nichts
 über den Spielcode beweisen, sondern eine Eigenschaft der Umgebung messen:

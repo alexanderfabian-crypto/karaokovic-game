@@ -208,6 +208,16 @@ class Browser {
  * Der eigentliche Test
  * ---------------------------------------------------------------------- */
 
+/* Wie viele Panelzeilen es gibt, steht im Spielcode — eine getippte Zahl
+   waere nach der elften Lampe falsch, und der Fehler fiele niemandem auf. */
+const K_ZEILEN = (() => {
+    const t = fs.readFileSync(path.join(__dirname, '..', 'app-arena.js'), 'utf8');
+    const m = t.match(/MELDUNGEN\s*=\s*\[([\s\S]*?)\];/);
+    const z = t.match(/MESSZEILEN\s*=\s*\[([\s\S]*?)\];/);
+    return ((m && m[1].match(/code:/g)) || []).length
+        + ((z && z[1].match(/'/g)) || []).length / 2;
+})();
+
 (async () => {
     const exe = chromePfad();
     if (!exe) {
@@ -1001,6 +1011,57 @@ class Browser {
                 console.log(`ÜBERSPRUNGEN  Klavierstück nicht ladbar `
                     + `(${kl.grund}) — der Rückfall greift, das Spiel läuft.`);
             }
+            }
+        }
+
+        /* --- Operator-Panel: das DOM, das Node nicht pruefen kann -------
+         * Die LAGE prueft test-sendebild.js vollstaendig. Was dort fehlt, ist
+         * das Einzige, was ein echter Browser beitragen kann: dass die Knoten
+         * wirklich entstehen, dass der Schalter sie sichtbar macht — und dass
+         * das Panel Klicks NICHT abfaengt. Ein Klick darauf wuerde den
+         * Tastaturfokus aus dem Spielfenster ziehen, und dann kaeme
+         * ausgerechnet der Notausgang Ctrl+Shift+A nicht mehr an. */
+        {
+            const pan = await b.werteAus(`(() => {
+                const K = window.KARAOKOVIC;
+                if (!K.Klavier) return { arena: false };
+                const el = document.getElementById('operator-panel');
+                if (!el) return { arena: true, da: false };
+                const stil = getComputedStyle(el);
+                const aus = { klasse: el.className, anzeige: stil.display };
+                K.Renderer.SHOW_AUDIO_METER = true;
+                K.panel.zeichne(K.panelLage());
+                const an = {
+                    klasse: el.className,
+                    anzeige: getComputedStyle(el).display,
+                    zeiger: getComputedStyle(el).pointerEvents,
+                    text: el.textContent,
+                    knoten: el.querySelectorAll('.zeile').length,
+                };
+                K.Renderer.SHOW_AUDIO_METER = false;
+                K.panel.zeichne(K.panelLage());
+                return { arena: true, da: true, aus, an,
+                    wiederAus: getComputedStyle(el).display };
+            })()`);
+
+            if (pan.arena) {
+                check('Das Operator-Panel liegt im DOM', pan.da);
+                if (pan.da) {
+                    check('Im Regelfall ist es unsichtbar',
+                        pan.aus.anzeige === 'none', pan.aus.anzeige);
+                    check('Der Schalter macht es sichtbar',
+                        pan.an.anzeige !== 'none', pan.an.anzeige);
+                    check('Es faengt keine Klicks ab — sonst waere der '
+                        + 'Notausgang tot',
+                        pan.an.zeiger === 'none', pan.an.zeiger);
+                    check('Alle zehn Lampen und die Messzeilen stehen darin',
+                        pan.an.knoten === K_ZEILEN, `${pan.an.knoten} Zeilen`);
+                    check('Und der Wortlaut ist da',
+                        /E-01/.test(pan.an.text) && /E-10/.test(pan.an.text)
+                        && /RAUM/.test(pan.an.text));
+                    check('Ausgeschaltet verschwindet es wieder',
+                        pan.wiederAus === 'none', pan.wiederAus);
+                }
             }
         }
 

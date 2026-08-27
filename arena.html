@@ -60,6 +60,65 @@
             transform: none; border: 1px dashed #4a4a5c; cursor: not-allowed;
         }
 
+        /* -------------------------------------------------------------------
+         * OPERATOR-PANEL (ARENA-24)
+         *
+         * Es liegt im DOM und NICHT im Canvas — das ist der ganze Punkt. Der
+         * Canvas geht auf die Wand, ins Programm und auf die Spielermonitore;
+         * was dort steht, sieht das Publikum. Diagnose gehoert nicht dorthin.
+         *
+         * Zusaetzlich ist es im Regelfall AUS und wird mit Ctrl+Shift+M
+         * eingeschaltet. Auf Sendung ist es damit nicht bloss unauffaellig,
+         * sondern gar nicht da.
+         *
+         * `pointer-events: none` ist keine Kosmetik: das Panel liegt ueber dem
+         * Canvas, und ein Klick darauf wuerde den Tastaturfokus aus dem
+         * Spielfenster ziehen. Genau dann kaeme Ctrl+Shift+A — der Notausgang
+         * — nicht mehr an.
+         * ------------------------------------------------------------------ */
+        #operator-panel {
+            display: none;
+            position: fixed; top: 12px; right: 12px; z-index: 20;
+            pointer-events: none;
+            width: 340px; max-height: calc(100vh - 24px); overflow: hidden;
+            background: rgba(6, 8, 18, 0.92);
+            border: 1px solid #36425f; border-radius: 8px;
+            padding: 10px 12px;
+            font-family: 'Courier New', monospace; font-size: 12px;
+            line-height: 17px; text-align: left; color: #c8cede;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+        }
+        #operator-panel.an { display: block; }
+        #operator-panel .kopf {
+            color: #ffffff; font-weight: bold; letter-spacing: 0.06em;
+            border-bottom: 1px solid #36425f; padding-bottom: 5px;
+            margin-bottom: 6px;
+        }
+        #operator-panel .zeile { display: flex; align-items: baseline; gap: 7px; }
+        #operator-panel .lampe {
+            flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px;
+            background: #3ddc84;
+        }
+        #operator-panel .lampe.alarm { background: #ff4d5e; }
+        #operator-panel .lampe.ruht { background: #39415a; }
+        #operator-panel .code { flex: 0 0 auto; color: #8d97ad; }
+        #operator-panel .was { flex: 1 1 auto; }
+        #operator-panel .zeile.alarm .was { color: #ff4d5e; font-weight: bold; }
+        /* "ruht" heisst: die Bedingung gilt in diesem Modus gar nicht (etwa
+           die Kanalzahl ausserhalb des Duells). Gedaempft statt gruen — gruen
+           hiesse "geprueft und in Ordnung", und das waere gelogen. */
+        #operator-panel .zeile.ruht .was, #operator-panel .zeile.ruht .code {
+            color: #5b6480;
+        }
+        #operator-panel .wert { flex: 0 0 auto; color: #8d97ad; }
+        #operator-panel .zeile.alarm .wert { color: #ff4d5e; }
+        #operator-panel .trenner {
+            border-top: 1px solid #36425f; margin: 7px 0 5px; padding-top: 6px;
+            color: #8d97ad; letter-spacing: 0.06em;
+        }
+        #operator-panel .mess .wert { color: #3ddc84; }
+        #operator-panel .mess.alarm .wert { color: #ff4d5e; }
+
         /* Rückmeldung im Modusschritt. Bleibt leer, bis es etwas zu sagen gibt. */
         .warnung:empty { display: none; }
         .warnung { color: #ffcc00; }
@@ -183,6 +242,10 @@
     </div>
 
     <canvas id="gameCanvas"></canvas>
+
+    <!-- Operator-Panel: leer im HTML, gefuellt von OperatorPanel (app-arena.js).
+         Ctrl+Shift+M schaltet es ein. Siehe den CSS-Block oben. -->
+    <div id="operator-panel"></div>
 
     <!-- Cache Buster V5 -->
     <script src="./app-arena.js?v=arena_1"></script>

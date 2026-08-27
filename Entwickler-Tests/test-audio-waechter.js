@@ -71,14 +71,21 @@ check('Und es steht im Protokoll',
 check('Mit dem Rettungsgriff in derselben Zeile',
     /audioNeustart\(\)/.test(seit(ab)));
 
-/* --- 2. Die Warnung erreicht das Bild ------------------------------------ */
-/* Sie haengt NICHT an der Messanzeige: die ist im Regelfall aus, und genau
-   in der Show muss der Operator es sehen, ohne vorher Ctrl+Shift+M zu
-   druecken. */
-check('Der Renderer bekommt den Zustand mitgeteilt',
+/* --- 2. Die Warnung erreicht den Operator -------------------------------- *
+ * SEIT ARENA-24 NICHT MEHR IM BILD. Sie stand als "AUDIOEINGANG TOT" gross
+ * unten rechts im Canvas — und der geht auf die Wand, ins Programm und auf
+ * die Spielermonitore. Jetzt brennt Lampe E-01 im Operator-Panel, das im DOM
+ * liegt und im Regelfall aus ist. */
+game.Renderer.SHOW_AUDIO_METER = true;
+const lage = game.panelLage();
+check('Lampe E-01 brennt', lage.e[0].an === true);
+check('Und nennt den Rettungsgriff', /audioNeustart/.test(lage.e[0].wert),
+    lage.e[0].wert);
+game.Renderer.SHOW_AUDIO_METER = false;
+/* Der Szenenwert bleibt gesetzt — er ist die Quelle, aus der das Panel liest.
+   Gezeichnet wird er nicht mehr; das prueft test-sendebild.js. */
+check('Die Quelle steht weiterhin in der Szene',
     game._scene.audioTot === true);
-check('Und zwar unabhaengig von der Messanzeige',
-    game.Renderer.SHOW_AUDIO_METER === false);
 
 /* --- 3. Ein zitternder Pegel gilt sofort wieder als lebendig ------------- */
 ab = zeilenAb();

@@ -4611,25 +4611,26 @@
          * @param {Object} scene
          */
         drawBedienebene(scene) {
-            /* Ein toter Audioeingang steht IMMER im Bild, unabhaengig von
-               der Messanzeige: die ist im Regelfall aus, und genau in der
-               Show muss der Operator das sehen, ohne vorher Ctrl+Shift+M
-               gedrueckt zu haben. */
-            if (scene.audioTot) {
-                const p = this.viewport.toScreen(VIRTUAL_WIDTH, VIRTUAL_HEIGHT, this._p1);
-                const ctx = this.ctx;
-                ctx.save();
-                ctx.textAlign = 'right';
-                ctx.textBaseline = 'alphabetic';
-                ctx.font = this.font(26 * p.scale, 'bold');
-                ctx.fillStyle = Renderer.METER_BAD;
-                ctx.fillText('AUDIOEINGANG TOT — KARAOKOVIC.audioNeustart()',
-                    p.x - 24 * p.scale, p.y - Renderer.AUDIOTOT_ABSTAND * p.scale);
-                ctx.restore();
-            }
-            if (Renderer.SHOW_AUDIO_METER) {
-                this.drawAudioDebug(scene.audio, scene.match, scene.audio2);
-            }
+            /* ABSICHTLICH LEER SEIT ARENA-24.
+             *
+             * Hier standen "AUDIOEINGANG TOT — KARAOKOVIC.audioNeustart()"
+             * und die Messanzeige mit PITCH und VOL. Beides ist Diagnose, und
+             * Diagnose gehoert nicht in den Canvas: der geht auf die LED-Wand,
+             * ins Programm und auf die Spielermonitore. Was hier steht, liest
+             * das Publikum mit, und auf einer Aufzeichnung bleibt es fuer
+             * immer stehen.
+             *
+             * Beides ist nicht verschwunden, sondern UMGEZOGEN — ins
+             * Operator-Panel im DOM (Klasse OperatorPanel, Lampen E-01 und
+             * die Messzeilen). Dort ist es fuer den Operator besser lesbar,
+             * vollstaendiger, und es kann gar nicht erst ins Bild geraten.
+             *
+             * DIE METHODE BLEIBT samt ihren zwei Aufrufen in render(). Sie
+             * markiert die Stelle, an der die Bedienebene lag — auch die im
+             * Blenden-Sonderfall, wo sie als einzige weiterlief. Wer hier
+             * spaeter wieder etwas einzeichnen will, findet die Begruendung
+             * dagegen an Ort und Stelle statt in der Versionsgeschichte.
+             */
         }
 
         /* --------------------------------------------------------------------
@@ -6249,6 +6250,19 @@
         }
 
         /**
+         * OHNE AUFRUFER SEIT ARENA-24 — ersetzt durch das Operator-Panel.
+         *
+         * Sie zeichnete die Messwerte IN DEN CANVAS, und genau das soll nicht
+         * mehr sein: der Canvas geht auf die Wand und ins Programm. Dieselben
+         * Zahlen stehen jetzt im DOM-Panel (Klasse OperatorPanel), dort
+         * vollstaendiger und ohne Publikum.
+         *
+         * Sie steht noch da, weil das Entfernen ein eigener Durchgang mit
+         * eigenem Testlauf ist — nicht, weil sie noch etwas tut. Ihre
+         * Ampellogik teilt sie sich ueber pegelAmpel() weiterhin mit dem
+         * Panel; solange die Leiche liegt, kann sie deshalb wenigstens nicht
+         * etwas anderes behaupten als die lebende Anzeige.
+         *
          * Live-Audiowerte unten links im Bild.
          *
          * Im Onboarding stehen Tonhöhe und Pegel im HTML-Feld — sobald der
@@ -6313,18 +6327,14 @@
              * Dazu ein Wort im Klartext. Eine Farbe allein reicht nicht, wenn
              * dieselbe Farbe je nach Zustand das Gegenteil bedeutet.
              * ------------------------------------------------------------------ */
-            const zustand = match ? match.state : null;
-            let lautGenug, hinweis;
-            if (zustand === STATE.SILENCE_CHECK) {
-                lautGenug = audio.currentVolume < CONFIG.volumeGate;
-                hinweis = 'STILL';
-            } else if (zustand === STATE.SERVE_WAIT) {
-                lautGenug = audio.currentVolume >= CONFIG.serveVolume;
-                hinweis = 'JETZT SINGEN';
-            } else {
-                lautGenug = audio.currentVolume > CONFIG.moveGate;
-                hinweis = '';
-            }
+            /* Die Fallunterscheidung steht seit ARENA-24 in pegelAmpel() —
+               dieselbe Funktion, aus der auch das Operator-Panel liest. Zwei
+               Rechnungen fuer dieselbe Ampel waeren genau der Widerspruch,
+               den die Ein-Quellen-Regel meint. */
+            const ampel = pegelAmpel(audio.currentVolume,
+                match ? match.state : null);
+            const lautGenug = ampel.ok;
+            const hinweis = ampel.wort === 'SINGEN' ? 'JETZT SINGEN' : ampel.wort;
 
             const umfang = Physics.voiceRange(PLAYER.ANDREA);
             const imUmfang = hz > 0 && hz >= umfang.min && hz <= umfang.max;
@@ -7238,30 +7248,82 @@
                der bei 2 klebt, sieht aus wie ein eingefrorenes Spiel — der
                Operator soll wissen, dass es der Raum ist und nicht der
                Rechner. */
-            if (scene && scene.ruheHaengt) {
-                ctx.save();
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.font = this.font(30 * p.scale, 'bold');
-                ctx.fillStyle = Renderer.METER_BAD;
-                const y = p.y + size * 0.75;
-                ctx.fillText('RAUM ZU LAUT — ES BRAUCHT RUHE', p.x, y);
-                ctx.font = this.font(20 * p.scale, 'normal');
-                ctx.fillText(
-                    `Raumpegel ${(scene.raumpegel || 0).toFixed(3)}`
-                    + '   ·   Ctrl+Shift+A schlägt trotzdem auf',
-                    p.x, y + 30 * p.scale);
-                /* Der Operator schaut auf die Wand, nicht ins Protokoll. Im
-                   Klavier-Modus hat ein haengender Countdown fast immer
-                   dieselbe Ursache — sie gehoert deshalb dorthin, wo sie
-                   gelesen wird. */
-                if (scene.klavierVerdacht) {
-                    ctx.font = this.font(24 * p.scale, 'bold');
-                    ctx.fillText('KLAVIER IM MIKROFON? MIX-MINUS PRÜFEN',
-                        p.x, y + 62 * p.scale);
-                }
-                ctx.restore();
-            }
+            /* Haengt die Ruhepruefung, sieht ein Countdown, der bei 2
+               klebt, wie ein eingefrorenes Spiel aus. Das Publikum braucht
+               dafuer EINEN Satz, und zwar den, den ein Schiedsrichter sagen
+               wuerde — nicht den Raumpegel und nicht den Namen eines
+               Hotkeys. Die Zahlen stehen im Operator-Panel. */
+            if (scene && scene.ruheHaengt) this.drawQuietPlease(scene);
+        }
+
+        /**
+         * "Quiet, please." — der einzige Satz, den die Wand bei haengender
+         * Ruhepruefung zeigt.
+         *
+         * BIS ARENA-23 STAND HIER DIE DIAGNOSE: "RAUM ZU LAUT — ES BRAUCHT
+         * RUHE", darunter der gemessene Raumpegel und der Hinweis auf
+         * Ctrl+Shift+A, im Klavier-Modus zusaetzlich "KLAVIER IM MIKROFON?".
+         * Fuer den Operator war das richtig — nur schaut das Publikum auf
+         * dieselbe Wand, und die Kamera nimmt es mit auf.
+         *
+         * Der Satz ist deshalb der des Schiedsrichters. Er sagt dem Saal, was
+         * zu tun ist, ohne etwas ueber den Rechner zu verraten, und er passt
+         * ins Bild: auf einem Tennisplatz ist "Quiet, please." kein
+         * Fehlerhinweis, sondern Teil des Spiels. Die Zahlen, die der Operator
+         * braucht, stehen zeitgleich im Panel (E-02, E-03, RAUM, GRENZE).
+         *
+         * ER BLENDET EIN, statt zu erscheinen: acht Sekunden ohne Ruhe sind
+         * ein schleichender Zustand, kein Ereignis. Die Blendzeit kommt aus
+         * `scene.ruheSeitMs` — also aus derselben Uhr, die auch ueber
+         * `ruheHaengt` entscheidet. Ein zweiter Zeitstempel koennte gegenueber
+         * ihr verrutschen, und der Satz stuende dann laenger oder kuerzer, als
+         * die Bedingung gilt.
+         *
+         * Er weicht den Koepfen aus wie Ziffer und Aufforderung (dieselbe
+         * dodgeHeads), steht auf der Platzachse und liegt VOR dem Netz, in
+         * der vorderen Feldhaelfte — dort, wo bei einem Haenger ohnehin
+         * niemand spielt und wo der Countdown ueber dem Netz frei bleibt.
+         *
+         * @param {Object} scene
+         */
+        drawQuietPlease(scene) {
+            const ctx = this.ctx;
+            const p = this.achseAuf(Renderer.QUIET_WELT_Y, this._p1);
+            const size = Renderer.QUIET_SIZE * p.scale;
+
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = this.font(size, 'normal', Renderer.QUIET_FONT);
+
+            /* Gemessen statt geschaetzt: ob Georgia geladen ist, entscheidet
+               sich erst zur Laufzeit, und das Band soll den Satz umschliessen
+               und nicht umgekehrt. */
+            const halb = ctx.measureText(Renderer.QUIET_TEXT).width / 2;
+            const padX = Renderer.QUIET_PAD_X * p.scale;
+            const padY = Renderer.QUIET_PAD_Y * p.scale;
+            const box = {
+                left: p.x - halb - padX, right: p.x + halb + padX,
+                top: p.y - size / 2 - padY, bottom: p.y + size / 2 + padY,
+            };
+            const offset = this.dodgeHeads(box, this.kopfBoxen(scene),
+                Renderer.COUNTDOWN_DODGE_MAX * p.scale);
+
+            ctx.globalAlpha = Math.max(0, Math.min(1,
+                (scene.ruheSeitMs || 0) / Renderer.QUIET_EINBLENDE_MS));
+
+            this.roundRectPath(box.left, box.top + offset,
+                box.right - box.left, box.bottom - box.top,
+                Renderer.HUD_RADIUS * p.scale);
+            ctx.fillStyle = Renderer.QUIET_BAND;
+            ctx.fill();
+            ctx.strokeStyle = Renderer.HUD_BORDER;
+            ctx.lineWidth = Math.max(1, 1.5 * p.scale);
+            ctx.stroke();
+
+            ctx.fillStyle = Renderer.QUIET_FARBE;
+            ctx.fillText(Renderer.QUIET_TEXT, p.x, p.y + offset);
+            ctx.restore();
         }
 
         /**
@@ -8416,8 +8478,72 @@
         return !!match && Uhr.jetzt() < match.satzAnzeigeBis;
     };
 
-    /** Abstand der Audio-tot-Zeile vom unteren Bildrand, in Weltpixeln. */
+    /**
+     * OHNE LESER SEIT ARENA-24 — die Audio-tot-Zeile stand im Canvas und ist
+     * ins Operator-Panel gewandert (Lampe E-01). Der Wert bleibt wie die
+     * zugehoerige Zeichenroutine stehen; test-stimme.js rechnet die Belegung
+     * der unteren rechten Ecke noch dagegen.
+     *
+     * Abstand der Audio-tot-Zeile vom unteren Bildrand, in Weltpixeln.
+     */
     Renderer.AUDIOTOT_ABSTAND = 128;
+
+    /* -------------------------------------------------------------------------
+     * "Quiet, please." (siehe Renderer.drawQuietPlease)
+     * ---------------------------------------------------------------------- */
+
+    /** Der Satz. Englisch, weil der Schiedsrichter ihn so sagt. */
+    Renderer.QUIET_TEXT = 'Quiet, please.';
+
+    /**
+     * Serifen — und das ist der Bruch, auf den es ankommt.
+     *
+     * Alles andere im Bild ist Courier (Retro) oder Impact (Countdown und
+     * Ansagen). Eine Serifenschrift gehoert zu keiner der beiden Familien und
+     * liest sich deshalb nicht als Teil des Spiels, sondern als Einblendung
+     * der Uebertragung — genau das, was ein Schiedsrichterruf ist.
+     *
+     * Georgia ist auf macOS und Windows vorinstalliert; eine Webfont-Datei
+     * waere bei file:// ein zusaetzliches Ladeproblem.
+     */
+    Renderer.QUIET_FONT = "'Georgia', 'Times New Roman', serif";
+
+    /** Schriftgrad in virtuellen Pixeln. */
+    Renderer.QUIET_SIZE = 46;
+
+    /**
+     * Wo der Satz steht, in WELTkoordinaten.
+     *
+     * 17 % der Feldlaenge vor dem Netz, also in der vorderen Haelfte. Drei
+     * Gruende, alle drei nachgerechnet:
+     *   - Der Countdown steht UEBER dem Netz; hier stossen sie nicht
+     *     zusammen.
+     *   - Die Achse ist projiziert, der Satz sitzt auf jedem Platz auf der
+     *     Mittellinie (siehe achseAuf).
+     *   - Bei einem Haenger spielt ohnehin niemand; die Flaeche ist frei.
+     * Den Rest erledigt dodgeHeads, falls doch jemand mittig steht.
+     */
+    Renderer.QUIET_WELT_Y = COURT_MID_Y + 0.17 * COURT_HEIGHT;
+
+    /**
+     * Einblendzeit in Millisekunden.
+     *
+     * Acht Sekunden ohne Ruhe sind ein schleichender Zustand und kein
+     * Ereignis — ein Satz, der hart aufblitzt, liest sich als Fehlermeldung.
+     * 400 ms sind lang genug, dass es als Einblendung wahrgenommen wird, und
+     * kurz genug, dass niemand darauf wartet.
+     */
+    Renderer.QUIET_EINBLENDE_MS = 400;
+
+    /** Innenabstand des Bandes um den Satz, in virtuellen Pixeln. */
+    Renderer.QUIET_PAD_X = 34;
+    Renderer.QUIET_PAD_Y = 14;
+
+    /* Dunkles Band in der Sprache der Bauchbinde, damit der Satz auf allen
+       drei Belaegen liegt statt auf keinem. Die Schrift ist gebrochenes Weiss
+       wie die Feldlinien — kein Alarmrot: es ist eine Bitte, keine Stoerung. */
+    Renderer.QUIET_BAND = 'rgba(7, 11, 36, 0.88)';
+    Renderer.QUIET_FARBE = LINE_COLOR;
 
     /** Ersatzschriftzug, solange die Logodatei fehlt. */
     Renderer.TRANS_TEXT = 'KARAOKOVIC';
@@ -8740,6 +8866,221 @@
     Renderer.WORD_COLOR_MS = 500;
 
     /* =========================================================================
+     * 9b. OPERATOR-PANEL — Diagnose im DOM, nicht im Bild
+     * ====================================================================== */
+
+    /**
+     * Ampel des PEGELS im aktuellen Zustand.
+     *
+     * EINE Quelle fuer zwei Leser: das Operator-Panel und die alte
+     * Messanzeige (drawAudioDebug). Vorher stand die Fallunterscheidung
+     * ausgeschrieben in der Messanzeige; sobald das Panel sie ein zweites Mal
+     * gerechnet haette, waere genau der Widerspruch moeglich geworden, den die
+     * Ein-Quellen-Regel meint — zwei Anzeigen, zwei Wahrheiten.
+     *
+     * Die Schwellen sind NICHT frei gewaehlt, sie beantworten die Frage des
+     * Augenblicks:
+     *   Ruhephase   -> "bist du leise genug?"   unter volumeGate
+     *   Aufschlag   -> "bist du laut genug?"    ab serveVolume
+     *   Ballwechsel -> "hoert dich das Spiel?"  ueber moveGate
+     *
+     * @param   {number} pegel   RMS dieses Frames
+     * @param   {string} zustand Wert aus STATE
+     * @returns {{ok:boolean, wort:string}}
+     */
+    function pegelAmpel(pegel, zustand) {
+        if (zustand === STATE.SILENCE_CHECK) {
+            return { ok: pegel < CONFIG.volumeGate, wort: 'STILL' };
+        }
+        if (zustand === STATE.SERVE_WAIT) {
+            return { ok: pegel >= CONFIG.serveVolume, wort: 'SINGEN' };
+        }
+        return { ok: pegel > CONFIG.moveGate, wort: '' };
+    }
+
+    /**
+     * Das Operator-Panel.
+     *
+     * WARUM ES IM DOM LIEGT UND NICHT IM CANVAS — der ganze Sinn dieser
+     * Klasse: der Canvas geht auf die LED-Wand, ins Programm und auf die
+     * latenzfreien Spielermonitore. Bis ARENA-23 stand die Diagnose dort
+     * mitten im Bild — "AUDIOEINGANG TOT" gross unten rechts, die Messanzeige
+     * mit PITCH und VOL, und im haengenden Countdown "RAUM ZU LAUT" samt
+     * Raumpegel und Klavierverdacht. Auf einer Aufzeichnung ist das ein
+     * Fremdkoerper, und im Saal liest es das Publikum mit.
+     *
+     * Zwei Riegel statt einem:
+     *   1. Es steht nicht im Canvas. Wer den Canvas abgreift, bekommt es
+     *      nicht — auch nicht versehentlich.
+     *   2. Es ist im Regelfall AUS (Ctrl+Shift+M). Auf Sendung ist es damit
+     *      nicht bloss unauffaellig, sondern gar nicht da.
+     *
+     * DIE AMPEL RECHNET NICHTS SELBST. Jede Lampe liest die Bedingung ihres
+     * Ausloesers — dieselbe Groesse, die auch die Protokollzeile schreibt oder
+     * den Rettungsgriff noetig macht. Eine Lampe, die gruen zeigt, waehrend im
+     * Protokoll eine Warnung steht, waere schlimmer als gar keine Lampe.
+     * Deshalb kommt die gesamte Lage aus EINEM Aufruf (Game.panelLage) und
+     * wird hier nur noch gezeichnet.
+     *
+     * KEIN innerHTML: alle Knoten werden einmal gebaut und danach nur noch
+     * ueber textContent und className angefasst. Und geschrieben wird NUR bei
+     * Aenderung — das Panel laeuft im Frame-Loop, und eine unveraenderte
+     * Zeile jede 16 ms neu zu setzen kostet Layout, das dem Spiel fehlt.
+     */
+    class OperatorPanel {
+        /** @param {HTMLElement|null} el Container aus arena.html */
+        constructor(el) {
+            /** @type {HTMLElement|null} */
+            this.el = el;
+            /** @type {Array<Object>} Zeilenknoten, einmal gebaut. */
+            this._e = [];
+            /** @type {Array<Object>} */
+            this._mess = [];
+            /** @type {boolean|null} Zuletzt geschriebene Sichtbarkeit. */
+            this._sichtbar = null;
+            /** @type {string} Zuletzt geschriebene Kopfzeile. */
+            this._kopf = '';
+
+            /* Ohne echtes DOM bleibt das Panel stumm und stoert nichts — in
+               den Node-Tests gibt es keine Elemente, dort wird die LAGE
+               geprueft und nicht ihre Darstellung. */
+            this.aktiv = !!(el && typeof el.appendChild === 'function'
+                && typeof document.createElement === 'function');
+            if (this.aktiv) this.aufbauen();
+        }
+
+        /**
+         * Die Knoten einmalig anlegen. Danach aendert sich die Struktur nie
+         * mehr — nur Text und Klassen.
+         */
+        aufbauen() {
+            const d = (klasse, eltern) => {
+                const n = document.createElement('div');
+                if (klasse) n.className = klasse;
+                (eltern || this.el).appendChild(n);
+                return n;
+            };
+
+            this._kopfEl = d('kopf');
+            this._kopfEl.textContent = 'OPERATOR';
+
+            for (let i = 0; i < OperatorPanel.MELDUNGEN.length; i++) {
+                const m = OperatorPanel.MELDUNGEN[i];
+                const wrap = d('zeile');
+                const lampe = d('lampe', wrap);
+                const code = d('code', wrap);
+                const was = d('was', wrap);
+                const wert = d('wert', wrap);
+                code.textContent = m.code;
+                was.textContent = m.text;
+                this._e.push({ wrap, lampe, wert,
+                    klasse: '', lampenKlasse: '', text: '' });
+            }
+
+            const trenner = d('trenner');
+            trenner.textContent = 'MESSWERTE';
+
+            for (let i = 0; i < OperatorPanel.MESSZEILEN.length; i++) {
+                const wrap = d('zeile mess');
+                const code = d('code', wrap);
+                const was = d('was', wrap);
+                const wert = d('wert', wrap);
+                code.textContent = '';
+                was.textContent = OperatorPanel.MESSZEILEN[i];
+                this._mess.push({ wrap, wert, klasse: '', text: '' });
+            }
+        }
+
+        /**
+         * Die Lage darstellen.
+         *
+         * @param {Object} lage Ergebnis von Game.panelLage()
+         */
+        zeichne(lage) {
+            if (!this.aktiv) return;
+
+            if (this._sichtbar !== lage.sichtbar) {
+                this._sichtbar = lage.sichtbar;
+                this.el.className = lage.sichtbar ? 'an' : '';
+            }
+            /* Unsichtbar heisst: keine einzige Schreiboperation mehr. Das
+               Panel ist im Regelfall aus, und dann soll es auch nichts
+               kosten. */
+            if (!lage.sichtbar) return;
+
+            if (this._kopf !== lage.kopf) {
+                this._kopf = lage.kopf;
+                this._kopfEl.textContent = lage.kopf;
+            }
+
+            for (let i = 0; i < this._e.length; i++) {
+                const z = this._e[i];
+                const q = lage.e[i];
+                const klasse = q.ruht ? 'zeile ruht'
+                    : (q.an ? 'zeile alarm' : 'zeile');
+                const lampenKlasse = q.ruht ? 'lampe ruht'
+                    : (q.an ? 'lampe alarm' : 'lampe');
+                if (z.klasse !== klasse) {
+                    z.klasse = klasse; z.wrap.className = klasse;
+                }
+                if (z.lampenKlasse !== lampenKlasse) {
+                    z.lampenKlasse = lampenKlasse; z.lampe.className = lampenKlasse;
+                }
+                if (z.text !== q.wert) {
+                    z.text = q.wert; z.wert.textContent = q.wert;
+                }
+            }
+
+            for (let i = 0; i < this._mess.length; i++) {
+                const z = this._mess[i];
+                const q = lage.mess[i];
+                const klasse = q.ruht ? 'zeile mess ruht'
+                    : (q.ok ? 'zeile mess' : 'zeile mess alarm');
+                if (z.klasse !== klasse) {
+                    z.klasse = klasse; z.wrap.className = klasse;
+                }
+                if (z.text !== q.wert) {
+                    z.text = q.wert; z.wert.textContent = q.wert;
+                }
+            }
+        }
+    }
+
+    /**
+     * Die zehn Lampen, in der Reihenfolge, in der sie im Panel stehen.
+     *
+     * GRUPPIERT NACH DEM, WAS DER OPERATOR TUN KANN:
+     *   E-01..E-03  Ton und Spielfluss — hier steht die Show still
+     *   E-04..E-05  Eingabe und Bildkette
+     *   E-06..E-07  Anzeige des Rechners
+     *   E-08        nur im Duell
+     *   E-09..E-10  Dateien
+     *
+     * Die Codes sind fest und werden NICHT neu vergeben, auch wenn eine Lampe
+     * spaeter entfaellt: auf der Buehne wird "E-03" gerufen, nicht der
+     * Wortlaut. Eine Nummer, die zweimal etwas anderes bedeutet, ist im
+     * Zuruf nicht zu heilen.
+     */
+    OperatorPanel.MELDUNGEN = [
+        { code: 'E-01', text: 'Audioeingang tot' },
+        { code: 'E-02', text: 'Ruhepruefung haengt' },
+        { code: 'E-03', text: 'Klavier im Mikrofon?' },
+        { code: 'E-04', text: 'Tastaturfokus weg' },
+        { code: 'E-05', text: 'Bildkette unterbrochen' },
+        { code: 'E-06', text: 'Anzeigeskalierung' },
+        { code: 'E-07', text: 'Bildrate' },
+        { code: 'E-08', text: 'Nur ein Kanal' },
+        { code: 'E-09', text: 'Pflicht-Asset fehlt' },
+        { code: 'E-10', text: 'Klavierstueck fehlt' },
+    ];
+
+    /** Beschriftung der Messzeilen, in ihrer Reihenfolge. */
+    OperatorPanel.MESSZEILEN = [
+        'P1 PITCH', 'P1 VOL', 'P2 PITCH', 'P2 VOL',
+        'RAUM', 'GRENZE', 'RUHE REST',
+    ];
+
+    /* =========================================================================
      * 10. INPUT HANDLER — Operator-Hotkeys
      * ====================================================================== */
 
@@ -8774,7 +9115,17 @@
                nicht wieder abhaengen, und genau den schleichenden Zustand
                soll detach() ja verhindern. Auf der Buehne folgenlos, in den
                Entwickler-Tests nicht. */
+            /**
+             * @type {boolean} Liegt der Tastaturfokus im Spielfenster?
+             *
+             * Bis ARENA-23 schrieb der Fokusverlust nur eine Protokollzeile.
+             * Die beantwortet die Frage aber erst hinterher — und in dem
+             * Moment, in dem der Notausgang Ctrl+Shift+A nicht ankommt, wird
+             * sie JETZT gebraucht. Das Operator-Panel liest sie als E-04.
+             */
+            this.fokus = true;
             this._onBlur = () => {
+                this.fokus = false;
                 this._down.clear();
                 /* Der eigentliche Buehnenwert dieser Zeile: die Tastatur
                    folgt dem FOKUS, nicht der Sichtbarkeit. Nach einem Klick
@@ -8784,8 +9135,10 @@
                 Protokoll.schreib('WARNUNG', 'Tastaturfokus verloren — '
                     + 'Hotkeys kommen nicht an; ins Spielfenster klicken');
             };
-            this._onFocus = () => Protokoll.schreib('INFO',
-                'Tastaturfokus wieder im Spielfenster');
+            this._onFocus = () => {
+                this.fokus = true;
+                Protokoll.schreib('INFO', 'Tastaturfokus wieder im Spielfenster');
+            };
             /**
              * Welche Tasten gerade gedrückt sind. Nötig, weil der Anpfiff auf
              * eine KOMBINATION reagiert und `keydown` immer nur eine Taste
@@ -8877,13 +9230,17 @@
                 return;
             }
 
-            /* Messanzeige unten rechts ein- und ausschalten. */
+            /* Operator-Panel ein- und ausschalten.
+               Der Schalter heisst weiter SHOW_AUDIO_METER: er steckt in den
+               Tests und im Uebergabeprotokoll, und umbenennen waere reine
+               Beschriftungskosmetik mit Bruchrisiko. Geschaltet wird seit
+               ARENA-24 das DOM-Panel — im Canvas steht ohnehin nichts mehr. */
             if (e.code === 'KeyM') {
                 e.preventDefault();
                 Renderer.SHOW_AUDIO_METER = !Renderer.SHOW_AUDIO_METER;
                 Protokoll.schreib('OPERATOR',
-                    `Messanzeige ${Renderer.SHOW_AUDIO_METER ? 'an' : 'aus'}`);
-                console.info(`[Operator] Messanzeige `
+                    `Operator-Panel ${Renderer.SHOW_AUDIO_METER ? 'an' : 'aus'}`);
+                console.info(`[Operator] Panel `
                     + `${Renderer.SHOW_AUDIO_METER ? 'eingeblendet' : 'ausgeblendet'}.`);
                 return;
             }
@@ -8980,6 +9337,26 @@
                 this.paddleAlex, this.bounceMarks, this.audio, this.audio2
             );
             this.renderer = new Renderer(this.ctx, this.viewport, this.projection, this.assets);
+            /**
+             * Die Diagnose des Operators — im DOM, nicht im Canvas.
+             * Siehe Klasse OperatorPanel; Ctrl+Shift+M schaltet sie ein.
+             */
+            this.panel = new OperatorPanel(
+                document.getElementById('operator-panel'));
+            /**
+             * Der feste Schnappschuss fuer das Panel. EINMAL angelegt und
+             * danach nur noch beschrieben — er wird in jedem Frame gefuellt,
+             * und ein neues Objekt je Frame waeren 60 Allokationen je
+             * Sekunde ueber die ganze Show. Dieselbe Ueberlegung wie beim
+             * Pegel-Ringspeicher und bei den Scratch-Punkten im Renderer.
+             */
+            this._panel = {
+                sichtbar: false, kopf: '',
+                e: OperatorPanel.MELDUNGEN.map(
+                    () => ({ an: false, ruht: false, wert: '' })),
+                mess: OperatorPanel.MESSZEILEN.map(
+                    () => ({ ok: true, ruht: false, wert: '' })),
+            };
             this.input = new InputHandler(this.match, this.physics);
 
             /** @type {boolean} Läuft das Spiel (nach dem Onboarding)? */
@@ -9026,6 +9403,33 @@
             this._pulsZuvor = -1;
             this._pulsGleich = 0;
             this.audioTot = false;
+            /**
+             * @type {number} Zeitpunkt der letzten Frame-Luecke (0 = keine).
+             * Das Panel zeigt sie LUECKE_ANZEIGE_MS lang an (E-05): eine
+             * Unterbrechung ist vorbei, wenn sie auffaellt, und ohne Nachlauf
+             * saehe der Operator nie, dass es eine gab.
+             */
+            this._letzteLuecke = 0;
+            /** @type {number} Ihre Dauer in Millisekunden. */
+            this._lueckeMs = 0;
+            /**
+             * @type {number} Kanaele, die der Eingang tatsaechlich liefert
+             * (0 = noch nicht geoeffnet). initPair() meldet sie, bisher las
+             * das nur der Hinweistext im Onboarding — E-08 liest sie jetzt
+             * dauerhaft.
+             */
+            this._kanaele = 0;
+            /**
+             * @type {boolean} Lag in diesem Frame ein Grundton an?
+             *
+             * DASSELBE Praedikat, mit dem loop() den Raumpegel filtert. E-03
+             * liest es mit: ein haengender Countdown BEI ANLIEGENDEM Grundton
+             * ist der Fingerabdruck eines Instruments im Mikrofon — die
+             * adaptive Stillegrenze waechst dann naemlich gerade NICHT mit.
+             */
+            this._gesungen = false;
+            /** @type {boolean} Klavier im Mikrofon vermutet (siehe loop). */
+            this.klavierVerdacht = false;
             /** @type {Error|null} Zuletzt abgefangener Fehler (Diagnose). */
             this._lastError = null;
 
@@ -9066,6 +9470,9 @@
              */
             this._diag = {
                 deltas: [], hzGemeldet: false, analyseMax: 0, analyseSeit: 0,
+                /* Gemessene Bildrate, sobald sie feststeht (0 = noch nicht).
+                   Bis ARENA-23 stand sie nur im Protokoll; E-07 zeigt sie. */
+                hz: 0,
             };
 
             this._loop = this.loop.bind(this);
@@ -9132,7 +9539,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-23 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Messanzeige, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-24 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Operator-Panel, L = Protokoll.');
         }
 
         /**
@@ -9303,6 +9710,9 @@
                 try {
                     if (CONFIG.mode === MODE.VERSUS) {
                         const kanaele = await AudioEngine.initPair(this.audio, this.audio2);
+                        /* Fuer E-08: bisher las das nur der Hinweistext hier,
+                           und der ist nach dem naechsten Schritt weg. */
+                        this._kanaele = kanaele;
                         if (kanaele < 2) {
                             /* Nicht stillschweigend weiterlaufen: Spieler 2
                                bekäme Stille und stünde die ganze Show über
@@ -9695,6 +10105,10 @@
                     && luecke > Game.FRAME_LUECKE_MS) {
                     this.match.stateTimer += luecke;
                     this.match.resetSilenceTimer();
+                    /* Fuer E-05: die Protokollzeile beantwortet die Frage
+                       hinterher, die Lampe waehrend der naechsten Minute. */
+                    this._letzteLuecke = Uhr.jetzt();
+                    this._lueckeMs = luecke;
                     Protokoll.schreib('WARNUNG',
                         `Frame-Luecke ${Math.round(luecke)} ms (Fenster `
                         + `verdeckt? Display aus?) — Timer neu verankert`);
@@ -9739,6 +10153,8 @@
                  * von audio2 waere davor der Wert des vorigen Frames. */
                 const gesungen = this.audio.livePitch > 0
                     || (result2 !== null && this.audio2.livePitch > 0);
+                /* Dasselbe Praedikat liest E-03 im Panel — siehe dort. */
+                this._gesungen = gesungen;
                 if (!gesungen) this.pegelMessen(this.loudestVolume());
 
                 /* --- Audio-Waechter (1x pro Sekunde) -------------------------
@@ -9797,6 +10213,18 @@
                    dort einen Nullvergleich. */
                 this.klavier.tick();
 
+                /* Der Klavierverdacht an EINER Stelle: Bild (Quiet-Satz
+                   entfaellt dort inzwischen), Szene und Panel lesen ihn,
+                   gerechnet wird er hier. */
+                this.klavierVerdacht = CONFIG.mode === MODE.KLAVIER
+                    && this.klavier.laeuft && !!this.ruheHaengt;
+
+                /* Das Panel laeuft AUCH IM ONBOARDING mit — dort wird
+                   eingepegelt, und genau dafuer ist es da. `running` wird
+                   erst mit dem Start wahr; haenge man es dorthin, waere die
+                   Diagnose ausgerechnet beim Soundcheck blind. */
+                this.panel.zeichne(this.panelLage());
+
                 if (this.calibrating) {
                     /* Angezeigt wird der Kanal DESSEN, der gerade einsingt —
                        sonst sieht Spieler 2 die Töne von Spieler 1. */
@@ -9829,8 +10257,14 @@
                     this._scene.ruheHaengt = !!this.ruheHaengt;
                     this._scene.raumpegel = this.raumpegel();
                     this._scene.audioTot = this.audioTot;
-                    this._scene.klavierVerdacht = CONFIG.mode === MODE.KLAVIER
-                        && this.klavier.laeuft && !!this.ruheHaengt;
+                    this._scene.klavierVerdacht = this.klavierVerdacht;
+                    /* Wie lange die Ruhe schon haengt — die Blendzeit von
+                       "Quiet, please." kommt aus DERSELBEN Uhr, die ueber
+                       `ruheHaengt` entscheidet. Ein zweiter Zeitstempel
+                       koennte gegenueber ihr verrutschen, und der Satz stuende
+                       dann laenger oder kuerzer, als die Bedingung gilt. */
+                    this._scene.ruheSeitMs = this.ruheHaengt
+                        ? this.match.elapsed() - Game.RUHE_WARNUNG_MS : 0;
                     this.renderer.render(this._scene);
                 }
             } catch (err) {
@@ -9897,6 +10331,8 @@
             const median = d.deltas[Math.floor(d.deltas.length / 2)];
             d.deltas.length = 0;
             const hz = Math.round(1000 / median);
+            /* Festhalten statt nur melden — E-07 zeigt sie dauerhaft an. */
+            d.hz = hz;
 
             Protokoll.schreib('DISPLAY',
                 `~${hz} Hz (Median ${median.toFixed(1)} ms je Frame)`);
@@ -9932,6 +10368,149 @@
             }
             d.analyseMax = 0;
             d.analyseSeit = now;
+        }
+
+        /**
+         * Die vollstaendige Lage fuer das Operator-Panel.
+         *
+         * EINZIGE Stelle, an der die Lampen entstehen. Jede liest die
+         * Bedingung IHRES AUSLOESERS — dieselbe Groesse, die auch die
+         * Protokollzeile schreibt oder den Rettungsgriff noetig macht. Eine
+         * Lampe mit eigener, aehnlicher Rechnung koennte gruen zeigen,
+         * waehrend im Protokoll die Warnung steht; das waere schlimmer als
+         * gar keine Lampe. Dieselbe Lehre wie bei der Stimm-Anzeige.
+         *
+         * "ruht" heisst: die Bedingung gilt in diesem Modus gar nicht — die
+         * Kanalzahl ausserhalb des Duells, das Klavierstueck ausserhalb des
+         * Klavier-Modus. Gedaempft und nicht gruen: gruen hiesse "geprueft und
+         * in Ordnung", und geprueft wurde nichts.
+         *
+         * Fuellt den festen Schnappschuss und gibt ihn zurueck — kein neues
+         * Objekt je Frame.
+         *
+         * @returns {Object}
+         */
+        panelLage() {
+            const L = this._panel;
+            const m = this.match;
+            const jetzt = Uhr.jetzt();
+
+            L.sichtbar = Renderer.SHOW_AUDIO_METER;
+            L.kopf = `${CONFIG.mode} · `
+                + `${m.isWarmup ? 'EINSPIELEN' : 'MATCH'} · ${m.state}`;
+            /* Ist das Panel aus, ist alles Weitere unnoetige Arbeit in jedem
+               Frame — und aus ist der Regelfall. */
+            if (!L.sichtbar) return L;
+
+            const setz = (i, an, wert, ruht) => {
+                const z = L.e[i];
+                z.an = !!an; z.ruht = !!ruht; z.wert = wert;
+            };
+
+            /* E-01 — Audioeingang tot. Quelle: der Waechter in loop(), der
+               auch die Protokollwarnung schreibt. */
+            setz(0, this.audioTot, this.audioTot ? 'audioNeustart()' : 'ok');
+
+            /* E-02 — Ruhepruefung haengt. Quelle: derselbe Merker, den auch
+               "Quiet, please." im Bild liest. */
+            setz(1, this.ruheHaengt,
+                this.ruheHaengt ? `${(m.elapsed() / 1000).toFixed(0)} s` : 'ok');
+
+            /* E-03 — Klavier im Mikrofon. Der Verdacht des Klavier-Modus ODER
+               ein Haenger BEI ANLIEGENDEM GRUNDTON: die Stillegrenze lernt
+               den Raum nur aus Frames ohne Grundton, ein Instrument im
+               Mikrofon haelt sie also fest, waehrend der Pegel darueber
+               liegt. Damit greift die Lampe auch dann, wenn im Arcade- oder
+               Duell-Modus ein Klavier live daneben steht. */
+            const e03 = this.klavierVerdacht
+                || (this.ruheHaengt && this._gesungen);
+            setz(2, e03, e03 ? 'Mix-Minus pruefen' : 'ok');
+
+            /* E-04 — Tastaturfokus. Ohne ihn kommt Ctrl+Shift+A nicht an,
+               und der Notausgang ist genau dann tot, wenn er gebraucht wird. */
+            setz(3, !this.input.fokus,
+                this.input.fokus ? 'ok' : 'ins Fenster klicken');
+
+            /* E-05 — Bildkette. Mit Nachlauf, siehe LUECKE_ANZEIGE_MS. */
+            const luecke = this._letzteLuecke > 0
+                && jetzt - this._letzteLuecke < Game.LUECKE_ANZEIGE_MS;
+            setz(4, luecke, luecke ? `${Math.round(this._lueckeMs)} ms` : 'ok');
+
+            /* E-06 — Anzeigeskalierung. Live gelesen: sie aendert sich, wenn
+               das Fenster auf einen anderen Bildschirm wandert. */
+            const dpr = window.devicePixelRatio || 1;
+            setz(5, dpr !== 1, `${Math.round(dpr * 100)} %`);
+
+            /* E-07 — Bildrate. Dieselbe Schwelle wie die Protokollwarnung;
+               ohne FIXED_TIMESTEP laeuft das Spiel bei 120 Hz doppelt so
+               schnell. */
+            const hz = this._diag.hz;
+            setz(6, hz >= Game.BILDRATE_WARNUNG_HZ && !FEATURES.FIXED_TIMESTEP,
+                hz ? `${hz} Hz` : 'misst …');
+
+            /* E-08 — Kanalzahl, nur im Duell. */
+            const duell = CONFIG.mode === MODE.VERSUS;
+            setz(7, duell && this._kanaele > 0 && this._kanaele < 2,
+                duell ? (this._kanaele ? `${this._kanaele} Kanal/Kanaele`
+                    : 'noch offen') : '—', !duell);
+
+            /* E-09 — Pflicht-Assets. `failed` enthaelt auch die als optional
+               gekennzeichneten; nur der Rest ist ein Ausfall. */
+            const pflicht = this.assets.failed.length
+                - this.assets.failedOptional.length;
+            setz(8, pflicht > 0, pflicht > 0 ? `${pflicht} fehlen` : 'ok');
+
+            /* E-10 — Klavierstueck, nur im Klavier-Modus. */
+            const klavier = CONFIG.mode === MODE.KLAVIER;
+            setz(9, klavier && !this.klavier.bereit,
+                klavier ? (this.klavier.bereit ? 'geladen' : this.klavier.grund)
+                    : '—', !klavier);
+
+            /* --- Messwerte ------------------------------------------------ */
+            const mess = (i, ok, wert, ruht) => {
+                const z = L.mess[i];
+                z.ok = !!ok; z.ruht = !!ruht; z.wert = wert;
+            };
+            const hzVon = (a) => (a && a.stablePitch > 0) ? a.stablePitch : 0;
+            const imUmfang = (a, spieler) => {
+                const f = hzVon(a);
+                const r = Physics.voiceRange(spieler);
+                return f > 0 && f >= r.min && f <= r.max;
+            };
+            const zeigHz = (a) => {
+                const f = hzVon(a);
+                return f > 0 ? `${Math.round(f)} Hz` : '– Hz';
+            };
+            /* Die Pegelampel kommt aus pegelAmpel() — dieselbe Funktion, die
+               auch die alte Messanzeige benutzt. */
+            const p1 = pegelAmpel(this.audio.currentVolume, m.state);
+            mess(0, imUmfang(this.audio, PLAYER.ANDREA), zeigHz(this.audio));
+            mess(1, p1.ok, `${this.audio.currentVolume.toFixed(3)}`
+                + (p1.wort ? `  ${p1.wort}` : ''));
+
+            if (duell && this.audio2.analyser) {
+                const p2 = pegelAmpel(this.audio2.currentVolume, m.state);
+                mess(2, imUmfang(this.audio2, PLAYER.ALEX), zeigHz(this.audio2));
+                mess(3, p2.ok, this.audio2.currentVolume.toFixed(3));
+            } else {
+                mess(2, true, '—', true);
+                mess(3, true, '—', true);
+            }
+
+            const raum = this.raumpegel();
+            const grenze = this.stilleGrenze();
+            mess(4, raum < CONFIG.volumeGate, raum.toFixed(3));
+            /* Gruen heisst hier: die Grenze musste NICHT mitwachsen. Steht sie
+               ueber volumeGate, hat der Raum sie hochgezogen — das ist die
+               Rettung vor dem Stillstand, aber kein guter Zustand. */
+            mess(5, grenze <= CONFIG.volumeGate + 1e-9, grenze.toFixed(3));
+
+            const rest = m.state === STATE.SILENCE_CHECK
+                ? Math.max(0, TIMING.SILENCE_MS
+                    - (jetzt - m.silenceTimerStart)) : -1;
+            mess(6, true, rest >= 0 ? `${Math.round(rest)} ms` : '—', rest < 0);
+
+            return L;
         }
 
         /**
@@ -9979,6 +10558,7 @@
             try {
                 if (CONFIG.mode === MODE.VERSUS) {
                     const kanaele = await AudioEngine.initPair(this.audio, this.audio2);
+                    this._kanaele = kanaele;
                     if (kanaele < 2) {
                         Protokoll.schreib('WARNUNG', `Eingang liefert nur `
                             + `${kanaele} Kanal — Spieler 2 bleibt stumm`);
@@ -10492,6 +11072,16 @@
     Game.FRAME_LUECKE_MS = 500;
 
     /**
+     * Wie lange eine Frame-Luecke im Panel nachleuchtet (E-05).
+     *
+     * Eine Unterbrechung ist vorbei, sobald sie auffaellt — ohne Nachlauf
+     * saehe der Operator nie, dass es eine gab. Zehn Sekunden sind lang
+     * genug, um beim Blick aufs Panel noch da zu sein, und kurz genug, dass
+     * eine alte Stoerung nicht dauerhaft rot steht.
+     */
+    Game.LUECKE_ANZEIGE_MS = 10000;
+
+    /**
      * RUHE-Protokoll: bis zu so vielen Ruecksetzern IN FOLGE wird jede
      * Stoerung einzeln gemeldet (gedrosselt auf zehn je Sekunde), danach
      * greift die Sammelzeile. 30 Ruecksetzer sind rund drei Sekunden
@@ -10800,6 +11390,11 @@
        Ohne diesen Zugriff muesste zum Nachregeln die Datei bearbeitet und neu
        geladen werden. */
     game.Klavier = Klavier;
+
+    /* Das Operator-Panel fuer die Buehne. Ctrl+Shift+M ist der Griff;
+       KARAOKOVIC.panelLage() gibt dieselbe Lage als Objekt zurueck, wenn
+       jemand sie in der Konsole lesen oder mitschreiben will. */
+    game.OperatorPanel = OperatorPanel;
 
     game.grenzen = {
         left: COURT_LEFT, right: COURT_RIGHT,
