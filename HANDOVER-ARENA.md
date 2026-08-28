@@ -774,6 +774,101 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     die Eigenschaft, die immer gelten muss: **der Versuch endet mit einem
     Fenster oder mit einem Grund im Protokoll** (in headless Chrome wird das
     Popup blockiert — genau dieser Zweig läuft dort grün).
+- **ARENA-26** — **Rückbau.** Der Auftraggeber hat die Notbremse gezogen, und
+  zu Recht: drei Sprints hatten `app-arena.js` von **10 122 auf 11 871 Zeilen**
+  wachsen lassen (+17 %), **19 % aller Zusicherungen** prüften Maschinerie, die
+  es vorher nicht gab, und **drei neue Abhängigkeiten standen außerhalb unserer
+  Kontrolle**: MP3s auf der Platte, Mix-Minus am Pult, Chromes Popup-Politik.
+  Die Hausregel „Bühnenrisiko schlägt Eleganz" war dreimal hintereinander
+  verletzt — jedes Mal mit guter Begründung, und das macht es schlimmer.
+  - **Der Klavier-Modus ist vollständig entfallen** (ARENA-23). Er hat dem Spiel
+    eine Tonquelle gegeben und dabei eine Ausfallart **erfunden**: Klavier im
+    Mikrofon blockiert die Ruheprüfung garantiert. Dagegen standen dann eine
+    Sperre im Onboarding, eine Warnlampe und ein Handbuchabschnitt — **drei
+    Schutzmaßnahmen gegen ein selbst eingeführtes Risiko.** Weg sind: `MODE.KLAVIER`,
+    die Klasse `Klavier`, der Onboarding-Schritt, `protokolliereAusgang()`,
+    `matchLauf` (existierte nur für die Begleitung), `test-klavier.js`, die
+    Musik-Auslieferung in `webseite-bauen.js` und die `<audio>`-Attrappe im
+    DOM-Stub. **Der `file://`-Befund bleibt als Wissen** (siehe unten) — der
+    Code liegt im git-Verlauf und ist jederzeit zurückholbar.
+  - **Das Operator-Zweitfenster ist entfallen** (ARENA-25). Seine zentrale
+    Annahme — `about:blank` erbt die Herkunft, das Popup kommt durch — war **auf
+    dem Show-Mac nie gemessen**; im Testbrowser wird es blockiert. Damit hätte
+    der Operator *beide* Betriebsarten kennen müssen, weil wir nicht wissen,
+    welche gilt. Drei Wochen vor der Aufzeichnung ist das die falsche Sorte
+    Ungewissheit. Weg sind `zweitfensterOeffnen()`, der Wächter samt
+    Lebenszeichen, `Ctrl+Shift+O`, der Knopf im Onboarding und
+    `test-operatorfenster.js`.
+  - **Das Panel ist eine Zeile geworden.** Der Denkfehler von ARENA-24: es gibt
+    **zwei Situationen** — *Einpegeln* (Zeit, braucht Zahlen) und *Sendung*
+    (kein Blick übrig) — und 17 Zeilen bedienen nur die erste. Jetzt steht oben
+    **eine** Zeile: `BEREIT`, oder die dringendste Störung mit der einen
+    Handlung darunter; brennen mehrere, werden sie gezählt (`+2 weitere`).
+    Darunter vier bis sechs Messwerte fürs Einpegeln.
+    - **Alle Prüfungen laufen weiter** und lesen weiterhin die Bedingung ihres
+      Auslösers — sie sind nur keine Lampenliste mehr.
+    - **E-02 und E-03 schließen einander jetzt aus.** Der Hänger ist derselbe;
+      den Unterschied macht der Grundton. *Ohne* → der Raum ist zu laut, kann
+      sich legen. *Mit* → etwas Klingendes liegt auf dem Mikrofon, und das geht
+      **nie von selbst weg**. Beides zugleich zu melden wäre eine Zeile zu viel
+      und die unschärfere obendrein.
+    - **Jede Prüfung trägt eine HANDLUNG.** Eine Meldung ohne sie zwingt den
+      Operator ins Handbuch, und dafür ist während der Sendung keine Zeit.
+    - **E-10 bleibt frei.** Auf der Bühne wird der Code gerufen, nicht der
+      Wortlaut; eine Nummer, die zweimal etwas anderes bedeutet, ist im Zuruf
+      nicht zu heilen.
+  - Bilanz: **11 871 → 10 831 Zeilen**, fünf Hotkeys statt sechs, keine MP3s,
+    kein `window.open`, keine Mix-Minus-Auflage mehr (nur noch als
+    Handlungstext, falls E-03 doch einmal brennt). **521 Zusicherungen, grün.**
+  - Ein Fund am Rande, der in die Sammlung gehört: der Rückbau hat den
+    `<script>`-Tag in `arena.html` in `./Cache-Buster` verwandelt — mein eigenes
+    Patch-Hilfsmittel hatte vertauschte Parameter, und die Erfolgsmeldung war
+    der einzige Hinweis. Gefunden hat es der Browsertest, weil er prüft, **dass
+    das Spiel überhaupt hochkommt.** Genau dafür ist er da.
+
+---
+
+## 7c. Die Regel für die Wochen bis zur Aufzeichnung
+
+**Jeder Sprint muss begründen, warum er das BÜHNENRISIKO SENKT.**
+
+Was das nicht kann, wartet bis nach der Aufzeichnung. Kein neues Untersystem,
+keine neue externe Abhängigkeit, kein Mechanismus, dessen Verhalten auf dem
+Show-Rechner nicht gemessen ist. Die Regel gilt auch — und besonders — für
+Vorschläge, die gut begründet sind: ARENA-23 bis 25 waren alle drei gut
+begründet.
+
+**Drei Messungen fehlen, und sie sind der Grund, warum ARENA-25 überhaupt
+entstehen konnte.** Ohne sie wird gegen Annahmen gebaut:
+
+1. **Der Show-Mac** — Vollbild, Bildrate, Anzeigeskalierung. Ablauf steht in
+   `OPERATOR-MANUAL.md`, Abschnitt 6.
+2. **Die Wand** — ist die Countdown-Ziffer mit Grad 88 lesbar? „AUFSCHLAG!"?
+   „Quiet, please."? Das kann niemand am Schreibtisch beurteilen.
+3. **Der Dante-Feed** — Einpegeln am echten Eingang. Der historische
+   Bühnenausfall hing genau daran (Gesang 0,025 gegen Raum 0,027) und wurde nie
+   am echten Eingang nachgestellt.
+
+Dazu fehlt eine **Definition von „fertig"** für den Aufzeichnungstag. Ohne sie
+wird an „wäre schön" gemessen statt an „muss laufen".
+
+### Was aus dem Klavier-Sprint als Wissen bleibt
+
+**Unter `file://` ist die Web-Audio-Kette STUMM.** Gemessen am 27.08.2026 in
+Chrome headless, Seite und MP3 im selben Verzeichnis:
+
+| Betrieb | MP3 lädt | über `createMediaElementSource` | direkt |
+|---|---|---|---|
+| Doppelklick (`file://`, die Show) | `readyState 4` | **RMS 0** | spielt |
+| mit `--allow-file-access-from-files` | `readyState 4` | RMS 0,027 | spielt |
+
+Chrome behandelt eine `file://`-Ressource gegenüber einer `file://`-Seite als
+fremder Herkunft und lässt `MediaElementAudioSourceNode` Stille liefern — **und
+trennt das Element dabei vom Ausgang.** Es wirft nichts, meldet `paused: false`
+und `readyState 4`. Wer dem Spiel je wieder eigenen Ton gibt, muss den direkten
+Weg (`element.volume`) als Regelfall nehmen und die Web-Audio-Kette nur dort,
+wo sie **gemessen** klingt. Das Messskript liegt als
+`Entwickler-Tests/klavierweg.js` im Repo.
 
 ---
 
@@ -783,8 +878,8 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 28.08.2026: 599 Zusicherungen, alle grün, Exit 0.** 30 Testdateien in
-32 Läufen (zwei laufen doppelt, einmal je Fassung).
+**Stand 28.08.2026: 521 Zusicherungen, alle grün, Exit 0.** 28 Testdateien in
+30 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 Daneben liegen **Messskripte**, die nicht Teil der Suite sind, weil sie nichts
 über den Spielcode beweisen, sondern eine Eigenschaft der Umgebung messen:

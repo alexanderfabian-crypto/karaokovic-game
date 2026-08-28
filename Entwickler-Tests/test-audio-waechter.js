@@ -78,9 +78,9 @@ check('Mit dem Rettungsgriff in derselben Zeile',
  * liegt und im Regelfall aus ist. */
 game.Renderer.SHOW_AUDIO_METER = true;
 const lage = game.panelLage();
-check('Lampe E-01 brennt', lage.e[0].an === true);
-check('Und nennt den Rettungsgriff', /audioNeustart/.test(lage.e[0].wert),
-    lage.e[0].wert);
+check('Die Statuszeile meldet den toten Eingang',
+    lage.ok === false && /AUDIOEINGANG TOT/.test(lage.lage), lage.lage);
+check('Und nennt den Rettungsgriff', /audioNeustart/.test(lage.tun), lage.tun);
 game.Renderer.SHOW_AUDIO_METER = false;
 /* Der Szenenwert bleibt gesetzt — er ist die Quelle, aus der das Panel liest.
    Gezeichnet wird er nicht mehr; das prueft test-sendebild.js. */

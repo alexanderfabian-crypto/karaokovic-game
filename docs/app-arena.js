@@ -124,12 +124,6 @@
          */
         mode: 'ARCADE',
 
-        /**
-         * Gewaehltes Klavierstueck (1 oder 2), nur im Klavier-Modus benutzt.
-         * Wird im Onboarding gesetzt und danach nicht mehr veraendert.
-         */
-        klavierStueck: 1,
-
         volumeGate: 0.02,
         /* Faktor, mit dem die Ruhegrenze ueber dem gemessenen Raumpegel
            liegt. 1.6 ist gut ein Drittel lauter als das Rauschen und immer
@@ -878,26 +872,6 @@
          * Frames und liefe sonst auseinander) und einen Umgang mit Latenz.
          */
         ONLINE: 'ONLINE',
-        /**
-         * Live-Auftritt mit Klavierbegleitung.
-         *
-         * GESPIELT WIRD WIE IM ARCADE-MODUS: KI-Gegner, ein Mikrofon. Der
-         * Modus aendert keine einzige Spielregel — er fuegt eine TONQUELLE
-         * hinzu. Bis hierher hatte das Spiel gar keinen eigenen Ton.
-         *
-         * WARUM DAS GEFAHRLOS IST, und das ist nachgezaehlt und nicht
-         * gehofft: JEDE Modusabfrage in dieser Datei prueft gegen VERSUS
-         * (`=== MODE.VERSUS`, einmal `!== MODE.VERSUS`). Es gibt nirgends
-         * eine positive Abfrage auf ARCADE. Ein vierter Wert faellt deshalb
-         * ueberall automatisch in den Arcade-Zweig — genau das, was hier
-         * gewollt ist. test-klavier.js haelt diese Eigenschaft fest, damit
-         * sie nicht beim naechsten Umbau verlorengeht.
-         *
-         * Eine Duell-Variante gibt es bewusst nicht: sie verlangte eine
-         * zweite Kopfhoererstrecke und einen zweiten Mix-Minus-Weg, und der
-         * Auftritt braucht beides nicht.
-         */
-        KLAVIER: 'KLAVIER',
     };
 
     /**
@@ -1512,48 +1486,6 @@
         }
 
         /**
-         * Den AUSGABEweg ins Protokoll schreiben — soweit der Browser ihn
-         * preisgibt.
-         *
-         * Gegenstueck zu protokolliereTrack(), das den Eingang festhaelt. Im
-         * Klavier-Modus ist der Ausgang zum ersten Mal showkritisch: laeuft er
-         * versehentlich auf die Rechnerlautsprecher statt auf die Kopfhoerer,
-         * steht das Klavier im Mikrofon und die Ruhepruefung wird nie fertig.
-         *
-         * Der Browser gibt wenig preis: `sinkId` kennt Chrome erst ab 110 und
-         * liefert bei der Standardausgabe einen leeren String, und die
-         * Geraetenamen stehen nur mit erteilter Berechtigung da. Genau deshalb
-         * ist die Kopfhoerer-Bestaetigung im Onboarding eine Sperre und diese
-         * Zeile nur eine Notiz — sie kann nichts garantieren, aber sie
-         * beantwortet hinterher die Frage, worauf es lief.
-         *
-         * Wirft nicht.
-         *
-         * @param {AudioContext} ctx
-         * @returns {Promise<void>}
-         */
-        static async protokolliereAusgang(ctx) {
-            try {
-                const sink = (ctx && 'sinkId' in ctx)
-                    ? (ctx.sinkId || '(Standardausgabe)')
-                    : '(sinkId unbekannt, Chrome < 110)';
-                let namen = '(nicht auslesbar)';
-                if (navigator.mediaDevices
-                    && navigator.mediaDevices.enumerateDevices) {
-                    const alle = await navigator.mediaDevices.enumerateDevices();
-                    const aus = alle.filter((d) => d.kind === 'audiooutput');
-                    namen = aus.length
-                        ? aus.map((d) => d.label || 'ohne Namen').join(' | ')
-                        : '(kein Ausgabegeraet gemeldet)';
-                }
-                Protokoll.schreib('KLAVIER',
-                    `Ausgabeweg ${sink} — vorhanden: ${namen}`);
-            } catch (err) {
-                Protokoll.schreib('KLAVIER', `Ausgabeweg nicht auslesbar: ${err}`);
-            }
-        }
-
-        /**
          * Track-Ereignisse ins Protokoll haengen.
          *
          * `ended` feuert, wenn das Geraet verschwindet (Dante Virtual
@@ -1917,462 +1849,6 @@
     AudioEngine.CALIB_AUSREISSER_HALBTOENE = 6;
 
     /* =========================================================================
-     * 5b. KLAVIER — die erste eigene Tonquelle des Spiels
-     * ====================================================================== */
-
-    /**
-     * Die Klavierbegleitung des Klavier-Modus.
-     *
-     * Das Spiel hatte bis hierher GAR KEINEN eigenen Ton. Es hat nur zugehoert.
-     * Deshalb steht hier eine eigene Klasse und kein Anhaengsel an der
-     * AudioEngine: die beiden haben nichts miteinander zu tun ausser dem
-     * AudioContext, und die AudioEngine ist an ihren geschuetzten Stellen das
-     * Letzte, was noch einen zweiten Zweck bekommen sollte.
-     *
-     * -------------------------------------------------------------------------
-     * DER BEFUND, DER DIE ARCHITEKTUR BESTIMMT (gemessen 27.08.2026)
-     *
-     * Naheliegend waere: <audio> -> createMediaElementSource -> zwei
-     * Gain-Wege -> Ausgang. Unter `file://` ist dieser Weg STUMM.
-     *
-     * Gemessen in Chrome headless, Seite und MP3 im selben Verzeichnis, ueber
-     * einen AnalyserNode in der Kette:
-     *
-     *   Betrieb                              MP3 laedt   Web-Audio   direkt
-     *   Doppelklick (file://, die Show)      readyState 4   RMS 0     spielt
-     *   mit --allow-file-access-from-files   readyState 4   RMS 0.027 spielt
-     *
-     * Chrome behandelt eine `file://`-Ressource gegenueber einer
-     * `file://`-Seite als fremder Herkunft und laesst
-     * MediaElementAudioSourceNode dann Stille liefern. Das Element meldet
-     * dabei `paused: false`, `readyState 4`, und `currentTime` laeuft weiter —
-     * es wirft nichts, es sagt nichts, es klingt nur nicht. Schlimmer noch:
-     * createMediaElementSource trennt das Element vom Ausgang. Der naive Weg
-     * macht das Klavier auf dem Show-Rechner also VOLLSTAENDIG unhoerbar, und
-     * zwar lautlos.
-     *
-     * Deshalb:
-     *   - DIREKTER WEG IST DER REGELFALL. Das Element spielt selbst, der Pegel
-     *     haengt an `element.volume`. Der funktioniert ueberall.
-     *   - DIE WEB-AUDIO-KETTE wird nur benutzt, wo sie nachweislich klingt.
-     *     Nachgewiesen wird das GEMESSEN und nicht am Protokoll der Seite
-     *     geraten (siehe probeGraph): ein stiller Weg ist genau der Fehler,
-     *     den man nicht sieht. Wo sie steht, gibt es die zwei getrennt
-     *     regelbaren Wege des Briefings; wo nicht, gibt es einen, und das
-     *     steht im Protokoll.
-     *
-     * Auf GitHub Pages (https) und in der Testumgebung greift die Kette, auf
-     * dem Show-Rechner der Direktweg. Beide sind hoerbar — das ist der Punkt.
-     * -------------------------------------------------------------------------
-     */
-    class Klavier {
-        constructor() {
-            /** @type {HTMLAudioElement|null} */
-            this.el = null;
-            /** @type {AudioNode|null} */
-            this.quelle = null;
-            /** @type {GainNode|null} Weg zu den Kopfhoerern der Spielerin. */
-            this.kopfGain = null;
-            /** @type {GainNode|null} Weg zur Publikumssumme. */
-            this.publikumGain = null;
-            /**
-             * @type {MediaStreamAudioDestinationNode|null}
-             * UEBERGABEPUNKT fuer den Uebertragungsteil, der NICHT in diesem
-             * Sprint ist: in der Show kommt der Publikumston vom Pult, nicht
-             * aus dem Browser. Der Knoten steht hier, weil die Testumgebung
-             * genau an dieser Stelle ihren WebRTC-Weg angehaengt hat — dann
-             * ist es ein Einstecken und kein Umbau. Heute hoert niemand daran.
-             */
-            this.publikumZiel = null;
-
-            /** @type {boolean} Laeuft der Ton durch die Web-Audio-Kette? */
-            this.ueberGraph = false;
-            /** @type {boolean} MP3 geladen und spielbereit. */
-            this.bereit = false;
-            /** @type {boolean} Spielt gerade. */
-            this.laeuft = false;
-            /** @type {string} Dateiname des geladenen Stuecks. */
-            this.datei = '';
-            /** @type {string} Warum es nicht spielt, falls es nicht spielt. */
-            this.grund = 'noch nicht geladen';
-
-            /** @type {number} Zeitstempel im Stueck aus dem vorigen Frame. */
-            this._letzteZeit = 0;
-            /** @type {number} Wie oft das Stueck bereits umgelaufen ist. */
-            this.rundlaeufe = 0;
-            /** @type {Object|null} Laufende Blende, siehe tick(). */
-            this._blende = null;
-            /** @type {{kopf:number, publikum:number}} Eingestellte Pegel. */
-            this.pegelwerte = { kopf: Klavier.PEGEL_KOPF,
-                publikum: Klavier.PEGEL_PUBLIKUM };
-            /** @type {number} Gemeinsamer Blendenfaktor ueber beiden Wegen. */
-            this._blendfaktor = 0;
-        }
-
-        /**
-         * Dateiname eines Stuecks.
-         * @param   {number} stueck 1 oder 2
-         * @returns {string}
-         */
-        static dateiFuer(stueck) {
-            return Klavier.STUECKE[stueck === 2 ? 1 : 0];
-        }
-
-        /**
-         * Das Stueck laden — BEIM BETRETEN DES MODUS, nicht beim Match-Cue.
-         *
-         * Ein Nachladeruckler im Moment des Cues waere auf der Buehne
-         * sichtbar; hier ist Zeit dafuer, der Bediener klickt sich ohnehin
-         * durch Platzwahl, Mikrofon und Kalibrierung.
-         *
-         * FEHLT DIE DATEI, spielt kein Klavier und das Spiel laeuft normal
-         * weiter — Hausordnung. Im Protokoll steht eine ASSET-Zeile, damit das
-         * Fehlen nicht lautlos ist.
-         *
-         * @param   {number} stueck 1 oder 2
-         * @returns {Promise<boolean>} true, wenn spielbereit
-         */
-        laden(stueck) {
-            this.datei = Klavier.dateiFuer(stueck);
-            this.bereit = false;
-            const el = new Audio();
-            /* Rundlauf uebernimmt der Browser. Ob der Uebergang auf einem
-               Taktschlag sitzt, entscheidet der Schnitt der MP3 und nicht
-               dieser Code — siehe das Briefing. */
-            el.loop = true;
-            el.preload = 'auto';
-            el.src = this.datei;
-            this.el = el;
-
-            return new Promise((fertig) => {
-                let entschieden = false;
-                const schluss = (ok, grund) => {
-                    if (entschieden) return;
-                    entschieden = true;
-                    this.bereit = ok;
-                    this.grund = grund;
-                    fertig(ok);
-                };
-                el.addEventListener('canplaythrough', () => {
-                    Protokoll.schreib('KLAVIER',
-                        `"${this.datei}" geladen — ${el.duration.toFixed(0)} s`);
-                    schluss(true, '');
-                }, { once: true });
-                el.addEventListener('error', () => {
-                    Protokoll.schreib('ASSET',
-                        `Klavierstueck fehlt oder ist defekt: ${this.datei} — `
-                        + `das Spiel laeuft ohne Begleitung weiter`);
-                    console.warn(`[Klavier] ${this.datei} nicht ladbar.`);
-                    schluss(false, 'Datei fehlt oder ist defekt');
-                }, { once: true });
-                /* Zeitlimit, damit der Bediener nicht vor einem Knopf steht,
-                   der nie weitergeht. Ohne Zeitlimit haengt das Onboarding an
-                   einem Ereignis, das bei einer halb geschriebenen Datei nie
-                   kommt. */
-                setTimeout(() => {
-                    if (entschieden) return;
-                    Protokoll.schreib('ASSET',
-                        `Klavierstueck ${this.datei} laedt seit `
-                        + `${Klavier.LADE_ZEITLIMIT_MS} ms nicht fertig — `
-                        + `weiter ohne Begleitung`);
-                    schluss(false, 'Zeitlimit beim Laden');
-                }, Klavier.LADE_ZEITLIMIT_MS);
-                el.load();
-            });
-        }
-
-        /**
-         * Messen, ob die Web-Audio-Kette unter DIESER Herkunft ueberhaupt Ton
-         * fuehrt — siehe den Befund im Klassenkopf.
-         *
-         * Gemessen und nicht geraten: eine Abfrage auf `location.protocol`
-         * waere eine Vermutung ueber Chrome, und sie waere falsch, sobald der
-         * Rechner mit `--allow-file-access-from-files` startet oder die Seite
-         * doch von einem Server kommt.
-         *
-         * DIE PROBE IST NIE HOERBAR, und zwar in beiden Ausgaengen des
-         * Versuchs: klingt die Kette, liegt hinter dem Analyser ein Gain auf
-         * 0; klingt sie nicht, ist ohnehin Stille. Sie laeuft auf einem
-         * EIGENEN Element, weil createMediaElementSource pro Element nur
-         * einmal geht und sich nicht rueckgaengig machen laesst.
-         *
-         * Wirft nicht: im Zweifel gilt "Kette klingt nicht", und dann greift
-         * der Direktweg.
-         *
-         * @param   {AudioContext} ctx
-         * @param   {string} datei
-         * @returns {Promise<number>} groesster gemessener RMS
-         */
-        static async probeGraph(ctx, datei) {
-            let el = null;
-            try {
-                el = new Audio(datei);
-                el.loop = true;
-                const quelle = ctx.createMediaElementSource(el);
-                const analyser = ctx.createAnalyser();
-                analyser.fftSize = 2048;
-                const stumm = ctx.createGain();
-                stumm.gain.value = 0;
-                quelle.connect(analyser);
-                analyser.connect(stumm);
-                stumm.connect(ctx.destination);
-
-                await el.play();
-                const buf = new Float32Array(analyser.fftSize);
-                let max = 0;
-                const schritte = Math.ceil(Klavier.PROBE_MS / 20);
-                for (let i = 0; i < schritte; i++) {
-                    await new Promise((r) => setTimeout(r, 20));
-                    analyser.getFloatTimeDomainData(buf);
-                    let s = 0;
-                    for (let k = 0; k < buf.length; k++) s += buf[k] * buf[k];
-                    max = Math.max(max, Math.sqrt(s / buf.length));
-                }
-                el.pause();
-                quelle.disconnect();
-                analyser.disconnect();
-                stumm.disconnect();
-                return max;
-            } catch (err) {
-                Protokoll.schreib('KLAVIER', `Probe der Web-Audio-Kette `
-                    + `fehlgeschlagen (${err && err.name || err}) — Direktweg`);
-                if (el) { try { el.pause(); } catch (_) { /* egal */ } }
-                return 0;
-            }
-        }
-
-        /**
-         * Die Klavierkette an den BESTEHENDEN AudioContext haengen.
-         *
-         * Kein zweiter Kontext: die Mikrofonkette liegt bereits in diesem, und
-         * zwei Kontexte haetten zwei Uhren und zwei Abtastraten.
-         *
-         * Aufgerufen NACH der Mikrofonfreigabe — vorher gibt es keinen
-         * Kontext. Und lange vor dem Match-Cue, damit die Probe dort keine
-         * Zeit kostet.
-         *
-         * @param   {AudioContext} ctx
-         * @returns {Promise<void>}
-         */
-        async verbinden(ctx) {
-            if (!this.bereit || !ctx) return;
-
-            const rms = await Klavier.probeGraph(ctx, this.datei);
-            this.ueberGraph = rms >= Klavier.PROBE_SCHWELLE;
-
-            if (!this.ueberGraph) {
-                Protokoll.schreib('KLAVIER',
-                    `Web-Audio-Kette liefert Stille (RMS ${rms.toFixed(5)}) — `
-                    + `Klavier laeuft direkt ueber das Element. Der Weg zur `
-                    + `Publikumssumme steht damit NICHT zur Verfuegung; in der `
-                    + `Show kommt er ohnehin vom Pult.`);
-                this.setzePegel();
-                return;
-            }
-
-            this.quelle = ctx.createMediaElementSource(this.el);
-            this.kopfGain = ctx.createGain();
-            this.publikumGain = ctx.createGain();
-            this.quelle.connect(this.kopfGain);
-            this.quelle.connect(this.publikumGain);
-            this.kopfGain.connect(ctx.destination);
-            try {
-                this.publikumZiel = ctx.createMediaStreamDestination();
-                this.publikumGain.connect(this.publikumZiel);
-            } catch (err) {
-                /* Ohne diesen Knoten fehlt nur der Uebergabepunkt fuer
-                   spaeter — das Klavier klingt trotzdem. */
-                Protokoll.schreib('KLAVIER',
-                    `Publikumsweg nicht anlegbar: ${err}`);
-            }
-            /* Das Element spielt ab jetzt NUR noch in die Kette. Sein eigener
-               Pegel muss deshalb offen stehen, geregelt wird ueber die
-               Gains. */
-            this.el.volume = 1;
-            this.setzePegel();
-            Protokoll.schreib('KLAVIER',
-                `Web-Audio-Kette steht (Probe-RMS ${rms.toFixed(4)}) — `
-                + `zwei getrennte Wege, Kopfhoerer und Publikumssumme`);
-        }
-
-        /**
-         * Pegel setzen. Wirkt auf dem Weg, der gerade traegt.
-         *
-         * @param {number} [kopf]     0..1
-         * @param {number} [publikum] 0..1
-         */
-        setzePegel(kopf, publikum) {
-            if (kopf !== undefined) this.pegelwerte.kopf = kopf;
-            if (publikum !== undefined) this.pegelwerte.publikum = publikum;
-            const f = this._blendfaktor;
-            if (this.ueberGraph && this.kopfGain) {
-                this.kopfGain.gain.value = this.pegelwerte.kopf * f;
-                this.publikumGain.gain.value = this.pegelwerte.publikum * f;
-            } else if (this.el) {
-                this.el.volume = Math.max(0, Math.min(1,
-                    this.pegelwerte.kopf * f));
-            }
-        }
-
-        /**
-         * Losspielen — beim Wechsel in die Match-Phase, sonst nie.
-         *
-         * Kurz eingeblendet statt hart eingeschaltet: eine MP3 beginnt selten
-         * exakt bei null, und ein Knacks im ersten Moment des Auftritts ist
-         * genau der Moment, in dem alle hinhoeren.
-         */
-        start() {
-            if (!this.bereit || !this.el || this.laeuft) return;
-            this.laeuft = true;
-            this._blendfaktor = 0;
-            this.setzePegel();
-            this._letzteZeit = 0;
-            this.rundlaeufe = 0;
-            this._blende = { von: 0, nach: 1, start: Uhr.jetzt(),
-                dauer: Klavier.EINBLENDE_MS, danach: null };
-            this.el.currentTime = 0;
-            const p = this.el.play();
-            if (p && p.catch) {
-                p.catch((err) => {
-                    this.laeuft = false;
-                    Protokoll.schreib('KLAVIER',
-                        `Wiedergabe abgelehnt: ${err && err.name || err}`);
-                });
-            }
-            Protokoll.schreib('KLAVIER', `Start (${this.datei}, `
-                + `${this.ueberGraph ? 'Web-Audio-Kette' : 'Direktweg'})`);
-        }
-
-        /**
-         * Sauber ausblenden und danach anhalten.
-         * @param {number} [dauer] Millisekunden
-         */
-        beenden(dauer) {
-            if (!this.laeuft) return;
-            this._blende = {
-                von: this._blendfaktor, nach: 0, start: Uhr.jetzt(),
-                dauer: dauer === undefined ? Klavier.AUSBLENDE_MS : dauer,
-                danach: 'halt',
-            };
-            Protokoll.schreib('KLAVIER',
-                `Ausblende ueber ${this._blende.dauer} ms`);
-        }
-
-        /**
-         * Einen Frame mitlaufen: Blende fahren, Rundlauf protokollieren.
-         *
-         * Der Rundlauf wird am ZURUECKSPRINGENDEN Zeitstempel erkannt. Ein
-         * Ereignis gibt es dafuer nicht: `ended` feuert bei `loop = true`
-         * nicht. Die Zeile im Protokoll ist keine Zierde — sie ist der einzige
-         * Weg, einen hoerbaren Bruch spaeter im Mitschnitt wiederzufinden.
-         */
-        tick() {
-            if (!this.el) return;
-
-            if (this._blende) {
-                const b = this._blende;
-                const t = b.dauer <= 0 ? 1
-                    : Math.min(1, (Uhr.jetzt() - b.start) / b.dauer);
-                this._blendfaktor = b.von + (b.nach - b.von) * t;
-                this.setzePegel();
-                if (t >= 1) {
-                    this._blende = null;
-                    if (b.danach === 'halt') {
-                        this.el.pause();
-                        this.laeuft = false;
-                        Protokoll.schreib('KLAVIER',
-                            `gestoppt nach ${this.rundlaeufe} Rundlauf/Rundlaeufen`);
-                    }
-                }
-            }
-
-            if (!this.laeuft) return;
-            const jetzt = this.el.currentTime;
-            if (jetzt + Klavier.RUNDLAUF_TOLERANZ_S < this._letzteZeit) {
-                this.rundlaeufe++;
-                Protokoll.schreib('KLAVIER',
-                    `Rundlauf ${this.rundlaeufe} — Stueck beginnt von vorn`);
-            }
-            this._letzteZeit = jetzt;
-        }
-    }
-
-    /**
-     * Dauer der Ausblende am Matchende, in Millisekunden.
-     *
-     * Zwei Sekunden sind der Wert aus dem Briefing und derselbe Takt, den auch
-     * die Uebergangsblende hat (TIMING.TRANSITION_MS) — ein Auftritt, der
-     * hart abgeschnitten wird, klingt nach Stromausfall. Nach der ersten Probe
-     * nachziehbar.
-     */
-    /**
-     * Die beiden Stuecke, in der Reihenfolge der Knoepfe im Onboarding.
-     *
-     * AUSGESCHRIEBEN und nicht zusammengebaut: `webseite-bauen.js` liest die
-     * Dateinamen aus dem Spielcode statt eine zweite Liste zu pflegen, und ein
-     * Name aus einer Zeichenkettenvorlage steht dort nirgends zum Lesen. Eine
-     * getippte Liste im Bauskript waere nach dem ersten neuen Stueck falsch,
-     * und der Fehler fiele erst dem Publikum auf.
-     *
-     * Gemessen am 27.08.2026: Stueck 1 dauert 599 s, Stueck 2 493 s. BEIDE
-     * sind laenger als die Segmentgrenze von sieben Minuten (420 s) — der
-     * Rundlauf ist damit eine Zusicherung und keine Erwartung. Er darf
-     * trotzdem nicht wegfallen: ein Auftritt, der in Stille endet, waere der
-     * eine Fall, den niemand auffangen kann.
-     */
-    Klavier.STUECKE = ['Karaokovic_Klavier_1.mp3', 'Karaokovic_Klavier_2.mp3'];
-
-    Klavier.AUSBLENDE_MS = 2000;
-
-    /**
-     * Dauer der Einblende beim Match-Cue.
-     *
-     * Kurz genug, dass es als "sofort" gelesen wird, lang genug gegen den
-     * Knacks am Anfang der Datei. Das Briefing verlangt einen Start ohne
-     * hoerbaren Ruckler — ein Sprung von Stille auf vollen Pegel IST einer.
-     */
-    Klavier.EINBLENDE_MS = 300;
-
-    /** Grundpegel beider Wege. Feineinstellung gehoert auf das Pult. */
-    Klavier.PEGEL_KOPF = 1.0;
-    Klavier.PEGEL_PUBLIKUM = 1.0;
-
-    /**
-     * Wie lange die Probe der Web-Audio-Kette misst.
-     *
-     * 300 ms sind rund fuenfzehn Messungen — genug, um eine Anlaufstille am
-     * Dateianfang von echter Stille zu unterscheiden, und kurz genug, dass
-     * niemand im Onboarding darauf wartet.
-     */
-    Klavier.PROBE_MS = 300;
-
-    /**
-     * Ab welchem RMS die Kette als hoerbar gilt.
-     *
-     * Der Unterschied ist kein Grenzfall: gemessen wurden 0.027 (klingt) gegen
-     * exakt 0 (klingt nicht). 0.0005 liegt weit unter dem einen und weit ueber
-     * dem anderen und faengt zugleich einen leisen Dateianfang ab.
-     */
-    Klavier.PROBE_SCHWELLE = 0.0005;
-
-    /**
-     * Wie lange auf `canplaythrough` gewartet wird, bevor ohne Begleitung
-     * weitergemacht wird. Ohne Zeitlimit haengt das Onboarding an einem
-     * Ereignis, das bei einer halb geschriebenen Datei nie kommt.
-     */
-    Klavier.LADE_ZEITLIMIT_MS = 15000;
-
-    /**
-     * Ab wie vielen Sekunden Ruecksprung ein Rundlauf erkannt wird.
-     *
-     * Der Zeitstempel eines Medienelements steht zwischen zwei Frames auch
-     * mal still oder springt um Millisekunden; eine halbe Sekunde Ruecksprung
-     * kommt nur beim Umlauf vor.
-     */
-    Klavier.RUNDLAUF_TOLERANZ_S = 0.5;
-
-
-    /* =========================================================================
      * 6. MATCH STATE — Punkte, Sätze, Historie, State Machine
      * ====================================================================== */
 
@@ -2441,16 +1917,6 @@
             this.satzAngesagt = 0;
             /** @type {number} Bis wann "SATZ n" stehen bleibt (ms). */
             this.satzAnzeigeBis = 0;
-            /**
-             * @type {number} Wievielter Match-Anlauf laeuft gerade.
-             *
-             * Zaehlt hoch bei jedem frischen Beginn — startMatch() und
-             * hardReset(). Die Klavierbegleitung haengt daran: sie beginnt mit
-             * einem neuen Anlauf von vorn. Ein Vergleich statt eines
-             * Ereignisses, damit BEIDE Einstiege (Startknopf und Regie-Cue
-             * Enter+Leertaste) ohne eigene Verdrahtung erfasst sind.
-             */
-            this.matchLauf = 0;
             /** @type {number} Index in GAMIFICATION_WORDS. */
             this.currentWordIndex = 0;
             /**
@@ -2492,7 +1958,6 @@
                Ansage bekommt, nicht erst Satz 2. */
             this.satzAngesagt = 0;
             this.satzAnzeigeBis = 0;
-            this.matchLauf++;
         }
 
         /**
@@ -2641,12 +2106,6 @@
             this.server = PLAYER.ANDREA;
             this.satzErgebnis = '';
             this.satzAngesagt = 0;
-            /* Ein Reset ist ein frischer Anlauf — die Begleitung beginnt
-               dann von vorn. Sie NUR zu beenden waere eine Sackgasse: nach
-               dem Reset steht die Phase bereits auf MATCH, der Regie-Cue
-               greift nicht mehr, und die Show haette keinen Weg zurueck zur
-               Musik. */
-            this.matchLauf++;
         }
 
         /**
@@ -8927,41 +8386,53 @@
      * Aenderung — das Panel laeuft im Frame-Loop, und eine unveraenderte
      * Zeile jede 16 ms neu zu setzen kostet Layout, das dem Spiel fehlt.
      */
+    /**
+     * Das Operator-Panel — EINE Zeile im Betrieb, Zahlen fuer den Soundcheck.
+     *
+     * WARUM ES IM DOM LIEGT UND NICHT IM CANVAS: der Canvas geht auf die
+     * LED-Wand, ins Programm und auf die latenzfreien Spielermonitore. Bis
+     * ARENA-23 stand die Diagnose dort mitten im Bild — "AUDIOEINGANG TOT",
+     * PITCH und VOL, "RAUM ZU LAUT" samt Raumpegel. Auf einer Aufzeichnung ist
+     * das ein Fremdkoerper, und im Saal liest es das Publikum mit.
+     *
+     * WARUM NUR EINE ZEILE, und das ist die Lehre aus ARENA-24/25: es gibt
+     * ZWEI Situationen, und sie brauchen Verschiedenes.
+     *
+     *   EINPEGELN, vor der Show — Zeit, Ruhe, braucht Zahlen.
+     *   WAEHREND DER SENDUNG    — kein Blick uebrig.
+     *
+     * ARENA-24 stellte zehn Lampen und sieben Messzeilen hin: 17 Zeilen zum
+     * Absuchen. Das ist ein Soundcheck-Werkzeug, und im laufenden Betrieb
+     * scannt es niemand. Deshalb steht jetzt oben EINE Zeile, die entweder
+     * BEREIT sagt oder die eine Stoerung nennt — mit der einen Handlung
+     * darunter. Die Zahlen bleiben, aber als das, was sie sind: Werkzeug fuer
+     * das Einpegeln.
+     *
+     * DIE PRUEFUNGEN LAUFEN ALLE WEITER. Sie sind nur nicht mehr zehn Lampen,
+     * sondern speisen die Statuszeile. Jede liest weiterhin die Bedingung
+     * IHRES AUSLOESERS — dieselbe Groesse, die auch die Protokollzeile
+     * schreibt. Eine Anzeige, die "BEREIT" sagt, waehrend im Protokoll eine
+     * Warnung steht, waere schlimmer als gar keine.
+     *
+     * KEIN innerHTML: alle Knoten werden einmal gebaut und danach nur ueber
+     * textContent und className angefasst. Geschrieben wird NUR bei Aenderung
+     * — das Panel laeuft im Frame-Loop.
+     */
     class OperatorPanel {
-        /**
-         * @param {HTMLElement|null} el        Wurzelelement des Panels
-         * @param {boolean} [imFenster] true = eigenes Fenster (immer sichtbar,
-         *                              fuellt die Flaeche statt darueber zu
-         *                              schweben)
-         */
-        constructor(el, imFenster) {
+        /** @param {HTMLElement|null} el Container aus arena.html */
+        constructor(el) {
             /** @type {HTMLElement|null} */
             this.el = el;
-            /** @type {boolean} Liegt es in einem eigenen Fenster? */
-            this.imFenster = !!imFenster;
-            /**
-             * @type {boolean} Ignoriert es den Schalter?
-             *
-             * Ein eigenes Fenster zeigt IMMER etwas: es steht auf dem
-             * Operator-Bildschirm, dort ist sonst nichts, und ein leeres
-             * Fenster waere von einem abgestuerzten nicht zu unterscheiden.
-             * Das eingebettete Panel folgt weiter Ctrl+Shift+M.
-             */
-            this.immerSichtbar = this.imFenster;
-            /** @type {string} Klasse, die IMMER am Element steht. */
-            this.grundKlasse = 'op-panel ' + (this.imFenster ? 'fenster' : 'eingebettet');
-            /** @type {Array<Object>} Zeilenknoten, einmal gebaut. */
-            this._e = [];
-            /** @type {Array<Object>} */
+            /** @type {Array<Object>} Messzeilen, einmal gebaut. */
             this._mess = [];
             /** @type {boolean|null} Zuletzt geschriebene Sichtbarkeit. */
             this._sichtbar = null;
-            /** @type {string} Zuletzt geschriebene Kopfzeile. */
-            this._kopf = '';
-            /** @type {number} Frames seit dem letzten Lebenszeichen. */
-            this._seitTick = 0;
-            /** @type {number} Zaehler des Lebenszeichens. */
-            this._tick = 0;
+            /** @type {string} Zuletzt geschriebene Statuszeile. */
+            this._lage = '';
+            /** @type {string} Zuletzt geschriebene Handlungszeile. */
+            this._tun = '';
+            /** @type {boolean|null} Zuletzt geschriebener Alarmzustand. */
+            this._alarm = null;
 
             /* Ohne echtes DOM bleibt das Panel stumm und stoert nichts — in
                den Node-Tests gibt es keine Elemente, dort wird die LAGE
@@ -8973,17 +8444,11 @@
         /**
          * Die Knoten einmalig anlegen. Danach aendert sich die Struktur nie
          * mehr — nur Text und Klassen.
-         *
-         * UEBER `ownerDocument`, nicht ueber das globale `document`: seit
-         * ARENA-25 kann die Wurzel in einem ANDEREN Fenster liegen. Ein Knoten
-         * aus dem Spieldokument dort anzuhaengen ginge in modernen Browsern
-         * zwar (der DOM adoptiert ihn stillschweigend), aber "geht meistens"
-         * ist auf einer Buehne kein Verfahren.
          */
         aufbauen() {
             const doc = this.el.ownerDocument || document;
             OperatorPanel.stilEinfuegen(doc);
-            this.el.className = this.grundKlasse;
+            this.el.className = 'op-panel';
 
             const d = (klasse, eltern) => {
                 const n = doc.createElement('div');
@@ -8992,41 +8457,17 @@
                 return n;
             };
 
-            this._kopfEl = d('kopf');
-            this._kopfEl.textContent = 'OPERATOR';
+            const kopf = d('kopf');
+            this._lampeEl = d('lampe', kopf);
+            this._lageEl = d('lage', kopf);
+            this._tunEl = d('tun');
 
-            /* Die Tot-Meldung gehoert NUR ins eigene Fenster. Im Spielfenster
-               laeuft der Loop, der das Panel zeichnet — steht es, ist ohnehin
-               alles vorbei. Im Zweitfenster ist die Frage dagegen echt: es
-               lebt weiter, auch wenn das Spiel nicht mehr sendet. */
-            if (this.imFenster) {
-                this._totEl = d('tot');
-                this._totEl.id = 'op-tot';
-                this._totEl.textContent = OperatorPanel.TOT_TEXT;
-            }
-
-            for (let i = 0; i < OperatorPanel.MELDUNGEN.length; i++) {
-                const m = OperatorPanel.MELDUNGEN[i];
-                const wrap = d('zeile');
-                const lampe = d('lampe', wrap);
-                const code = d('code', wrap);
-                const was = d('was', wrap);
-                const wert = d('wert', wrap);
-                code.textContent = m.code;
-                was.textContent = m.text;
-                this._e.push({ wrap, lampe, wert,
-                    klasse: '', lampenKlasse: '', text: '' });
-            }
-
-            const trenner = d('trenner');
-            trenner.textContent = 'MESSWERTE';
+            d('trenner');
 
             for (let i = 0; i < OperatorPanel.MESSZEILEN.length; i++) {
-                const wrap = d('zeile mess');
-                const code = d('code', wrap);
+                const wrap = d('zeile');
                 const was = d('was', wrap);
                 const wert = d('wert', wrap);
-                code.textContent = '';
                 was.textContent = OperatorPanel.MESSZEILEN[i];
                 this._mess.push({ wrap, wert, klasse: '', text: '' });
             }
@@ -9040,59 +8481,33 @@
         zeichne(lage) {
             if (!this.aktiv) return;
 
-            const sicht = this.immerSichtbar || lage.sichtbar;
-            if (this._sichtbar !== sicht) {
-                this._sichtbar = sicht;
-                this.el.className = this.grundKlasse + (sicht ? ' an' : '');
+            if (this._sichtbar !== lage.sichtbar) {
+                this._sichtbar = lage.sichtbar;
+                this.el.className = 'op-panel' + (lage.sichtbar ? ' an' : '');
             }
-            /* Unsichtbar heisst: keine einzige Schreiboperation mehr. Das
-               eingebettete Panel ist im Regelfall aus, und dann soll es auch
-               nichts kosten. */
-            if (!sicht) return;
+            /* Unsichtbar heisst: keine einzige Schreiboperation mehr. Aus ist
+               der Regelfall, und dann soll es auch nichts kosten. */
+            if (!lage.sichtbar) return;
 
-            /* --- Lebenszeichen -------------------------------------------
-             * Das Zweitfenster kann nicht wissen, ob das Spiel noch laeuft:
-             * es zeigt einfach, was zuletzt hineingeschrieben wurde. Ein
-             * abgestuerztes oder neu geladenes Spiel saehe deshalb aus wie
-             * ein ruhiger Betrieb — die gefaehrlichste aller Anzeigen.
-             *
-             * Also ein Puls im Attribut, den der Waechter IM Fenster prueft.
-             * Alle TICK_FRAMES statt jeden Frame: 30 Frames sind eine halbe
-             * Sekunde, die Grenze liegt bei 1,5 s — drei ausgefallene Pulse,
-             * bevor etwas gemeldet wird. */
-            if (++this._seitTick >= OperatorPanel.TICK_FRAMES) {
-                this._seitTick = 0;
-                this.el.setAttribute('data-tick', String(++this._tick));
+            if (this._alarm !== !lage.ok) {
+                this._alarm = !lage.ok;
+                this._lampeEl.className = 'lampe' + (lage.ok ? '' : ' alarm');
+                this._tunEl.className = 'tun' + (lage.ok ? '' : ' alarm');
             }
-
-            if (this._kopf !== lage.kopf) {
-                this._kopf = lage.kopf;
-                this._kopfEl.textContent = lage.kopf;
+            if (this._lage !== lage.lage) {
+                this._lage = lage.lage;
+                this._lageEl.textContent = lage.lage;
             }
-
-            for (let i = 0; i < this._e.length; i++) {
-                const z = this._e[i];
-                const q = lage.e[i];
-                const klasse = q.ruht ? 'zeile ruht'
-                    : (q.an ? 'zeile alarm' : 'zeile');
-                const lampenKlasse = q.ruht ? 'lampe ruht'
-                    : (q.an ? 'lampe alarm' : 'lampe');
-                if (z.klasse !== klasse) {
-                    z.klasse = klasse; z.wrap.className = klasse;
-                }
-                if (z.lampenKlasse !== lampenKlasse) {
-                    z.lampenKlasse = lampenKlasse; z.lampe.className = lampenKlasse;
-                }
-                if (z.text !== q.wert) {
-                    z.text = q.wert; z.wert.textContent = q.wert;
-                }
+            if (this._tun !== lage.tun) {
+                this._tun = lage.tun;
+                this._tunEl.textContent = lage.tun;
             }
 
             for (let i = 0; i < this._mess.length; i++) {
                 const z = this._mess[i];
                 const q = lage.mess[i];
-                const klasse = q.ruht ? 'zeile mess ruht'
-                    : (q.ok ? 'zeile mess' : 'zeile mess alarm');
+                const klasse = q.ruht ? 'zeile ruht'
+                    : (q.ok ? 'zeile' : 'zeile alarm');
                 if (z.klasse !== klasse) {
                     z.klasse = klasse; z.wrap.className = klasse;
                 }
@@ -9104,6 +8519,11 @@
 
         /**
          * Das Stylesheet in ein Dokument legen — je Dokument genau einmal.
+         *
+         * Es steht im Spielcode und nicht in arena.html: EINE Quelle, und der
+         * Node-Test kann sie lesen. (Bis ARENA-25 gab es einen zweiten Leser,
+         * das Operator-Zweitfenster; das ist mit ARENA-26 entfallen — der
+         * Weg bleibt, weil er nichts kostet und die Quelle eindeutig haelt.)
          *
          * @param {Document} doc
          */
@@ -9117,309 +8537,102 @@
             s.textContent = OperatorPanel.CSS;
             ziel.appendChild(s);
         }
-
-        /**
-         * Ein eigenes Fenster fuer das Panel oeffnen.
-         *
-         * WARUM UEBERHAUPT: ARENA-24 hat die Diagnose aus dem Canvas ins DOM
-         * geholt. Das nimmt sie aus dem BILD — aber nicht vom AUSGANG. Ein
-         * <div> im Spielfenster liegt auf demselben Bildschirm, und der geht
-         * im Vollbild auf die LED-Wand. Wer das Panel dort einschaltet, sieht
-         * es im Saal.
-         *
-         * WARUM `about:blank` UND NICHT EINE ZWEITE DATEI: eine zweite HTML-
-         * Datei waere unter `file://` eine fremde Herkunft; das Spielfenster
-         * duerfte ihr DOM nicht anfassen, und es bliebe nur postMessage —
-         * also ein zweiter Zustandsweg, der auseinanderlaufen kann. Ein per
-         * `window.open('about:blank')` geoeffnetes Fenster ERBT dagegen die
-         * (undurchsichtige) Herkunft des Oeffners. Dieselbe Klasse schreibt
-         * dann in beide Dokumente, aus DERSELBEN Lage. Kein Server, keine
-         * zweite Datei, kein zweiter Zustand.
-         *
-         * DER FENSTERNAME ist kein Schmuck: mit ihm beschreibt ein neu
-         * geladenes Spiel DASSELBE Fenster neu, statt ein zweites daneben zu
-         * oeffnen. Auf der Buehne wird nachgeladen, und drei verwaiste
-         * Operator-Fenster sind schlimmer als keines.
-         *
-         * NICHT AUF DEM SHOW-MAC GEMESSEN. Popup-Sperre und
-         * `about:blank`-Vererbung sind Browserverhalten, und Chrome aendert
-         * so etwas zwischen Versionen. Beide Fehlwege sind abgefangen und
-         * protokolliert, der Rueckfall ist das Panel im Spielfenster — aber
-         * die Probe gehoert auf den Rechner, der spielt. Sie steht in
-         * OPERATOR-MANUAL.md, Abschnitt 3.2.
-         *
-         * Wirft nicht.
-         *
-         * @returns {{fenster:Window, wurzel:HTMLElement}|null}
-         */
-        static zweitfensterOeffnen() {
-            let w = null;
-            try {
-                w = window.open('about:blank', OperatorPanel.FENSTER_NAME,
-                    OperatorPanel.FENSTER_MASSE);
-            } catch (err) {
-                Protokoll.schreib('OPERATOR', `Operator-Fenster abgelehnt `
-                    + `(${(err && err.name) || err}) — Panel bleibt im `
-                    + `Spielfenster, Ctrl+Shift+M`);
-                return null;
-            }
-            if (!w) {
-                Protokoll.schreib('OPERATOR', 'Operator-Fenster blockiert '
-                    + '(Popup-Sperre?) — Panel bleibt im Spielfenster, '
-                    + 'Ctrl+Shift+M');
-                return null;
-            }
-
-            try {
-                const d = w.document;
-                d.title = OperatorPanel.FENSTER_TITEL;
-                /* Leerraeumen statt anhaengen: derselbe Fenstername bringt
-                   nach einem Neuladen des Spiels das ALTE Dokument zurueck,
-                   und zwei Panels uebereinander waeren das Gegenteil einer
-                   Diagnose. Kein innerHTML — dieselbe Regel wie im Panel. */
-                while (d.body.firstChild) d.body.removeChild(d.body.firstChild);
-                d.body.className = 'op-body';
-                OperatorPanel.stilEinfuegen(d);
-
-                const wurzel = d.createElement('div');
-                d.body.appendChild(wurzel);
-                OperatorPanel.waechterEinfuegen(d);
-
-                Protokoll.schreib('OPERATOR',
-                    `Operator-Fenster offen ("${OperatorPanel.FENSTER_NAME}")`);
-                return { fenster: w, wurzel };
-            } catch (err) {
-                /* Genau der Fall, den `about:blank` verhindern soll — wenn
-                   Chrome die Herkunft doch nicht vererbt, steht es hier und
-                   nicht als stilles Nichts. */
-                Protokoll.schreib('OPERATOR', `Operator-Fenster nicht `
-                    + `beschreibbar (${(err && err.name) || err}) — Panel `
-                    + `bleibt im Spielfenster, Ctrl+Shift+M`);
-                try { w.close(); } catch (_) { /* egal */ }
-                return null;
-            }
-        }
-
-        /**
-         * Den Waechter in das Zweitfenster legen.
-         *
-         * Er muss IM FENSTER laufen und nicht im Spiel: gerade wenn das Spiel
-         * weg ist, soll er etwas sagen. Ein Timer, den der Oeffner stellt,
-         * stirbt mit dem Oeffner — und schwiege dann ausgerechnet im
-         * Ernstfall.
-         *
-         * Der Rumpf steht als echte Funktion da und wird serialisiert. Eine
-         * Zeichenkette waere kuerzer und beim naechsten Anfassen falsch.
-         *
-         * @param {Document} doc
-         */
-        static waechterEinfuegen(doc) {
-            const s = doc.createElement('script');
-            s.textContent = '(' + OperatorPanel.WAECHTER + ')('
-                + OperatorPanel.TICK_GRENZE_MS + ');';
-            doc.body.appendChild(s);
-        }
     }
 
     /**
-     * Die zehn Lampen, in der Reihenfolge, in der sie im Panel stehen.
+     * Die Pruefungen, in der Reihenfolge ihrer DRINGLICHKEIT.
      *
-     * GRUPPIERT NACH DEM, WAS DER OPERATOR TUN KANN:
-     *   E-01..E-03  Ton und Spielfluss — hier steht die Show still
-     *   E-04..E-05  Eingabe und Bildkette
-     *   E-06..E-07  Anzeige des Rechners
-     *   E-08        nur im Duell
-     *   E-09..E-10  Dateien
+     * Die Reihenfolge ist die Priorität: brennen mehrere, nennt die
+     * Statuszeile die erste und zaehlt den Rest. Zuerst steht, was die Show
+     * anhaelt; zuletzt, was man vor dem Anpfiff einmal richtigstellt.
      *
-     * Die Codes sind fest und werden NICHT neu vergeben, auch wenn eine Lampe
-     * spaeter entfaellt: auf der Buehne wird "E-03" gerufen, nicht der
-     * Wortlaut. Eine Nummer, die zweimal etwas anderes bedeutet, ist im
-     * Zuruf nicht zu heilen.
+     * `tun` ist der Kern und nicht Beiwerk: eine Meldung ohne Handlung
+     * zwingt den Operator, im Handbuch nachzuschlagen — und dafuer ist waehrend
+     * der Sendung keine Zeit.
+     *
+     * DIE CODES SIND FEST und werden NICHT neu vergeben, auch wenn eine
+     * Pruefung entfaellt: auf der Buehne wird "E-03" gerufen, nicht der
+     * Wortlaut. E-10 (Klavierstueck) ist mit ARENA-26 ersatzlos weggefallen
+     * und bleibt frei — eine Nummer, die zweimal etwas anderes bedeutet, ist
+     * im Zuruf nicht zu heilen.
      */
-    OperatorPanel.MELDUNGEN = [
-        { code: 'E-01', text: 'Audioeingang tot' },
-        { code: 'E-02', text: 'Ruhepruefung haengt' },
-        { code: 'E-03', text: 'Klavier im Mikrofon?' },
-        { code: 'E-04', text: 'Tastaturfokus weg' },
-        { code: 'E-05', text: 'Bildkette unterbrochen' },
-        { code: 'E-06', text: 'Anzeigeskalierung' },
-        { code: 'E-07', text: 'Bildrate' },
-        { code: 'E-08', text: 'Nur ein Kanal' },
-        { code: 'E-09', text: 'Pflicht-Asset fehlt' },
-        { code: 'E-10', text: 'Klavierstueck fehlt' },
+    OperatorPanel.PRUEFUNGEN = [
+        { code: 'E-01', text: 'AUDIOEINGANG TOT',
+            tun: 'KARAOKOVIC.audioNeustart() in der Konsole' },
+        { code: 'E-02', text: 'RAUM ZU LAUT',
+            tun: 'Ctrl+Shift+A schlägt trotzdem auf' },
+        { code: 'E-03', text: 'TON IM MIKROFON',
+            tun: 'Zuspieler oder Instrument? Mix-Minus prüfen' },
+        { code: 'E-04', text: 'TASTATURFOKUS WEG',
+            tun: 'ins Spielfenster klicken — sonst kein Hotkey' },
+        { code: 'E-05', text: 'BILDKETTE UNTERBROCHEN',
+            tun: 'Fenster war verdeckt oder Display schlief' },
+        { code: 'E-06', text: 'ANZEIGESKALIERUNG',
+            tun: 'im System auf 100 % stellen' },
+        { code: 'E-07', text: 'BILDRATE ZU HOCH',
+            tun: 'FEATURES.FIXED_TIMESTEP aktivieren' },
+        { code: 'E-08', text: 'NUR EIN KANAL',
+            tun: 'Dante prüfen — Spieler 2 bekommt kein Signal' },
+        { code: 'E-09', text: 'PFLICHT-ASSET FEHLT',
+            tun: 'Dateiname steht im Protokoll (ASSET)' },
     ];
+
+    /** Was im Betrieb steht, solange nichts brennt. */
+    OperatorPanel.BEREIT = 'BEREIT';
 
     /** Beschriftung der Messzeilen, in ihrer Reihenfolge. */
     OperatorPanel.MESSZEILEN = [
-        'P1 PITCH', 'P1 VOL', 'P2 PITCH', 'P2 VOL',
-        'RAUM', 'GRENZE', 'RUHE REST',
+        'P1 PITCH', 'P1 VOL', 'P2 PITCH', 'P2 VOL', 'RAUM', 'GRENZE',
     ];
-
-    /* -------------------------------------------------------------------------
-     * Das Zweitfenster (siehe OperatorPanel.zweitfensterOeffnen)
-     * ---------------------------------------------------------------------- */
-
-    /**
-     * Name des Fensters.
-     *
-     * Nicht leer und nicht `_blank`: unter diesem Namen findet
-     * `window.open()` ein bereits offenes Fenster wieder und beschreibt es
-     * neu, statt ein zweites zu oeffnen. Auf der Buehne wird nachgeladen —
-     * ohne den Namen stuenden nach drei Neuladungen vier Operator-Fenster
-     * offen, drei davon eingefroren.
-     */
-    OperatorPanel.FENSTER_NAME = 'karaokovic-operator';
-
-    /** Titel in der Fensterleiste. Er hilft beim Wiederfinden, sonst nichts. */
-    OperatorPanel.FENSTER_TITEL = 'KARAOKOVIC — Operator';
-
-    /**
-     * Groesse und Lage des Fensters.
-     *
-     * `width`/`height` sind noetig, damit Chrome ueberhaupt ein FENSTER
-     * oeffnet und keinen Tab — ohne Masse landet das Panel als Reiter im
-     * Spielfenster, und genau davon soll es ja weg. 420x760 passt neben ein
-     * Vollbild auf einem zweiten Schirm und zeigt alle siebzehn Zeilen ohne
-     * Rollen.
-     */
-    OperatorPanel.FENSTER_MASSE = 'width=420,height=760,left=40,top=40';
 
     /** Kennung des eingefuegten Stylesheets, damit es je Dokument einmal kommt. */
     OperatorPanel.STIL_ID = 'op-stil';
 
     /**
-     * Alle wie viele Frames ein Lebenszeichen geschrieben wird.
-     * 30 sind eine halbe Sekunde bei 60 Hz.
-     */
-    OperatorPanel.TICK_FRAMES = 30;
-
-    /**
-     * Nach so vielen Millisekunden ohne Lebenszeichen gilt die Anzeige als
-     * tot. 1500 ms sind drei ausgefallene Pulse — ein einzelner langer Frame
-     * (Platzbilder laden, Blende) loest die Meldung nicht aus.
-     */
-    OperatorPanel.TICK_GRENZE_MS = 1500;
-
-    /** Was im Zweitfenster steht, wenn das Spiel nicht mehr sendet. */
-    OperatorPanel.TOT_TEXT = 'KEINE DATEN VOM SPIEL';
-
-    /**
-     * Der Waechter, der IM Zweitfenster laeuft.
+     * Das Aussehen. Steht im Spielcode und nicht in arena.html — EINE Quelle,
+     * und der Node-Test kann sie lesen.
      *
-     * Steht als Funktion da und wird serialisiert (siehe waechterEinfuegen).
-     * Bewusst in altem JavaScript und ohne Abhaengigkeit nach aussen: er wird
-     * als Text in ein fremdes Dokument gelegt und hat dort nichts als sein
-     * eigenes `document`.
-     *
-     * `performance.now()` und nicht `Date.now()` — dieselbe Regel wie im
-     * Spiel (siehe Uhr): eine Zeitumstellung mitten in der Show wuerde sonst
-     * eine Totmeldung ausloesen, obwohl alles laeuft.
-     *
-     * @param {number} grenze Millisekunden ohne Puls, ab denen es tot ist
-     */
-    OperatorPanel.WAECHTER = function (grenze) {
-        var zuletzt = null;
-        var seit = performance.now();
-        setInterval(function () {
-            var p = document.querySelector('.op-panel');
-            if (!p) return;
-            var t = p.getAttribute('data-tick');
-            if (t !== zuletzt) { zuletzt = t; seit = performance.now(); }
-            /* Vor dem ersten Puls ist noch nichts tot — das Fenster kann
-               offen sein, bevor der Loop laeuft (Onboarding). */
-            var tot = zuletzt !== null && performance.now() - seit > grenze;
-            var m = document.getElementById('op-tot');
-            if (m) m.style.display = tot ? 'block' : 'none';
-            /* Ueber className und NICHT ueber classList: dieser Rumpf wird als
-               Text in ein fremdes Dokument gelegt und soll so wenig
-               voraussetzen wie moeglich. Genau daran ist die erste Fassung im
-               Test aufgefallen — die Attrappe hatte keine classList, und im
-               Browser waere es nie jemandem aufgefallen. */
-            var k = p.className.replace(/ ?tot\b/, '');
-            p.className = tot ? k + ' tot' : k;
-        }, 250);
-    };
-
-    /**
-     * Das Aussehen — EINE Quelle fuer beide Fenster.
-     *
-     * Bis ARENA-24 stand es im <style>-Block von arena.html. Das Zweitfenster
-     * entsteht aus `about:blank` und hat kein Stylesheet; es koennte jenen
-     * Block gar nicht laden. Zwei Stylesheets waeren die uebliche Falle: beim
-     * naechsten Feintuning sieht das Zweitfenster still anders aus.
-     *
-     * Zwei Auspraegungen, gemeinsame Sprache:
-     *   `.eingebettet` schwebt ueber dem Canvas, ist im Regelfall aus und
-     *                  faengt keine Klicks (sonst waere der Notausgang tot).
-     *   `.fenster`     fuellt sein eigenes Fenster und ist immer da.
+     * `pointer-events: none` ist keine Kosmetik: das Panel liegt ueber dem
+     * Canvas, und ein Klick darauf zoege den Tastaturfokus aus dem
+     * Spielfenster. Genau dann kaeme Ctrl+Shift+A — der Notausgang — nicht
+     * mehr an.
      */
     OperatorPanel.CSS = `
 .op-panel {
+    display: none;
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    pointer-events: none;
+    width: 300px;
     background: rgba(6, 8, 18, 0.92);
     border: 1px solid #36425f; border-radius: 8px;
     padding: 10px 12px;
     font-family: 'Courier New', monospace; font-size: 12px;
     line-height: 17px; text-align: left; color: #c8cede;
-}
-.op-panel.eingebettet {
-    display: none;
-    position: fixed; top: 12px; right: 12px; z-index: 20;
-    pointer-events: none;
-    width: 340px; max-height: calc(100vh - 24px); overflow: hidden;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
 }
-.op-panel.eingebettet.an { display: block; }
-.op-panel .kopf {
-    color: #ffffff; font-weight: bold; letter-spacing: 0.06em;
-    border-bottom: 1px solid #36425f; padding-bottom: 5px;
-    margin-bottom: 6px;
-}
-.op-panel .zeile { display: flex; align-items: baseline; gap: 7px; }
+.op-panel.an { display: block; }
+/* --- Zeile 1: die einzige, die im Betrieb gelesen wird ------------------ */
+.op-panel .kopf { display: flex; align-items: baseline; gap: 8px; }
 .op-panel .lampe {
     flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px;
     background: #3ddc84;
 }
 .op-panel .lampe.alarm { background: #ff4d5e; }
-.op-panel .lampe.ruht { background: #39415a; }
-.op-panel .code { flex: 0 0 auto; color: #8d97ad; }
-.op-panel .was { flex: 1 1 auto; }
-.op-panel .zeile.alarm .was { color: #ff4d5e; font-weight: bold; }
-/* "ruht" heisst: die Bedingung gilt in diesem Modus gar nicht (etwa die
-   Kanalzahl ausserhalb des Duells). Gedaempft statt gruen — gruen hiesse
-   "geprueft und in Ordnung", und das waere gelogen. */
-.op-panel .zeile.ruht .was, .op-panel .zeile.ruht .code { color: #5b6480; }
-.op-panel .wert { flex: 0 0 auto; color: #8d97ad; }
-.op-panel .zeile.alarm .wert { color: #ff4d5e; }
+.op-panel .lage {
+    flex: 1 1 auto; color: #ffffff; font-weight: bold;
+    letter-spacing: 0.06em; font-size: 14px;
+}
+.op-panel .tun { color: #8d97ad; padding-left: 16px; }
+.op-panel .tun.alarm { color: #ff4d5e; }
 .op-panel .trenner {
-    border-top: 1px solid #36425f; margin: 7px 0 5px; padding-top: 6px;
-    color: #8d97ad; letter-spacing: 0.06em;
+    border-top: 1px solid #36425f; margin: 8px 0 5px;
 }
-.op-panel .mess .wert { color: #3ddc84; }
-.op-panel .mess.alarm .wert { color: #ff4d5e; }
-
-/* --- Das eigene Fenster ------------------------------------------------- */
-body.op-body {
-    margin: 0; padding: 10px; background: #05050a;
-    /* Ohne das erbt das Fenster die Zentrierung des Spielfensters nicht —
-       es hat sein eigenes, leeres Dokument. Trotzdem gesetzt, damit es auch
-       dann stimmt, wenn spaeter jemand hier etwas dazulegt. */
-    display: block; text-align: left;
-}
-.op-panel.fenster {
-    width: auto; box-shadow: none; font-size: 13px; line-height: 19px;
-}
-/* Ausgegraut, sobald der Puls ausbleibt: die Zahlen stehen dann noch da,
-   sind aber von gestern. Sichtbar lassen und nicht loeschen — der letzte
-   Stand vor dem Abriss ist genau das, was hinterher jemand wissen will. */
-.op-panel.fenster.tot { opacity: 0.35; }
-.op-panel .tot {
-    display: none;
-    background: #ff4d5e; color: #0b0b12; font-weight: bold;
-    text-align: center; letter-spacing: 0.08em;
-    padding: 6px 4px; border-radius: 4px; margin-bottom: 8px;
-    /* Ueber der Ausgrauung: die Meldung selbst muss lesbar bleiben. */
-    opacity: 1; position: relative; z-index: 1;
-}
+/* --- Darunter: Werkzeug fuer das Einpegeln ----------------------------- */
+.op-panel .zeile { display: flex; align-items: baseline; gap: 8px; }
+.op-panel .was { flex: 1 1 auto; color: #8d97ad; }
+.op-panel .wert { flex: 0 0 auto; color: #3ddc84; }
+.op-panel .zeile.alarm .wert { color: #ff4d5e; }
+.op-panel .zeile.ruht .was, .op-panel .zeile.ruht .wert { color: #5b6480; }
 `;
 
     /* =========================================================================
@@ -9437,8 +8650,7 @@ body.op-body {
      *   Ctrl+Shift+U : letzten Punkt zurücknehmen
      *   Ctrl+Shift+X : kompletter Reset auf 0:0
      *   Ctrl+Shift+A : Aufschlag erzwingen (Notausgang)
-     *   Ctrl+Shift+M : Operator-Panel im Spielfenster ein/aus
-     *   Ctrl+Shift+O : Operator-Panel in ein eigenes Fenster (ARENA-25)
+     *   Ctrl+Shift+M : Operator-Panel ein/aus
      *   Ctrl+Shift+L : Protokoll als Datei sichern
      *
      * U und X führen zurück in SILENCE_CHECK, damit der Ablauf sauber neu
@@ -9449,18 +8661,9 @@ body.op-body {
          * @param {MatchState} match
          * @param {Physics}    physics
          */
-        constructor(match, physics, operatorFenster) {
+        constructor(match, physics) {
             this.match = match;
             this.physics = physics;
-            /**
-             * @type {Function|null} Oeffnet das Operator-Fenster.
-             *
-             * Als RUECKRUF und nicht als Verweis auf das Spiel: der
-             * InputHandler kennt bis heute nur Spielstand und Physik, und das
-             * soll so bleiben. Wer ihm das ganze Game gaebe, oeffnete die Tuer
-             * dafuer, dass hier spaeter Spiellogik landet.
-             */
-            this._operatorFenster = operatorFenster || null;
             this._onKeyDown = this.handleKeyDown.bind(this);
             this._onKeyUp = this.handleKeyUp.bind(this);
             /* Als Feld und nicht anonym in attach(): sonst kann detach() ihn
@@ -9597,22 +8800,6 @@ body.op-body {
                 return;
             }
 
-            /* Operator-Panel in ein EIGENES Fenster.
-               NEU IN ARENA-25 und damit eine Erweiterung der geschuetzten
-               Hotkeys — ausdruecklich freigegeben am 27.08. Sie nimmt keiner
-               bestehenden Kombination etwas weg: O war frei.
-
-               Warum ein zweiter Griff neben M: M schaltet die Anzeige IM
-               Spielfenster, und das ist der Bildschirm, der auf die Wand
-               geht. O schiebt sie dorthin, wo sie hingehoert. Beides
-               gebraucht — M beim Einpegeln am einzelnen Rechner, O sobald ein
-               zweiter Schirm da ist. */
-            if (e.code === 'KeyO') {
-                e.preventDefault();
-                if (this._operatorFenster) this._operatorFenster();
-                return;
-            }
-
             if (e.code === 'KeyL') {
                 e.preventDefault();
                 const text = Protokoll.text();
@@ -9683,15 +8870,6 @@ body.op-body {
              * @type {AudioEngine}
              */
             this.audio2 = new AudioEngine();
-            /**
-             * Die Klavierbegleitung. Existiert immer, spielt aber nur im
-             * Klavier-Modus — geladen wird sie erst beim Betreten des Modus.
-             */
-            this.klavier = new Klavier();
-            /** @type {number} Match-Anlauf, fuer den die Begleitung laeuft. */
-            this._klavierLauf = 0;
-            /** @type {boolean} Fuer diesen Anlauf bereits ausgeblendet. */
-            this._klavierBeendet = false;
             this.match = new MatchState();
 
             this.ball = new Ball();
@@ -9719,22 +8897,14 @@ body.op-body {
              * Pegel-Ringspeicher und bei den Scratch-Punkten im Renderer.
              */
             this._panel = {
-                sichtbar: false, kopf: '',
-                e: OperatorPanel.MELDUNGEN.map(
-                    () => ({ an: false, ruht: false, wert: '' })),
+                sichtbar: false, ok: true, lage: '', tun: '',
                 mess: OperatorPanel.MESSZEILEN.map(
                     () => ({ ok: true, ruht: false, wert: '' })),
             };
-            /**
-             * @type {OperatorPanel|null} Dasselbe Panel im eigenen Fenster.
-             *
-             * Es entsteht erst auf Wunsch (Knopf im Onboarding oder
-             * Ctrl+Shift+O). Solange es steht, bleibt das eingebettete Panel
-             * aus — siehe panelLage().
-             */
-            this.panelFenster = null;
-            this.input = new InputHandler(this.match, this.physics,
-                () => this.operatorFensterOeffnen());
+            /** Ergebnis je Pruefung und optionaler Zusatz — feste Arrays. */
+            this._pruef = OperatorPanel.PRUEFUNGEN.map(() => false);
+            this._pruefZusatz = OperatorPanel.PRUEFUNGEN.map(() => '');
+            this.input = new InputHandler(this.match, this.physics);
 
             /** @type {boolean} Läuft das Spiel (nach dem Onboarding)? */
             this.running = false;
@@ -9805,8 +8975,6 @@ body.op-body {
              * adaptive Stillegrenze waechst dann naemlich gerade NICHT mit.
              */
             this._gesungen = false;
-            /** @type {boolean} Klavier im Mikrofon vermutet (siehe loop). */
-            this.klavierVerdacht = false;
             /** @type {Error|null} Zuletzt abgefangener Fehler (Diagnose). */
             this._lastError = null;
 
@@ -9920,48 +9088,6 @@ body.op-body {
         }
 
         /**
-         * Steht das Operator-Fenster gerade offen?
-         *
-         * EINZIGE Stelle, die das entscheidet. Geprueft wird `closed` und
-         * nicht bloss, ob wir einmal eines geoeffnet haben: der Operator kann
-         * es jederzeit zuklappen, und dann muss das eingebettete Panel wieder
-         * erreichbar sein.
-         *
-         * @returns {boolean}
-         */
-        operatorFensterOffen() {
-            return !!(this.panelFenster && this.panelFenster.fenster
-                && !this.panelFenster.fenster.closed);
-        }
-
-        /**
-         * Das Operator-Fenster oeffnen (Knopf im Onboarding, Ctrl+Shift+O).
-         *
-         * Ist es bereits offen, wird es nur nach vorn geholt — ein zweites
-         * daneben waere keine Hilfe. Scheitert das Oeffnen, bleibt alles wie
-         * vorher: das eingebettete Panel ist der Rueckfall, und im Protokoll
-         * steht, warum.
-         *
-         * @returns {boolean} true, wenn danach ein Fenster steht.
-         */
-        operatorFensterOeffnen() {
-            if (this.operatorFensterOffen()) {
-                try { this.panelFenster.fenster.focus(); } catch (_) { /* egal */ }
-                return true;
-            }
-            const auf = OperatorPanel.zweitfensterOeffnen();
-            if (!auf) { this.panelFenster = null; return false; }
-
-            const panel = new OperatorPanel(auf.wurzel, true);
-            panel.fenster = auf.fenster;
-            this.panelFenster = panel;
-            /* Sofort einmal fuellen, damit das Fenster nicht leer dasteht,
-               bis der naechste Frame laeuft — im Onboarding kann das dauern. */
-            panel.zeichne(this.panelLage());
-            return true;
-        }
-
-        /**
          * Anzeigeskalierung pruefen und im Protokoll festhalten.
          *
          * Der Canvas rechnet bewusst in CSS-Pixeln; `devicePixelRatio` wird
@@ -10021,66 +9147,13 @@ body.op-body {
                 CONFIG.mode = modus;
                 if (modusHinweis) modusHinweis.innerText = '';
                 document.getElementById('step0').classList.remove('active');
-                /* Der Klavier-Modus schiebt einen Schritt ein: Stueck und
-                   Kopfhoerer-Bestaetigung. Alles danach ist unveraendert —
-                   gespielt wird wie im Arcade-Modus. */
-                document.getElementById(
-                    modus === MODE.KLAVIER ? 'stepKlavier' : 'stepPlatz')
-                    .classList.add('active');
+                document.getElementById('stepPlatz').classList.add('active');
                 console.info(`[Karaokovic] Modus: ${modus}`);
             };
             document.getElementById('btnModeArcade')
                 .addEventListener('click', () => waehleModus(MODE.ARCADE));
             document.getElementById('btnModeVersus')
                 .addEventListener('click', () => waehleModus(MODE.VERSUS));
-            document.getElementById('btnModeKlavier')
-                .addEventListener('click', () => waehleModus(MODE.KLAVIER));
-
-            /* --- Schritt 1b: Stueck und Kopfhoerer ------------------------
-             * Die Kopfhoerer-Bestaetigung ist eine SPERRE und kein Hinweis.
-             * Klavier im Gesangsmikrofon verfaelscht nicht nur die
-             * Tonhoehenerkennung — es blockiert die Ruhepruefung dauerhaft:
-             * die adaptive Stillegrenze lernt den Raumpegel ausdruecklich nur
-             * aus Frames OHNE erkennbaren Grundton (damit Gesang sie nicht
-             * anhebt), und Klavier hat einen Grundton. Die Grenze waechst also
-             * nicht mit, waehrend der gemessene Pegel dauerhaft darueber
-             * liegt. Der Countdown wird nie fertig, jedes Mal, reproduzierbar.
-             * ---------------------------------------------------------------- */
-            const ladeAnzeige = document.getElementById('klavierLade');
-            const chkKopf = document.getElementById('chkKopfhoerer');
-            const btnWeiter = document.getElementById('btnKlavierWeiter');
-            let stueckGewaehlt = false;
-            const pruefeWeiter = () => {
-                const frei = stueckGewaehlt && chkKopf.checked;
-                btnWeiter.disabled = !frei;
-                btnWeiter.style.opacity = frei ? '1' : '0.3';
-            };
-            const waehleStueck = async (nr) => {
-                CONFIG.klavierStueck = nr;
-                stueckGewaehlt = true;
-                pruefeWeiter();
-                ladeAnzeige.innerText = `Stück ${nr} wird geladen …`;
-                const ok = await this.klavier.laden(nr);
-                ladeAnzeige.innerText = ok
-                    ? `✓ Stück ${nr} geladen `
-                      + `(${Math.round(this.klavier.el.duration)} s)`
-                    : `Stück ${nr} nicht ladbar (${this.klavier.grund}) — `
-                      + `das Spiel läuft ohne Begleitung weiter.`;
-                /* Auch ohne Datei geht es weiter: das Spiel funktioniert
-                   vollstaendig, es klingt nur nichts dazu. Hausordnung. */
-                pruefeWeiter();
-            };
-            document.getElementById('btnStueck1')
-                .addEventListener('click', () => waehleStueck(1));
-            document.getElementById('btnStueck2')
-                .addEventListener('click', () => waehleStueck(2));
-            chkKopf.addEventListener('change', pruefeWeiter);
-            btnWeiter.addEventListener('click', () => {
-                Protokoll.schreib('KLAVIER',
-                    `Kopfhoerer bestaetigt, Stueck ${CONFIG.klavierStueck}`);
-                document.getElementById('stepKlavier').classList.remove('active');
-                document.getElementById('stepPlatz').classList.add('active');
-            });
 
             /* Der Online-Modus bleibt bewusst ANKLICKBAR, obwohl er nicht geht.
                Ein toter Knopf laesst den Bediener zweifeln, ob er kaputt ist
@@ -10124,33 +9197,6 @@ body.op-body {
             document.getElementById('btnPlatzRasen')
                 .addEventListener('click', () => waehlePlatz('RASEN'));
 
-            /* --- Operator-Fenster ------------------------------------------
-             * Der Knopf steht in DIESEM Schritt und nicht spaeter, und das ist
-             * kein Layoutgeschmack: Chrome verlaesst den Vollbildmodus, sobald
-             * ein neues Fenster geoeffnet wird. Wer das Operator-Fenster erst
-             * auf der Buehne aufmacht, reisst damit das Sendebild aus dem
-             * Vollbild — vor Publikum, mitten im Auftritt.
-             *
-             * Ctrl+Shift+O tut dasselbe und bleibt der Weg fuer den Fall, dass
-             * das Fenster im Betrieb doch einmal geschlossen wird. */
-            const btnOpFenster = document.getElementById('btnOperatorFenster');
-            const opHinweis = document.getElementById('operatorHinweis');
-            if (btnOpFenster) {
-                btnOpFenster.addEventListener('click', () => {
-                    const ok = this.operatorFensterOeffnen();
-                    if (!opHinweis) return;
-                    /* Scheitern ist hier NICHT still: eine Popup-Sperre sieht
-                       aus wie ein toter Knopf, und der Bediener sucht dann den
-                       Fehler bei sich. Der genaue Grund steht im Protokoll. */
-                    opHinweis.innerText = ok
-                        ? '✓ Operator-Fenster offen — dort liegt ab jetzt die '
-                          + 'Diagnose. Auf den zweiten Bildschirm ziehen.'
-                        : 'Fenster wurde blockiert (Popup-Sperre?) — für diese '
-                          + 'Seite erlauben, oder mit Ctrl+Shift+M im '
-                          + 'Spielfenster arbeiten.';
-                });
-            }
-
             /* --- Schritt 3: Mikrofon --------------------------------------- */
             document.getElementById('btnMic').addEventListener('click', async () => {
                 try {
@@ -10172,15 +9218,6 @@ body.op-body {
                         }
                     } else {
                         await this.audio.init();
-                    }
-                    /* Erst jetzt gibt es einen AudioContext — vorher laesst
-                       sich weder der Ausgangsweg auslesen noch die
-                       Klavierkette anhaengen. Beides liegt bewusst hier und
-                       nicht beim Match-Cue: dort duerfte nichts mehr Zeit
-                       kosten. */
-                    if (CONFIG.mode === MODE.KLAVIER) {
-                        await AudioEngine.protokolliereAusgang(this.audio.audioCtx);
-                        await this.klavier.verbinden(this.audio.audioCtx);
                     }
                     document.getElementById('step1').classList.remove('active');
                     document.getElementById('step2').classList.add('active');
@@ -10654,28 +9691,11 @@ body.op-body {
                     this._pulsZuvor = puls;
                 }
 
-                /* Blende fahren und Rundlauf protokollieren. Ausserhalb des
-                   Klavier-Modus faellt der Aufruf sofort durch — er kostet
-                   dort einen Nullvergleich. */
-                this.klavier.tick();
-
-                /* Der Klavierverdacht an EINER Stelle: Bild (Quiet-Satz
-                   entfaellt dort inzwischen), Szene und Panel lesen ihn,
-                   gerechnet wird er hier. */
-                this.klavierVerdacht = CONFIG.mode === MODE.KLAVIER
-                    && this.klavier.laeuft && !!this.ruheHaengt;
-
                 /* Das Panel laeuft AUCH IM ONBOARDING mit — dort wird
                    eingepegelt, und genau dafuer ist es da. `running` wird
                    erst mit dem Start wahr; haenge man es dorthin, waere die
                    Diagnose ausgerechnet beim Soundcheck blind. */
-                /* BEIDE aus DERSELBEN Lage — ein zweiter Aufruf von
-                   panelLage() koennte im selben Frame andere Werte liefern
-                   (die Uhr laeuft weiter), und zwei Panels mit
-                   unterschiedlichen Zahlen waeren schlimmer als eines. */
-                const lage = this.panelLage();
-                this.panel.zeichne(lage);
-                if (this.operatorFensterOffen()) this.panelFenster.zeichne(lage);
+                this.panel.zeichne(this.panelLage());
 
                 if (this.calibrating) {
                     /* Angezeigt wird der Kanal DESSEN, der gerade einsingt —
@@ -10709,7 +9729,6 @@ body.op-body {
                     this._scene.ruheHaengt = !!this.ruheHaengt;
                     this._scene.raumpegel = this.raumpegel();
                     this._scene.audioTot = this.audioTot;
-                    this._scene.klavierVerdacht = this.klavierVerdacht;
                     /* Wie lange die Ruhe schon haengt — die Blendzeit von
                        "Quiet, please." kommt aus DERSELBEN Uhr, die ueber
                        `ruheHaengt` entscheidet. Ein zweiter Zeitstempel
@@ -10823,19 +9842,18 @@ body.op-body {
         }
 
         /**
-         * Die vollstaendige Lage fuer das Operator-Panel.
+         * Die Lage fuer das Operator-Panel.
          *
-         * EINZIGE Stelle, an der die Lampen entstehen. Jede liest die
+         * EINZIGE Stelle, an der die Pruefungen entstehen. Jede liest die
          * Bedingung IHRES AUSLOESERS — dieselbe Groesse, die auch die
          * Protokollzeile schreibt oder den Rettungsgriff noetig macht. Eine
-         * Lampe mit eigener, aehnlicher Rechnung koennte gruen zeigen,
-         * waehrend im Protokoll die Warnung steht; das waere schlimmer als
-         * gar keine Lampe. Dieselbe Lehre wie bei der Stimm-Anzeige.
+         * Anzeige, die "BEREIT" sagt, waehrend im Protokoll eine Warnung
+         * steht, waere schlimmer als gar keine.
          *
-         * "ruht" heisst: die Bedingung gilt in diesem Modus gar nicht — die
-         * Kanalzahl ausserhalb des Duells, das Klavierstueck ausserhalb des
-         * Klavier-Modus. Gedaempft und nicht gruen: gruen hiesse "geprueft und
-         * in Ordnung", und geprueft wurde nichts.
+         * DARAUS WIRD EINE ZEILE. Brennen mehrere, nennt sie die dringendste
+         * und zaehlt den Rest — waehrend der Sendung ist fuer eine Liste
+         * keine Zeit. Die Reihenfolge in OperatorPanel.PRUEFUNGEN IST die
+         * Dringlichkeit.
          *
          * Fuellt den festen Schnappschuss und gibt ihn zurueck — kein neues
          * Objekt je Frame.
@@ -10847,90 +9865,90 @@ body.op-body {
             const m = this.match;
             const jetzt = Uhr.jetzt();
 
-            /* SOLANGE DAS EIGENE FENSTER STEHT, BLEIBT DAS EINGEBETTETE AUS
-               — auch wenn jemand Ctrl+Shift+M drueckt. Beides zugleich hiesse,
-               die Diagnose steht wieder auf dem Schirm, der auf die Wand
-               geht, und genau das soll das Fenster ja beenden. Der Schalter
-               bleibt trotzdem wirksam: wird das Fenster geschlossen, ist er
-               noch so gesetzt, wie der Operator ihn zuletzt wollte. */
-            const imFenster = this.operatorFensterOffen();
-            L.sichtbar = Renderer.SHOW_AUDIO_METER && !imFenster;
-            L.kopf = `${CONFIG.mode} · `
-                + `${m.isWarmup ? 'EINSPIELEN' : 'MATCH'} · ${m.state}`;
-            /* Sieht NIEMAND hin, ist alles Weitere unnoetige Arbeit in jedem
-               Frame — und das ist der Regelfall. Gefragt wird nach BEIDEN
-               Panels: das Fenster zeigt immer etwas, auch wenn der Schalter
-               aus ist. */
-            if (!L.sichtbar && !imFenster) return L;
+            L.sichtbar = Renderer.SHOW_AUDIO_METER;
+            /* Sieht niemand hin, ist alles Weitere unnoetige Arbeit in jedem
+               Frame — und aus ist der Regelfall. */
+            if (!L.sichtbar) return L;
 
-            const setz = (i, an, wert, ruht) => {
-                const z = L.e[i];
-                z.an = !!an; z.ruht = !!ruht; z.wert = wert;
-            };
+            const p = this._pruef;
+            const z = this._pruefZusatz;
 
             /* E-01 — Audioeingang tot. Quelle: der Waechter in loop(), der
                auch die Protokollwarnung schreibt. */
-            setz(0, this.audioTot, this.audioTot ? 'audioNeustart()' : 'ok');
+            p[0] = this.audioTot;
 
-            /* E-02 — Ruhepruefung haengt. Quelle: derselbe Merker, den auch
-               "Quiet, please." im Bild liest. */
-            setz(1, this.ruheHaengt,
-                this.ruheHaengt ? `${(m.elapsed() / 1000).toFixed(0)} s` : 'ok');
-
-            /* E-03 — Klavier im Mikrofon. Der Verdacht des Klavier-Modus ODER
-               ein Haenger BEI ANLIEGENDEM GRUNDTON: die Stillegrenze lernt
-               den Raum nur aus Frames ohne Grundton, ein Instrument im
-               Mikrofon haelt sie also fest, waehrend der Pegel darueber
-               liegt. Damit greift die Lampe auch dann, wenn im Arcade- oder
-               Duell-Modus ein Klavier live daneben steht. */
-            const e03 = this.klavierVerdacht
-                || (this.ruheHaengt && this._gesungen);
-            setz(2, e03, e03 ? 'Mix-Minus pruefen' : 'ok');
+            /* E-02 und E-03 sind ZWEI URSACHEN DESSELBEN BEFUNDS und schliessen
+               einander aus. Der Hänger ist derselbe; was ihn erklaert, ist der
+               Grundton:
+                 mit Grundton  -> ein Instrument oder Zuspieler liegt auf dem
+                                  Mikrofon. Die adaptive Stillegrenze lernt den
+                                  Raum NUR aus Frames ohne Grundton, waechst
+                                  also gerade nicht mit — das geht nie von
+                                  selbst weg.
+                 ohne Grundton -> der Raum ist schlicht zu laut.
+               Beide zugleich zu melden waere eine Zeile zu viel und die
+               unschaerfere davon obendrein. */
+            p[1] = !!this.ruheHaengt && !this._gesungen;
+            p[2] = !!this.ruheHaengt && this._gesungen;
 
             /* E-04 — Tastaturfokus. Ohne ihn kommt Ctrl+Shift+A nicht an,
                und der Notausgang ist genau dann tot, wenn er gebraucht wird. */
-            setz(3, !this.input.fokus,
-                this.input.fokus ? 'ok' : 'ins Fenster klicken');
+            p[3] = !this.input.fokus;
 
-            /* E-05 — Bildkette. Mit Nachlauf, siehe LUECKE_ANZEIGE_MS. */
-            const luecke = this._letzteLuecke > 0
+            /* E-05 — Bildkette. Mit Nachlauf: eine Unterbrechung ist vorbei,
+               sobald sie auffaellt (siehe LUECKE_ANZEIGE_MS). */
+            p[4] = this._letzteLuecke > 0
                 && jetzt - this._letzteLuecke < Game.LUECKE_ANZEIGE_MS;
-            setz(4, luecke, luecke ? `${Math.round(this._lueckeMs)} ms` : 'ok');
+            z[4] = p[4] ? `${Math.round(this._lueckeMs)} ms` : '';
 
-            /* E-06 — Anzeigeskalierung. Live gelesen: sie aendert sich, wenn
-               das Fenster auf einen anderen Bildschirm wandert. */
+            /* E-06 — Anzeigeskalierung. LIVE gelesen: sie aendert sich, wenn
+               das Fenster auf einen anders skalierten Bildschirm wandert. */
             const dpr = window.devicePixelRatio || 1;
-            setz(5, dpr !== 1, `${Math.round(dpr * 100)} %`);
+            p[5] = dpr !== 1;
+            z[5] = p[5] ? `${Math.round(dpr * 100)} %` : '';
 
             /* E-07 — Bildrate. Dieselbe Schwelle wie die Protokollwarnung;
                ohne FIXED_TIMESTEP laeuft das Spiel bei 120 Hz doppelt so
                schnell. */
             const hz = this._diag.hz;
-            setz(6, hz >= Game.BILDRATE_WARNUNG_HZ && !FEATURES.FIXED_TIMESTEP,
-                hz ? `${hz} Hz` : 'misst …');
+            p[6] = hz >= Game.BILDRATE_WARNUNG_HZ && !FEATURES.FIXED_TIMESTEP;
+            z[6] = p[6] ? `${hz} Hz` : '';
 
             /* E-08 — Kanalzahl, nur im Duell. */
             const duell = CONFIG.mode === MODE.VERSUS;
-            setz(7, duell && this._kanaele > 0 && this._kanaele < 2,
-                duell ? (this._kanaele ? `${this._kanaele} Kanal/Kanaele`
-                    : 'noch offen') : '—', !duell);
+            p[7] = duell && this._kanaele > 0 && this._kanaele < 2;
 
             /* E-09 — Pflicht-Assets. `failed` enthaelt auch die als optional
                gekennzeichneten; nur der Rest ist ein Ausfall. */
             const pflicht = this.assets.failed.length
                 - this.assets.failedOptional.length;
-            setz(8, pflicht > 0, pflicht > 0 ? `${pflicht} fehlen` : 'ok');
+            p[8] = pflicht > 0;
+            z[8] = p[8] ? `${pflicht} fehlen` : '';
 
-            /* E-10 — Klavierstueck, nur im Klavier-Modus. */
-            const klavier = CONFIG.mode === MODE.KLAVIER;
-            setz(9, klavier && !this.klavier.bereit,
-                klavier ? (this.klavier.bereit ? 'geladen' : this.klavier.grund)
-                    : '—', !klavier);
+            /* --- Daraus die eine Zeile ------------------------------------ */
+            let erste = -1, zahl = 0;
+            for (let i = 0; i < p.length; i++) {
+                if (!p[i]) continue;
+                if (erste < 0) erste = i;
+                zahl++;
+            }
+            L.ok = erste < 0;
+            if (L.ok) {
+                L.lage = OperatorPanel.BEREIT;
+                /* Kein Alarm heisst: die Zeile darf sagen, wo wir stehen. */
+                L.tun = `${CONFIG.mode} · `
+                    + `${m.isWarmup ? 'EINSPIELEN' : 'MATCH'} · ${m.state}`;
+            } else {
+                const e = OperatorPanel.PRUEFUNGEN[erste];
+                L.lage = e.text + (z[erste] ? ` ${z[erste]}` : '')
+                    + (zahl > 1 ? `   +${zahl - 1} weitere` : '');
+                L.tun = `→ ${e.tun}`;
+            }
 
-            /* --- Messwerte ------------------------------------------------ */
+            /* --- Messwerte: das Werkzeug fuer das Einpegeln ---------------- */
             const mess = (i, ok, wert, ruht) => {
-                const z = L.mess[i];
-                z.ok = !!ok; z.ruht = !!ruht; z.wert = wert;
+                const q = L.mess[i];
+                q.ok = !!ok; q.ruht = !!ruht; q.wert = wert;
             };
             const hzVon = (a) => (a && a.stablePitch > 0) ? a.stablePitch : 0;
             const imUmfang = (a, spieler) => {
@@ -10965,11 +9983,6 @@ body.op-body {
                ueber volumeGate, hat der Raum sie hochgezogen — das ist die
                Rettung vor dem Stillstand, aber kein guter Zustand. */
             mess(5, grenze <= CONFIG.volumeGate + 1e-9, grenze.toFixed(3));
-
-            const rest = m.state === STATE.SILENCE_CHECK
-                ? Math.max(0, TIMING.SILENCE_MS
-                    - (jetzt - m.silenceTimerStart)) : -1;
-            mess(6, true, rest >= 0 ? `${Math.round(rest)} ms` : '—', rest < 0);
 
             return L;
         }
@@ -11049,7 +10062,6 @@ body.op-body {
         step() {
             const match = this.match;
             this.satzAnsagePruefen();
-            this.klavierNachfuehren();
 
             switch (match.state) {
                 /* --- GESCHÜTZT: 3 Sekunden absolute Ruhe ---------------------- */
@@ -11118,24 +10130,20 @@ body.op-body {
                         this._ruheGemeldet = false;
                     } else if (!this._ruheGemeldet) {
                         this._ruheGemeldet = true;
-                        /* IM KLAVIER-MODUS STEHT DER VERDACHT DABEI. Ein
-                           haengender Countdown hat dort fast immer dieselbe
-                           Ursache: das Klavier liegt auf dem Mikrofon. Die
-                           Stillegrenze kann das nicht ausgleichen — sie lernt
-                           den Raum nur aus Frames ohne Grundton, und Klavier
-                           hat einen. Ohne diesen Satz muesste die Ursache
-                           hinterher wieder aus Pegeln zurueckgerechnet
-                           werden. */
-                        const klavierLaeuft = CONFIG.mode === MODE.KLAVIER
-                            && this.klavier.laeuft;
+                        /* LIEGT EIN GRUNDTON AN, ist es fast immer ein
+                           Instrument oder ein Zuspieler im Mikrofon: die
+                           adaptive Stillegrenze lernt den Raum nur aus Frames
+                           OHNE Grundton, waechst also gerade nicht mit,
+                           waehrend der Pegel dauerhaft darueber liegt. Ohne
+                           diesen Satz muesste die Ursache hinterher aus
+                           Pegeln zurueckgerechnet werden. */
                         Protokoll.schreib('WARNUNG',
                             `Ruhe seit 8 s nicht erreicht — Raumpegel `
                             + `${this.raumpegel().toFixed(3)}, Grenze `
                             + `${grenze.toFixed(3)}. Eingang zu leise oder Raum zu laut.`
-                            + (klavierLaeuft
-                                ? ' KLAVIER IM MIKROFON? Mix-Minus pruefen —'
-                                  + ' die Stillegrenze waechst mit Klavier NICHT'
-                                  + ' mit, weil es einen Grundton hat.'
+                            + (this._gesungen
+                                ? ' TON IM MIKROFON — die Stillegrenze waechst'
+                                  + ' bei anliegendem Grundton NICHT mit.'
                                 : ''));
                     }
                     this.ruheHaengt = haengt;
@@ -11345,47 +10353,6 @@ body.op-body {
             if (match.state !== STATE.POINT_SCORED
                 && match.state !== STATE.TRANSITION) {
                 this.pruefePlatzwechsel();
-            }
-        }
-
-        /**
-         * Die Klavierbegleitung an die Match-Phase haengen.
-         *
-         * EINE STELLE FUER BEIDE EINSTIEGE. Die Match-Phase beginnt entweder
-         * ueber den Startknopf oder ueber den Regie-Cue (Enter+Leertaste), und
-         * beide rufen `startMatch()`. Statt an zwei Stellen einen Start
-         * anzuhaengen, wird hier der ANLAUF verglichen — damit ist auch ein
-         * dritter Einstieg von selbst erfasst, sollte einer dazukommen.
-         *
-         * IM EINSPIELEN SPIELT NICHTS. Dort wird eingesungen und justiert; da
-         * stoert Musik, und der Ton der Saengerin soll die einzige Groesse
-         * sein, auf die sie hoert.
-         *
-         * ENDE DES MATCHES: das Spiel kennt keinen Sieger-Zustand — Saetze
-         * werden gezaehlt, aber nichts erklaert das Match fuer beendet. Was es
-         * kennt, ist die PLATZFOLGE: drei Plaetze, jeder genau einmal. Sind
-         * alle gespielt, ist der letzte Satz vorbei, und genau dann blendet
-         * die Musik aus. Das ist aus vorhandenem Zustand abgeleitet und keine
-         * neu erfundene Regel — eine Sieger-Regel einzufuehren waere in einem
-         * Ton-Sprint der falsche Ort.
-         */
-        klavierNachfuehren() {
-            if (CONFIG.mode !== MODE.KLAVIER) return;
-            const m = this.match;
-            if (m.isWarmup) return;
-
-            if (this._klavierLauf !== m.matchLauf) {
-                this._klavierLauf = m.matchLauf;
-                this._klavierBeendet = false;
-                this.klavier.start();
-                return;
-            }
-            if (!this._klavierBeendet
-                && this._gespielteSaetze >= this.platzFolge.length) {
-                this._klavierBeendet = true;
-                Protokoll.schreib('KLAVIER', `Match zu Ende `
-                    + `(${this._gespielteSaetze} Saetze) — Musik blendet aus`);
-                this.klavier.beenden();
             }
         }
 
@@ -11846,15 +10813,8 @@ body.op-body {
        anfuehlt — ohne Neuladen wirksam. */
     game.PADDLE = PADDLE;
 
-    /* Die Begleitung fuer die Buehne: KARAOKOVIC.klavier.setzePegel(0.8, 1)
-       stellt Kopfhoerer- und Publikumsweg getrennt, .beenden() blendet aus.
-       Ohne diesen Zugriff muesste zum Nachregeln die Datei bearbeitet und neu
-       geladen werden. */
-    game.Klavier = Klavier;
-
     /* Das Operator-Panel fuer die Buehne. Ctrl+Shift+M ist der Griff;
-       KARAOKOVIC.panelLage() gibt dieselbe Lage als Objekt zurueck, wenn
-       jemand sie in der Konsole lesen oder mitschreiben will. */
+       KARAOKOVIC.panelLage() gibt dieselbe Lage als Objekt zurueck. */
     game.OperatorPanel = OperatorPanel;
 
     game.grenzen = {

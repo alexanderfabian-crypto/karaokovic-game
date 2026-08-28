@@ -208,14 +208,13 @@ class Browser {
  * Der eigentliche Test
  * ---------------------------------------------------------------------- */
 
-/* Wie viele Panelzeilen es gibt, steht im Spielcode — eine getippte Zahl
-   waere nach der elften Lampe falsch, und der Fehler fiele niemandem auf. */
+/* Wie viele Messzeilen das Panel hat, steht im Spielcode — eine getippte
+   Zahl waere nach der naechsten Aenderung falsch, und der Fehler fiele
+   niemandem auf. */
 const K_ZEILEN = (() => {
     const t = fs.readFileSync(path.join(__dirname, '..', 'app-arena.js'), 'utf8');
-    const m = t.match(/MELDUNGEN\s*=\s*\[([\s\S]*?)\];/);
-    const z = t.match(/MESSZEILEN\s*=\s*\[([\s\S]*?)\];/);
-    return ((m && m[1].match(/code:/g)) || []).length
-        + ((z && z[1].match(/'/g)) || []).length / 2;
+    const m = t.match(/MESSZEILEN\s*=\s*\[([\s\S]*?)\];/);
+    return ((m && m[1].match(/'/g)) || []).length / 2;
 })();
 
 (async () => {
@@ -953,109 +952,45 @@ const K_ZEILEN = (() => {
         }
 
         /* --- 10. Nichts ist unterwegs geflogen -------------------------- */
-        /* --- Klavier-Modus: das Onboarding und das echte Laden ----------
-         * ZULETZT und nicht zwischendrin: das Onboarding ist ein Einbahnweg,
-         * und ein Abzweig in der Mitte haette den ganzen restlichen Durchlauf
-         * verstellt. Hier ist es laengst ausgeblendet, die Pruefung stoert
-         * nichts mehr.
-         *
-         * Der Tonweg selbst wird hier NICHT gemessen — der Browsertest laeuft
-         * mit --allow-file-access-from-files, und genau dieses Flag
-         * entscheidet die Frage. Dafuer gibt es klavierweg.js. */
-        {
-            const kl = await b.werteAus(`(async () => {
-                const K = window.KARAOKOVIC;
-                /* Die eingefrorene Fassung V41 kennt den Modus nicht — wie bei
-                   der Platzwahl entscheidet die gepruefte SEITE, ob es das
-                   Merkmal gibt. */
-                if (!K.Klavier) return { arena: false };
-                const da = (id) => !!document.getElementById(id);
-                const schritte = {
-                    knopf: da('btnModeKlavier'),
-                    stueck1: da('btnStueck1'), stueck2: da('btnStueck2'),
-                    kopfhoerer: da('chkKopfhoerer'),
-                    weiter: da('btnKlavierWeiter'),
-                    /* Die Bestaetigung ist eine SPERRE: der Weiter-Knopf ist
-                       gesperrt, solange sie nicht gesetzt ist. */
-                    weiterGesperrt: document.getElementById('btnKlavierWeiter').disabled,
-                    stuecke: K.Klavier.STUECKE.slice(),
-                    arena: true,
-                };
-                /* Das echte Stueck laden — unter file://, mit der echten
-                   Datei. Fehlt sie, greift der Rueckfall, und genau das ist
-                   dann das Ergebnis. */
-                schritte.geladen = await K.klavier.laden(1);
-                schritte.dauer = K.klavier.el ? Math.round(K.klavier.el.duration) : 0;
-                schritte.rundlauf = !!(K.klavier.el && K.klavier.el.loop);
-                schritte.grund = K.klavier.grund;
-                return schritte;
-            })()`);
-
-            if (kl.arena) {
-            check('Der vierte Menüpunkt steht im Onboarding', kl.knopf);
-            check('Und dahinter Stückwahl und Kopfhörer-Bestätigung',
-                kl.stueck1 && kl.stueck2 && kl.kopfhoerer && kl.weiter);
-            check('Die Kopfhörer-Bestätigung ist eine Sperre, kein Hinweis',
-                kl.weiterGesperrt);
-            console.log(`      Stücke: ${kl.stuecke.join(', ')}`);
-            if (kl.geladen) {
-                check('Das Klavierstück lädt im echten Browser unter file://',
-                    kl.dauer > 0, `${kl.dauer} s`);
-                /* Beide Stuecke sind laenger als das Sieben-Minuten-Segment —
-                   der Rundlauf ist eine Zusicherung, keine Erwartung. Fallen
-                   darf er trotzdem nicht: ein Auftritt, der in Stille endet,
-                   ist der eine Fall, den niemand auffangen kann. */
-                check('Es läuft im Rundlauf und ist länger als das Segment',
-                    kl.rundlauf && kl.dauer > 420, `${kl.dauer} s, Rundlauf ${kl.rundlauf}`);
-            } else {
-                console.log(`ÜBERSPRUNGEN  Klavierstück nicht ladbar `
-                    + `(${kl.grund}) — der Rückfall greift, das Spiel läuft.`);
-            }
-            }
-        }
-
         /* --- Operator-Panel: das DOM, das Node nicht pruefen kann -------
-         * Die LAGE prueft test-sendebild.js, das ZWEITFENSTER
-         * test-operatorfenster.js — beide gegen Attrappen. Was dort fehlt, ist
-         * das Einzige, was ein echter Browser beitragen kann: dass die Knoten
-         * wirklich entstehen, dass das Stylesheet aus dem Spielcode im echten
-         * Dokument landet, und dass das Panel Klicks NICHT abfaengt. Ein Klick
-         * darauf zoege den Tastaturfokus aus dem Spielfenster, und dann kaeme
-         * ausgerechnet der Notausgang Ctrl+Shift+A nicht mehr an. */
+         * Die LAGE prueft test-sendebild.js vollstaendig gegen Attrappen. Was
+         * dort fehlt, ist das Einzige, was ein echter Browser beitragen kann:
+         * dass die Knoten wirklich entstehen, dass das Stylesheet aus dem
+         * Spielcode im echten Dokument landet und greift — und dass das Panel
+         * Klicks NICHT abfaengt. Ein Klick darauf zoege den Tastaturfokus aus
+         * dem Spielfenster, und dann kaeme ausgerechnet der Notausgang
+         * Ctrl+Shift+A nicht mehr an. */
         {
             const pan = await b.werteAus(`(() => {
                 const K = window.KARAOKOVIC;
-                if (!K.Klavier) return { arena: false };
+                if (!K.OperatorPanel) return { arena: false };
                 const el = document.getElementById('operator-panel');
                 if (!el) return { arena: true, da: false };
                 const stile = document.querySelectorAll(
                     'style#' + K.OperatorPanel.STIL_ID).length;
-                const aus = { klasse: el.className,
-                    anzeige: getComputedStyle(el).display };
+                const aus = { anzeige: getComputedStyle(el).display };
                 K.Renderer.SHOW_AUDIO_METER = true;
                 K.panel.zeichne(K.panelLage());
                 const an = {
-                    klasse: el.className,
                     anzeige: getComputedStyle(el).display,
                     zeiger: getComputedStyle(el).pointerEvents,
                     schrift: getComputedStyle(el).fontFamily,
                     text: el.textContent,
-                    knoten: el.querySelectorAll('.zeile').length,
+                    mess: el.querySelectorAll('.zeile').length,
+                    lage: el.querySelector('.lage').textContent,
                 };
                 K.Renderer.SHOW_AUDIO_METER = false;
                 K.panel.zeichne(K.panelLage());
                 return { arena: true, da: true, stile, aus, an,
-                    wiederAus: getComputedStyle(el).display,
-                    knopf: !!document.getElementById('btnOperatorFenster') };
+                    wiederAus: getComputedStyle(el).display };
             })()`);
 
             if (pan.arena) {
                 check('Das Operator-Panel liegt im DOM', pan.da);
                 if (pan.da) {
                     /* Das Stylesheet kommt seit ARENA-25 aus dem Spielcode und
-                       nicht mehr aus arena.html — nur so kann das Zweitfenster
-                       dasselbe benutzen. Hier wird geprueft, dass der Weg im
-                       ECHTEN Dokument funktioniert. */
+                       nicht mehr aus arena.html — hier wird geprueft, dass der
+                       Weg im ECHTEN Dokument funktioniert. */
                     check('Das Stylesheet kommt aus dem Spielcode',
                         pan.stile === 1, `${pan.stile} <style>`);
                     check('Und es greift wirklich',
@@ -1067,57 +1002,21 @@ const K_ZEILEN = (() => {
                     check('Es faengt keine Klicks ab — sonst waere der '
                         + 'Notausgang tot',
                         pan.an.zeiger === 'none', pan.an.zeiger);
-                    check('Alle zehn Lampen und die Messzeilen stehen darin',
-                        pan.an.knoten === K_ZEILEN, `${pan.an.knoten} Zeilen`);
+                    /* Der eigentliche Punkt von ARENA-26: EINE Zeile oben,
+                       darunter nur noch die Messwerte fuer das Einpegeln. */
+                    check('Oben steht genau EINE Statuszeile',
+                        pan.an.lage.length > 0, `"${pan.an.lage}"`);
+                    check('Darunter nur die Messzeilen',
+                        pan.an.mess === K_ZEILEN, `${pan.an.mess} Zeilen`);
                     check('Und der Wortlaut ist da',
-                        /E-01/.test(pan.an.text) && /E-10/.test(pan.an.text)
-                        && /RAUM/.test(pan.an.text));
+                        /RAUM/.test(pan.an.text) && /GRENZE/.test(pan.an.text));
                     check('Ausgeschaltet verschwindet es wieder',
                         pan.wiederAus === 'none', pan.wiederAus);
-                    check('Der Knopf fuer das Operator-Fenster steht im '
-                        + 'Onboarding', pan.knopf);
                 }
             }
         }
 
-        /* --- Das Zweitfenster im echten Browser -------------------------
-         * GEPRUEFT WIRD NICHT, DASS ES AUFGEHT. Ob ein Popup durchkommt, ist
-         * Browserpolitik und haengt an Version, Profil und Startflags —
-         * headless ist nicht der Show-Rechner, und ein gruener Haken hier
-         * saegte nur eine falsche Sicherheit. Die Probe gehoert auf den Mac,
-         * der spielt (OPERATOR-MANUAL.md, 3.2).
-         *
-         * Geprueft wird die Eigenschaft, die IMMER gelten muss: der Versuch
-         * endet entweder mit einem Fenster oder mit einem Grund im Protokoll.
-         * Lautloses Scheitern ist der teuerste Fehler — genau dafuer gibt es
-         * diese Zusicherung. */
-        {
-            const zw = await b.werteAus(`(() => {
-                const K = window.KARAOKOVIC;
-                if (!K.OperatorPanel) return { arena: false };
-                const vorher = K.Protokoll.zeilen.length;
-                const ok = K.operatorFensterOeffnen();
-                /* Mit ' | ' verbunden und NICHT mit einem Zeilenumbruch:
-                   dieser Block reist als Zeichenkette durch ein Template-
-                   Literal, und ein \\n darin wuerde dort zum echten Umbruch —
-                   mitten in einem JS-String. Genau daran ist der Test eben
-                   gescheitert. */
-                const neu = K.Protokoll.zeilen.slice(vorher).join(' | ');
-                if (ok) { try { K.panelFenster.fenster.close(); } catch (e) {} }
-                return { arena: true, ok, neu };
-            })()`);
-
-            if (zw.arena) {
-                console.log(`    Zweitfenster im Test-Chrome: `
-                    + `${zw.ok ? 'geoeffnet' : 'nicht geoeffnet'}`);
-                check('Der Versuch endet mit einem Fenster ODER mit einem '
-                    + 'Grund im Protokoll',
-                    zw.ok || /OPERATOR/.test(zw.neu),
-                    zw.neu || '(Fenster steht)');
-            }
-        }
-
-                check('Keine Exception und kein console.error während des Laufs',
+        check('Keine Exception und kein console.error während des Laufs',
             b.fehler.length === 0, b.fehler.join(' | ') || 'sauber');
 
     } catch (err) {

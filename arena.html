@@ -16,13 +16,6 @@
         button { background: #ff007f; color: white; border: none; padding: 15px 40px; font-size: 1.2rem; cursor: pointer; border-radius: 5px; font-weight: bold; text-transform: uppercase; box-shadow: 0 0 15px rgba(255, 0, 127, 0.6); transition: 0.2s; margin-top: 15px; }
         button:hover { background: #ff3399; transform: scale(1.05); }
         button.cyan { background: #00ffcc; color: #000; box-shadow: 0 0 15px rgba(0, 255, 204, 0.6); }
-        /* Nebenwege, die nicht der Hauptknopf des Schritts sind — das
-           Operator-Fenster etwa. Gleiche Sprache, kleineres Gewicht. */
-        button.klein { padding: 9px 20px; font-size: 0.9rem; background: #2a2a3e;
-            box-shadow: none; margin-top: 10px; }
-        button.klein:hover { background: #3a3a52; transform: none; }
-        button.cyan:hover { background: #33ffdd; }
-
         #livePitch { font-size: 2rem; color: #ff007f; margin: 20px 0 4px; font-weight: bold; height: 40px; line-height: 40px; white-space: nowrap; overflow: hidden; }
         #debug { font-size: 1rem; color: #888; padding: 10px; background: #000; }
 
@@ -101,7 +94,6 @@
             <p>Wie wird gespielt?</p>
             <div class="modusZeile">
                 <button id="btnModeArcade" class="cyan">Arcade<br><small>gegen Alex</small></button>
-                <button id="btnModeKlavier" class="cyan">Klavier<br><small>Auftritt mit Begleitung</small></button>
                 <button id="btnModeOnline" class="gesperrt">Online 1:1<br><small>in Vorbereitung</small></button>
                 <button id="btnModeVersus">1:1 Bühne<br><small>Xperion, zwei Mikros</small></button>
             </div>
@@ -113,40 +105,6 @@
             </p>
         </div>
 
-        <!-- Schritt 1b: nur im Klavier-Modus. Stueck und Kopfhoerer.
-             Die Kopfhoerer-Bestaetigung ist PFLICHT und kein Hinweis: Klavier
-             im Mikrofon blockiert die Ruhepruefung dauerhaft, und zwar
-             garantiert (siehe app-arena.js, Klasse Klavier). -->
-        <div id="stepKlavier" class="step">
-            <h3>SCHRITT 1b: BEGLEITUNG</h3>
-            <p>Welches Stück?</p>
-            <div class="modusZeile">
-                <button id="btnStueck1" class="cyan">Stück 1</button>
-                <button id="btnStueck2" class="cyan">Stück 2</button>
-            </div>
-            <p id="klavierLade" class="hinweis"></p>
-
-            <p style="color: #aaa; margin-top: 22px;">
-                <label>
-                    <input type="checkbox" id="chkKopfhoerer">
-                    Die Sängerin trägt Kopfhörer, und das Klavier läuft
-                    <b>ausschließlich</b> darauf.
-                </label>
-            </p>
-            <button id="btnKlavierWeiter" disabled style="opacity: 0.3;">Weiter</button>
-
-            <p class="hinweis">
-                Kommt das Klavier ins Gesangsmikrofon, folgt die Steuerung dem
-                Klavier statt der Stimme — <b>und die Ruheprüfung wird nie
-                fertig</b>: sie lernt den Raumpegel nur aus Tönen ohne Grundton,
-                Klavier hat einen. Das Spiel bliebe im Countdown stehen.
-                In der Arena muss der Klavierweg zur PA deshalb ein
-                <b>Mix-Minus</b> sein.
-            </p>
-        </div>
-
-        <!-- Schritt 2: Platz. Bestimmt den Belag fuer Satz 1; die weiteren
-             Saetze laufen auf den jeweils anderen. -->
         <div id="stepPlatz" class="step">
             <h3>SCHRITT 2: PLATZ</h3>
             <p>Worauf wird Satz 1 gespielt?</p>
@@ -165,14 +123,6 @@
             <h3>SCHRITT 3: MIKROFON-CHECK</h3>
             <p>Willkommen im Backstage. Lass uns das System hochfahren.</p>
             <button id="btnMic">Mikrofon aktivieren</button>
-            <!-- HIER und nicht spaeter: Chrome verlaesst den Vollbildmodus,
-                 sobald ein neues Fenster geoeffnet wird. Wer das Operator-
-                 Fenster erst auf der Buehne aufmacht, reisst damit das
-                 Sendebild aus dem Vollbild. Also vorher. -->
-            <div>
-                <button id="btnOperatorFenster" class="klein">Operator-Fenster öffnen</button>
-            </div>
-            <p class="warnung" id="operatorHinweis"></p>
         </div>
 
         <div id="step2" class="step">
@@ -217,12 +167,11 @@
     <canvas id="gameCanvas"></canvas>
 
     <!-- Operator-Panel: leer im HTML, gefuellt von OperatorPanel (app-arena.js),
-         gestaltet aus OperatorPanel.CSS. Ctrl+Shift+M schaltet es ein,
-         Ctrl+Shift+O schiebt es in ein eigenes Fenster.
+         gestaltet aus OperatorPanel.CSS. Ctrl+Shift+M schaltet es ein.
          `hidden` haelt es unsichtbar, bis der Spielcode laeuft. -->
     <div id="operator-panel" hidden></div>
 
     <!-- Cache Buster V5 -->
-    <script src="./app-arena.js?v=arena_25"></script>
+    <script src="./app-arena.js?v=arena_26"></script>
 </body>
 </html>
