@@ -42,6 +42,7 @@ const TESTS = [
     ['test-satz.js', 'Satzgewinn- und Satzbeginn-Anzeige (Arena)'],
     ['test-klavier.js', 'Klavier-Modus und seine Tonquelle (Arena)'],
     ['test-sendebild.js', 'Sendebild ohne Diagnose, Operator-Panel (Arena)'],
+    ['test-operatorfenster.js', 'Operator-Panel im eigenen Fenster (Arena)'],
     ['test-ballwechsel.js', 'Ballwechseldauer / Sendeplatz: V41'],
     /* Das Balltempo weicht seit ARENA-3 zwischen den Fassungen ab. Die
        Sendeplatz-Rechnung muss deshalb fuer beide gelten, nicht nur fuer die

@@ -8928,10 +8928,28 @@
      * Zeile jede 16 ms neu zu setzen kostet Layout, das dem Spiel fehlt.
      */
     class OperatorPanel {
-        /** @param {HTMLElement|null} el Container aus arena.html */
-        constructor(el) {
+        /**
+         * @param {HTMLElement|null} el        Wurzelelement des Panels
+         * @param {boolean} [imFenster] true = eigenes Fenster (immer sichtbar,
+         *                              fuellt die Flaeche statt darueber zu
+         *                              schweben)
+         */
+        constructor(el, imFenster) {
             /** @type {HTMLElement|null} */
             this.el = el;
+            /** @type {boolean} Liegt es in einem eigenen Fenster? */
+            this.imFenster = !!imFenster;
+            /**
+             * @type {boolean} Ignoriert es den Schalter?
+             *
+             * Ein eigenes Fenster zeigt IMMER etwas: es steht auf dem
+             * Operator-Bildschirm, dort ist sonst nichts, und ein leeres
+             * Fenster waere von einem abgestuerzten nicht zu unterscheiden.
+             * Das eingebettete Panel folgt weiter Ctrl+Shift+M.
+             */
+            this.immerSichtbar = this.imFenster;
+            /** @type {string} Klasse, die IMMER am Element steht. */
+            this.grundKlasse = 'op-panel ' + (this.imFenster ? 'fenster' : 'eingebettet');
             /** @type {Array<Object>} Zeilenknoten, einmal gebaut. */
             this._e = [];
             /** @type {Array<Object>} */
@@ -8940,22 +8958,35 @@
             this._sichtbar = null;
             /** @type {string} Zuletzt geschriebene Kopfzeile. */
             this._kopf = '';
+            /** @type {number} Frames seit dem letzten Lebenszeichen. */
+            this._seitTick = 0;
+            /** @type {number} Zaehler des Lebenszeichens. */
+            this._tick = 0;
 
             /* Ohne echtes DOM bleibt das Panel stumm und stoert nichts — in
                den Node-Tests gibt es keine Elemente, dort wird die LAGE
                geprueft und nicht ihre Darstellung. */
-            this.aktiv = !!(el && typeof el.appendChild === 'function'
-                && typeof document.createElement === 'function');
+            this.aktiv = !!(el && typeof el.appendChild === 'function');
             if (this.aktiv) this.aufbauen();
         }
 
         /**
          * Die Knoten einmalig anlegen. Danach aendert sich die Struktur nie
          * mehr — nur Text und Klassen.
+         *
+         * UEBER `ownerDocument`, nicht ueber das globale `document`: seit
+         * ARENA-25 kann die Wurzel in einem ANDEREN Fenster liegen. Ein Knoten
+         * aus dem Spieldokument dort anzuhaengen ginge in modernen Browsern
+         * zwar (der DOM adoptiert ihn stillschweigend), aber "geht meistens"
+         * ist auf einer Buehne kein Verfahren.
          */
         aufbauen() {
+            const doc = this.el.ownerDocument || document;
+            OperatorPanel.stilEinfuegen(doc);
+            this.el.className = this.grundKlasse;
+
             const d = (klasse, eltern) => {
-                const n = document.createElement('div');
+                const n = doc.createElement('div');
                 if (klasse) n.className = klasse;
                 (eltern || this.el).appendChild(n);
                 return n;
@@ -8963,6 +8994,16 @@
 
             this._kopfEl = d('kopf');
             this._kopfEl.textContent = 'OPERATOR';
+
+            /* Die Tot-Meldung gehoert NUR ins eigene Fenster. Im Spielfenster
+               laeuft der Loop, der das Panel zeichnet — steht es, ist ohnehin
+               alles vorbei. Im Zweitfenster ist die Frage dagegen echt: es
+               lebt weiter, auch wenn das Spiel nicht mehr sendet. */
+            if (this.imFenster) {
+                this._totEl = d('tot');
+                this._totEl.id = 'op-tot';
+                this._totEl.textContent = OperatorPanel.TOT_TEXT;
+            }
 
             for (let i = 0; i < OperatorPanel.MELDUNGEN.length; i++) {
                 const m = OperatorPanel.MELDUNGEN[i];
@@ -8999,14 +9040,30 @@
         zeichne(lage) {
             if (!this.aktiv) return;
 
-            if (this._sichtbar !== lage.sichtbar) {
-                this._sichtbar = lage.sichtbar;
-                this.el.className = lage.sichtbar ? 'an' : '';
+            const sicht = this.immerSichtbar || lage.sichtbar;
+            if (this._sichtbar !== sicht) {
+                this._sichtbar = sicht;
+                this.el.className = this.grundKlasse + (sicht ? ' an' : '');
             }
             /* Unsichtbar heisst: keine einzige Schreiboperation mehr. Das
-               Panel ist im Regelfall aus, und dann soll es auch nichts
-               kosten. */
-            if (!lage.sichtbar) return;
+               eingebettete Panel ist im Regelfall aus, und dann soll es auch
+               nichts kosten. */
+            if (!sicht) return;
+
+            /* --- Lebenszeichen -------------------------------------------
+             * Das Zweitfenster kann nicht wissen, ob das Spiel noch laeuft:
+             * es zeigt einfach, was zuletzt hineingeschrieben wurde. Ein
+             * abgestuerztes oder neu geladenes Spiel saehe deshalb aus wie
+             * ein ruhiger Betrieb — die gefaehrlichste aller Anzeigen.
+             *
+             * Also ein Puls im Attribut, den der Waechter IM Fenster prueft.
+             * Alle TICK_FRAMES statt jeden Frame: 30 Frames sind eine halbe
+             * Sekunde, die Grenze liegt bei 1,5 s — drei ausgefallene Pulse,
+             * bevor etwas gemeldet wird. */
+            if (++this._seitTick >= OperatorPanel.TICK_FRAMES) {
+                this._seitTick = 0;
+                this.el.setAttribute('data-tick', String(++this._tick));
+            }
 
             if (this._kopf !== lage.kopf) {
                 this._kopf = lage.kopf;
@@ -9044,6 +9101,124 @@
                 }
             }
         }
+
+        /**
+         * Das Stylesheet in ein Dokument legen — je Dokument genau einmal.
+         *
+         * @param {Document} doc
+         */
+        static stilEinfuegen(doc) {
+            if (!doc || typeof doc.createElement !== 'function') return;
+            if (doc.getElementById && doc.getElementById(OperatorPanel.STIL_ID)) return;
+            const ziel = doc.head || doc.body;
+            if (!ziel || typeof ziel.appendChild !== 'function') return;
+            const s = doc.createElement('style');
+            s.id = OperatorPanel.STIL_ID;
+            s.textContent = OperatorPanel.CSS;
+            ziel.appendChild(s);
+        }
+
+        /**
+         * Ein eigenes Fenster fuer das Panel oeffnen.
+         *
+         * WARUM UEBERHAUPT: ARENA-24 hat die Diagnose aus dem Canvas ins DOM
+         * geholt. Das nimmt sie aus dem BILD — aber nicht vom AUSGANG. Ein
+         * <div> im Spielfenster liegt auf demselben Bildschirm, und der geht
+         * im Vollbild auf die LED-Wand. Wer das Panel dort einschaltet, sieht
+         * es im Saal.
+         *
+         * WARUM `about:blank` UND NICHT EINE ZWEITE DATEI: eine zweite HTML-
+         * Datei waere unter `file://` eine fremde Herkunft; das Spielfenster
+         * duerfte ihr DOM nicht anfassen, und es bliebe nur postMessage —
+         * also ein zweiter Zustandsweg, der auseinanderlaufen kann. Ein per
+         * `window.open('about:blank')` geoeffnetes Fenster ERBT dagegen die
+         * (undurchsichtige) Herkunft des Oeffners. Dieselbe Klasse schreibt
+         * dann in beide Dokumente, aus DERSELBEN Lage. Kein Server, keine
+         * zweite Datei, kein zweiter Zustand.
+         *
+         * DER FENSTERNAME ist kein Schmuck: mit ihm beschreibt ein neu
+         * geladenes Spiel DASSELBE Fenster neu, statt ein zweites daneben zu
+         * oeffnen. Auf der Buehne wird nachgeladen, und drei verwaiste
+         * Operator-Fenster sind schlimmer als keines.
+         *
+         * NICHT AUF DEM SHOW-MAC GEMESSEN. Popup-Sperre und
+         * `about:blank`-Vererbung sind Browserverhalten, und Chrome aendert
+         * so etwas zwischen Versionen. Beide Fehlwege sind abgefangen und
+         * protokolliert, der Rueckfall ist das Panel im Spielfenster — aber
+         * die Probe gehoert auf den Rechner, der spielt. Sie steht in
+         * OPERATOR-MANUAL.md, Abschnitt 3.2.
+         *
+         * Wirft nicht.
+         *
+         * @returns {{fenster:Window, wurzel:HTMLElement}|null}
+         */
+        static zweitfensterOeffnen() {
+            let w = null;
+            try {
+                w = window.open('about:blank', OperatorPanel.FENSTER_NAME,
+                    OperatorPanel.FENSTER_MASSE);
+            } catch (err) {
+                Protokoll.schreib('OPERATOR', `Operator-Fenster abgelehnt `
+                    + `(${(err && err.name) || err}) — Panel bleibt im `
+                    + `Spielfenster, Ctrl+Shift+M`);
+                return null;
+            }
+            if (!w) {
+                Protokoll.schreib('OPERATOR', 'Operator-Fenster blockiert '
+                    + '(Popup-Sperre?) — Panel bleibt im Spielfenster, '
+                    + 'Ctrl+Shift+M');
+                return null;
+            }
+
+            try {
+                const d = w.document;
+                d.title = OperatorPanel.FENSTER_TITEL;
+                /* Leerraeumen statt anhaengen: derselbe Fenstername bringt
+                   nach einem Neuladen des Spiels das ALTE Dokument zurueck,
+                   und zwei Panels uebereinander waeren das Gegenteil einer
+                   Diagnose. Kein innerHTML — dieselbe Regel wie im Panel. */
+                while (d.body.firstChild) d.body.removeChild(d.body.firstChild);
+                d.body.className = 'op-body';
+                OperatorPanel.stilEinfuegen(d);
+
+                const wurzel = d.createElement('div');
+                d.body.appendChild(wurzel);
+                OperatorPanel.waechterEinfuegen(d);
+
+                Protokoll.schreib('OPERATOR',
+                    `Operator-Fenster offen ("${OperatorPanel.FENSTER_NAME}")`);
+                return { fenster: w, wurzel };
+            } catch (err) {
+                /* Genau der Fall, den `about:blank` verhindern soll — wenn
+                   Chrome die Herkunft doch nicht vererbt, steht es hier und
+                   nicht als stilles Nichts. */
+                Protokoll.schreib('OPERATOR', `Operator-Fenster nicht `
+                    + `beschreibbar (${(err && err.name) || err}) — Panel `
+                    + `bleibt im Spielfenster, Ctrl+Shift+M`);
+                try { w.close(); } catch (_) { /* egal */ }
+                return null;
+            }
+        }
+
+        /**
+         * Den Waechter in das Zweitfenster legen.
+         *
+         * Er muss IM FENSTER laufen und nicht im Spiel: gerade wenn das Spiel
+         * weg ist, soll er etwas sagen. Ein Timer, den der Oeffner stellt,
+         * stirbt mit dem Oeffner — und schwiege dann ausgerechnet im
+         * Ernstfall.
+         *
+         * Der Rumpf steht als echte Funktion da und wird serialisiert. Eine
+         * Zeichenkette waere kuerzer und beim naechsten Anfassen falsch.
+         *
+         * @param {Document} doc
+         */
+        static waechterEinfuegen(doc) {
+            const s = doc.createElement('script');
+            s.textContent = '(' + OperatorPanel.WAECHTER + ')('
+                + OperatorPanel.TICK_GRENZE_MS + ');';
+            doc.body.appendChild(s);
+        }
     }
 
     /**
@@ -9080,6 +9255,173 @@
         'RAUM', 'GRENZE', 'RUHE REST',
     ];
 
+    /* -------------------------------------------------------------------------
+     * Das Zweitfenster (siehe OperatorPanel.zweitfensterOeffnen)
+     * ---------------------------------------------------------------------- */
+
+    /**
+     * Name des Fensters.
+     *
+     * Nicht leer und nicht `_blank`: unter diesem Namen findet
+     * `window.open()` ein bereits offenes Fenster wieder und beschreibt es
+     * neu, statt ein zweites zu oeffnen. Auf der Buehne wird nachgeladen —
+     * ohne den Namen stuenden nach drei Neuladungen vier Operator-Fenster
+     * offen, drei davon eingefroren.
+     */
+    OperatorPanel.FENSTER_NAME = 'karaokovic-operator';
+
+    /** Titel in der Fensterleiste. Er hilft beim Wiederfinden, sonst nichts. */
+    OperatorPanel.FENSTER_TITEL = 'KARAOKOVIC — Operator';
+
+    /**
+     * Groesse und Lage des Fensters.
+     *
+     * `width`/`height` sind noetig, damit Chrome ueberhaupt ein FENSTER
+     * oeffnet und keinen Tab — ohne Masse landet das Panel als Reiter im
+     * Spielfenster, und genau davon soll es ja weg. 420x760 passt neben ein
+     * Vollbild auf einem zweiten Schirm und zeigt alle siebzehn Zeilen ohne
+     * Rollen.
+     */
+    OperatorPanel.FENSTER_MASSE = 'width=420,height=760,left=40,top=40';
+
+    /** Kennung des eingefuegten Stylesheets, damit es je Dokument einmal kommt. */
+    OperatorPanel.STIL_ID = 'op-stil';
+
+    /**
+     * Alle wie viele Frames ein Lebenszeichen geschrieben wird.
+     * 30 sind eine halbe Sekunde bei 60 Hz.
+     */
+    OperatorPanel.TICK_FRAMES = 30;
+
+    /**
+     * Nach so vielen Millisekunden ohne Lebenszeichen gilt die Anzeige als
+     * tot. 1500 ms sind drei ausgefallene Pulse — ein einzelner langer Frame
+     * (Platzbilder laden, Blende) loest die Meldung nicht aus.
+     */
+    OperatorPanel.TICK_GRENZE_MS = 1500;
+
+    /** Was im Zweitfenster steht, wenn das Spiel nicht mehr sendet. */
+    OperatorPanel.TOT_TEXT = 'KEINE DATEN VOM SPIEL';
+
+    /**
+     * Der Waechter, der IM Zweitfenster laeuft.
+     *
+     * Steht als Funktion da und wird serialisiert (siehe waechterEinfuegen).
+     * Bewusst in altem JavaScript und ohne Abhaengigkeit nach aussen: er wird
+     * als Text in ein fremdes Dokument gelegt und hat dort nichts als sein
+     * eigenes `document`.
+     *
+     * `performance.now()` und nicht `Date.now()` — dieselbe Regel wie im
+     * Spiel (siehe Uhr): eine Zeitumstellung mitten in der Show wuerde sonst
+     * eine Totmeldung ausloesen, obwohl alles laeuft.
+     *
+     * @param {number} grenze Millisekunden ohne Puls, ab denen es tot ist
+     */
+    OperatorPanel.WAECHTER = function (grenze) {
+        var zuletzt = null;
+        var seit = performance.now();
+        setInterval(function () {
+            var p = document.querySelector('.op-panel');
+            if (!p) return;
+            var t = p.getAttribute('data-tick');
+            if (t !== zuletzt) { zuletzt = t; seit = performance.now(); }
+            /* Vor dem ersten Puls ist noch nichts tot — das Fenster kann
+               offen sein, bevor der Loop laeuft (Onboarding). */
+            var tot = zuletzt !== null && performance.now() - seit > grenze;
+            var m = document.getElementById('op-tot');
+            if (m) m.style.display = tot ? 'block' : 'none';
+            /* Ueber className und NICHT ueber classList: dieser Rumpf wird als
+               Text in ein fremdes Dokument gelegt und soll so wenig
+               voraussetzen wie moeglich. Genau daran ist die erste Fassung im
+               Test aufgefallen — die Attrappe hatte keine classList, und im
+               Browser waere es nie jemandem aufgefallen. */
+            var k = p.className.replace(/ ?tot\b/, '');
+            p.className = tot ? k + ' tot' : k;
+        }, 250);
+    };
+
+    /**
+     * Das Aussehen — EINE Quelle fuer beide Fenster.
+     *
+     * Bis ARENA-24 stand es im <style>-Block von arena.html. Das Zweitfenster
+     * entsteht aus `about:blank` und hat kein Stylesheet; es koennte jenen
+     * Block gar nicht laden. Zwei Stylesheets waeren die uebliche Falle: beim
+     * naechsten Feintuning sieht das Zweitfenster still anders aus.
+     *
+     * Zwei Auspraegungen, gemeinsame Sprache:
+     *   `.eingebettet` schwebt ueber dem Canvas, ist im Regelfall aus und
+     *                  faengt keine Klicks (sonst waere der Notausgang tot).
+     *   `.fenster`     fuellt sein eigenes Fenster und ist immer da.
+     */
+    OperatorPanel.CSS = `
+.op-panel {
+    background: rgba(6, 8, 18, 0.92);
+    border: 1px solid #36425f; border-radius: 8px;
+    padding: 10px 12px;
+    font-family: 'Courier New', monospace; font-size: 12px;
+    line-height: 17px; text-align: left; color: #c8cede;
+}
+.op-panel.eingebettet {
+    display: none;
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    pointer-events: none;
+    width: 340px; max-height: calc(100vh - 24px); overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+}
+.op-panel.eingebettet.an { display: block; }
+.op-panel .kopf {
+    color: #ffffff; font-weight: bold; letter-spacing: 0.06em;
+    border-bottom: 1px solid #36425f; padding-bottom: 5px;
+    margin-bottom: 6px;
+}
+.op-panel .zeile { display: flex; align-items: baseline; gap: 7px; }
+.op-panel .lampe {
+    flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px;
+    background: #3ddc84;
+}
+.op-panel .lampe.alarm { background: #ff4d5e; }
+.op-panel .lampe.ruht { background: #39415a; }
+.op-panel .code { flex: 0 0 auto; color: #8d97ad; }
+.op-panel .was { flex: 1 1 auto; }
+.op-panel .zeile.alarm .was { color: #ff4d5e; font-weight: bold; }
+/* "ruht" heisst: die Bedingung gilt in diesem Modus gar nicht (etwa die
+   Kanalzahl ausserhalb des Duells). Gedaempft statt gruen — gruen hiesse
+   "geprueft und in Ordnung", und das waere gelogen. */
+.op-panel .zeile.ruht .was, .op-panel .zeile.ruht .code { color: #5b6480; }
+.op-panel .wert { flex: 0 0 auto; color: #8d97ad; }
+.op-panel .zeile.alarm .wert { color: #ff4d5e; }
+.op-panel .trenner {
+    border-top: 1px solid #36425f; margin: 7px 0 5px; padding-top: 6px;
+    color: #8d97ad; letter-spacing: 0.06em;
+}
+.op-panel .mess .wert { color: #3ddc84; }
+.op-panel .mess.alarm .wert { color: #ff4d5e; }
+
+/* --- Das eigene Fenster ------------------------------------------------- */
+body.op-body {
+    margin: 0; padding: 10px; background: #05050a;
+    /* Ohne das erbt das Fenster die Zentrierung des Spielfensters nicht —
+       es hat sein eigenes, leeres Dokument. Trotzdem gesetzt, damit es auch
+       dann stimmt, wenn spaeter jemand hier etwas dazulegt. */
+    display: block; text-align: left;
+}
+.op-panel.fenster {
+    width: auto; box-shadow: none; font-size: 13px; line-height: 19px;
+}
+/* Ausgegraut, sobald der Puls ausbleibt: die Zahlen stehen dann noch da,
+   sind aber von gestern. Sichtbar lassen und nicht loeschen — der letzte
+   Stand vor dem Abriss ist genau das, was hinterher jemand wissen will. */
+.op-panel.fenster.tot { opacity: 0.35; }
+.op-panel .tot {
+    display: none;
+    background: #ff4d5e; color: #0b0b12; font-weight: bold;
+    text-align: center; letter-spacing: 0.08em;
+    padding: 6px 4px; border-radius: 4px; margin-bottom: 8px;
+    /* Ueber der Ausgrauung: die Meldung selbst muss lesbar bleiben. */
+    opacity: 1; position: relative; z-index: 1;
+}
+`;
+
     /* =========================================================================
      * 10. INPUT HANDLER — Operator-Hotkeys
      * ====================================================================== */
@@ -9095,7 +9437,8 @@
      *   Ctrl+Shift+U : letzten Punkt zurücknehmen
      *   Ctrl+Shift+X : kompletter Reset auf 0:0
      *   Ctrl+Shift+A : Aufschlag erzwingen (Notausgang)
-     *   Ctrl+Shift+M : Messanzeige ein/aus
+     *   Ctrl+Shift+M : Operator-Panel im Spielfenster ein/aus
+     *   Ctrl+Shift+O : Operator-Panel in ein eigenes Fenster (ARENA-25)
      *   Ctrl+Shift+L : Protokoll als Datei sichern
      *
      * U und X führen zurück in SILENCE_CHECK, damit der Ablauf sauber neu
@@ -9106,9 +9449,18 @@
          * @param {MatchState} match
          * @param {Physics}    physics
          */
-        constructor(match, physics) {
+        constructor(match, physics, operatorFenster) {
             this.match = match;
             this.physics = physics;
+            /**
+             * @type {Function|null} Oeffnet das Operator-Fenster.
+             *
+             * Als RUECKRUF und nicht als Verweis auf das Spiel: der
+             * InputHandler kennt bis heute nur Spielstand und Physik, und das
+             * soll so bleiben. Wer ihm das ganze Game gaebe, oeffnete die Tuer
+             * dafuer, dass hier spaeter Spiellogik landet.
+             */
+            this._operatorFenster = operatorFenster || null;
             this._onKeyDown = this.handleKeyDown.bind(this);
             this._onKeyUp = this.handleKeyUp.bind(this);
             /* Als Feld und nicht anonym in attach(): sonst kann detach() ihn
@@ -9245,6 +9597,22 @@
                 return;
             }
 
+            /* Operator-Panel in ein EIGENES Fenster.
+               NEU IN ARENA-25 und damit eine Erweiterung der geschuetzten
+               Hotkeys — ausdruecklich freigegeben am 27.08. Sie nimmt keiner
+               bestehenden Kombination etwas weg: O war frei.
+
+               Warum ein zweiter Griff neben M: M schaltet die Anzeige IM
+               Spielfenster, und das ist der Bildschirm, der auf die Wand
+               geht. O schiebt sie dorthin, wo sie hingehoert. Beides
+               gebraucht — M beim Einpegeln am einzelnen Rechner, O sobald ein
+               zweiter Schirm da ist. */
+            if (e.code === 'KeyO') {
+                e.preventDefault();
+                if (this._operatorFenster) this._operatorFenster();
+                return;
+            }
+
             if (e.code === 'KeyL') {
                 e.preventDefault();
                 const text = Protokoll.text();
@@ -9357,7 +9725,16 @@
                 mess: OperatorPanel.MESSZEILEN.map(
                     () => ({ ok: true, ruht: false, wert: '' })),
             };
-            this.input = new InputHandler(this.match, this.physics);
+            /**
+             * @type {OperatorPanel|null} Dasselbe Panel im eigenen Fenster.
+             *
+             * Es entsteht erst auf Wunsch (Knopf im Onboarding oder
+             * Ctrl+Shift+O). Solange es steht, bleibt das eingebettete Panel
+             * aus — siehe panelLage().
+             */
+            this.panelFenster = null;
+            this.input = new InputHandler(this.match, this.physics,
+                () => this.operatorFensterOeffnen());
 
             /** @type {boolean} Läuft das Spiel (nach dem Onboarding)? */
             this.running = false;
@@ -9539,7 +9916,49 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-24 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Operator-Panel, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-25 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Operator-Panel, O = Operator-Fenster, L = Protokoll.');
+        }
+
+        /**
+         * Steht das Operator-Fenster gerade offen?
+         *
+         * EINZIGE Stelle, die das entscheidet. Geprueft wird `closed` und
+         * nicht bloss, ob wir einmal eines geoeffnet haben: der Operator kann
+         * es jederzeit zuklappen, und dann muss das eingebettete Panel wieder
+         * erreichbar sein.
+         *
+         * @returns {boolean}
+         */
+        operatorFensterOffen() {
+            return !!(this.panelFenster && this.panelFenster.fenster
+                && !this.panelFenster.fenster.closed);
+        }
+
+        /**
+         * Das Operator-Fenster oeffnen (Knopf im Onboarding, Ctrl+Shift+O).
+         *
+         * Ist es bereits offen, wird es nur nach vorn geholt — ein zweites
+         * daneben waere keine Hilfe. Scheitert das Oeffnen, bleibt alles wie
+         * vorher: das eingebettete Panel ist der Rueckfall, und im Protokoll
+         * steht, warum.
+         *
+         * @returns {boolean} true, wenn danach ein Fenster steht.
+         */
+        operatorFensterOeffnen() {
+            if (this.operatorFensterOffen()) {
+                try { this.panelFenster.fenster.focus(); } catch (_) { /* egal */ }
+                return true;
+            }
+            const auf = OperatorPanel.zweitfensterOeffnen();
+            if (!auf) { this.panelFenster = null; return false; }
+
+            const panel = new OperatorPanel(auf.wurzel, true);
+            panel.fenster = auf.fenster;
+            this.panelFenster = panel;
+            /* Sofort einmal fuellen, damit das Fenster nicht leer dasteht,
+               bis der naechste Frame laeuft — im Onboarding kann das dauern. */
+            panel.zeichne(this.panelLage());
+            return true;
         }
 
         /**
@@ -9704,6 +10123,33 @@
                 .addEventListener('click', () => waehlePlatz('SAND'));
             document.getElementById('btnPlatzRasen')
                 .addEventListener('click', () => waehlePlatz('RASEN'));
+
+            /* --- Operator-Fenster ------------------------------------------
+             * Der Knopf steht in DIESEM Schritt und nicht spaeter, und das ist
+             * kein Layoutgeschmack: Chrome verlaesst den Vollbildmodus, sobald
+             * ein neues Fenster geoeffnet wird. Wer das Operator-Fenster erst
+             * auf der Buehne aufmacht, reisst damit das Sendebild aus dem
+             * Vollbild — vor Publikum, mitten im Auftritt.
+             *
+             * Ctrl+Shift+O tut dasselbe und bleibt der Weg fuer den Fall, dass
+             * das Fenster im Betrieb doch einmal geschlossen wird. */
+            const btnOpFenster = document.getElementById('btnOperatorFenster');
+            const opHinweis = document.getElementById('operatorHinweis');
+            if (btnOpFenster) {
+                btnOpFenster.addEventListener('click', () => {
+                    const ok = this.operatorFensterOeffnen();
+                    if (!opHinweis) return;
+                    /* Scheitern ist hier NICHT still: eine Popup-Sperre sieht
+                       aus wie ein toter Knopf, und der Bediener sucht dann den
+                       Fehler bei sich. Der genaue Grund steht im Protokoll. */
+                    opHinweis.innerText = ok
+                        ? '✓ Operator-Fenster offen — dort liegt ab jetzt die '
+                          + 'Diagnose. Auf den zweiten Bildschirm ziehen.'
+                        : 'Fenster wurde blockiert (Popup-Sperre?) — für diese '
+                          + 'Seite erlauben, oder mit Ctrl+Shift+M im '
+                          + 'Spielfenster arbeiten.';
+                });
+            }
 
             /* --- Schritt 3: Mikrofon --------------------------------------- */
             document.getElementById('btnMic').addEventListener('click', async () => {
@@ -10223,7 +10669,13 @@
                    eingepegelt, und genau dafuer ist es da. `running` wird
                    erst mit dem Start wahr; haenge man es dorthin, waere die
                    Diagnose ausgerechnet beim Soundcheck blind. */
-                this.panel.zeichne(this.panelLage());
+                /* BEIDE aus DERSELBEN Lage — ein zweiter Aufruf von
+                   panelLage() koennte im selben Frame andere Werte liefern
+                   (die Uhr laeuft weiter), und zwei Panels mit
+                   unterschiedlichen Zahlen waeren schlimmer als eines. */
+                const lage = this.panelLage();
+                this.panel.zeichne(lage);
+                if (this.operatorFensterOffen()) this.panelFenster.zeichne(lage);
 
                 if (this.calibrating) {
                     /* Angezeigt wird der Kanal DESSEN, der gerade einsingt —
@@ -10395,12 +10847,21 @@
             const m = this.match;
             const jetzt = Uhr.jetzt();
 
-            L.sichtbar = Renderer.SHOW_AUDIO_METER;
+            /* SOLANGE DAS EIGENE FENSTER STEHT, BLEIBT DAS EINGEBETTETE AUS
+               — auch wenn jemand Ctrl+Shift+M drueckt. Beides zugleich hiesse,
+               die Diagnose steht wieder auf dem Schirm, der auf die Wand
+               geht, und genau das soll das Fenster ja beenden. Der Schalter
+               bleibt trotzdem wirksam: wird das Fenster geschlossen, ist er
+               noch so gesetzt, wie der Operator ihn zuletzt wollte. */
+            const imFenster = this.operatorFensterOffen();
+            L.sichtbar = Renderer.SHOW_AUDIO_METER && !imFenster;
             L.kopf = `${CONFIG.mode} · `
                 + `${m.isWarmup ? 'EINSPIELEN' : 'MATCH'} · ${m.state}`;
-            /* Ist das Panel aus, ist alles Weitere unnoetige Arbeit in jedem
-               Frame — und aus ist der Regelfall. */
-            if (!L.sichtbar) return L;
+            /* Sieht NIEMAND hin, ist alles Weitere unnoetige Arbeit in jedem
+               Frame — und das ist der Regelfall. Gefragt wird nach BEIDEN
+               Panels: das Fenster zeigt immer etwas, auch wenn der Schalter
+               aus ist. */
+            if (!L.sichtbar && !imFenster) return L;
 
             const setz = (i, an, wert, ruht) => {
                 const z = L.e[i];

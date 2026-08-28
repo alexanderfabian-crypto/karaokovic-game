@@ -728,6 +728,52 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     Quelle, die „ruht"-Zeilen, und dass das ausgeschaltete Panel nicht mehr
     mitrechnet. Der Browsertest prüft das, was Node nicht kann: dass die Knoten
     entstehen, der Schalter sie sichtbar macht und `pointer-events: none` steht.
+- **ARENA-25** — **das Panel verlässt den Ausgang zur Wand.** ARENA-24 hatte die
+  Diagnose aus dem *Bild* geholt, aber nicht vom *Ausgang*: ein `<div>` im
+  Spielfenster liegt auf demselben Bildschirm, und der geht im Vollbild auf die
+  LED-Wand. Wer das Panel dort einschaltet, zeigt es dem Saal.
+  - **`OperatorPanel.zweitfensterOeffnen()`** — `window.open('about:blank', …)`
+    und Aufbau des Dokuments per DOM aus dem Spiel heraus. **`about:blank` erbt
+    die (undurchsichtige) `file://`-Herkunft des Öffners**: keine zweite Datei,
+    kein Server, kein `postMessage`. Dieselbe Klasse schreibt in beide
+    Dokumente, aus **derselben** Lage — eine zweite HTML-Datei wäre unter
+    `file://` fremde Herkunft und erzwänge einen zweiten Zustandsweg.
+  - **Der Fenstername ist kein Schmuck:** mit ihm beschreibt ein neu geladenes
+    Spiel *dasselbe* Fenster neu. Auf der Bühne wird nachgeladen, und drei
+    verwaiste Operator-Fenster sind schlimmer als keines.
+  - **Lebenszeichen.** Das Zweitfenster kann nicht wissen, ob das Spiel noch
+    läuft — es zeigt einfach, was zuletzt hineingeschrieben wurde. Ein
+    abgestürztes Spiel sähe aus wie ruhiger Betrieb, die gefährlichste aller
+    Anzeigen. Also `data-tick` alle 30 Frames und ein **Wächter-Skript im
+    Fenster** (nicht im Spiel: ein Timer des Öffners stirbt mit dem Öffner und
+    schwiege ausgerechnet im Ernstfall), das nach 1,5 s ohne Puls
+    „KEINE DATEN VOM SPIEL" zeigt und die alten Zahlen **ausgraut statt löscht**.
+  - **`OperatorPanel.CSS` + `stilEinfuegen(doc)`** — das Aussehen zieht aus
+    `arena.html` in den Spielcode. Das Zweitfenster hat kein Stylesheet und
+    könnte den `<style>`-Block gar nicht laden; zwei Stylesheets wären die
+    übliche Falle. `aufbauen()` geht über `root.ownerDocument`.
+  - **Verriegelung:** solange das Fenster steht, bleibt das eingebettete Panel
+    aus — *auch* bei `Ctrl+Shift+M`. Der Schalter behält seinen Wert und gilt
+    wieder, sobald das Fenster geschlossen wird.
+  - **`Ctrl+Shift+O`** (neu, freigegeben 27.08. — nimmt keiner bestehenden
+    Kombination etwas weg) und ein Knopf im Onboarding-Schritt 3. **Der Knopf
+    steht dort und nicht später:** Chrome verlässt den Vollbildmodus, sobald ein
+    Fenster geöffnet wird — wer das erst auf der Bühne tut, reißt das Sendebild
+    vor Publikum aus dem Vollbild.
+  - **Nicht auf dem Show-Mac gemessen.** Popup-Politik und
+    `about:blank`-Vererbung sind Browserverhalten. Beide Fehlwege sind
+    abgefangen, protokolliert und getestet; der Rückfall ist das Panel im
+    Spielfenster. Die Probe steht in **`OPERATOR-MANUAL.md`, Abschnitt 3.2** und
+    ist noch offen.
+  - Neu: **`OPERATOR-MANUAL.md`** — die Bedienseite (Griffe, Lampen E-01…E-10,
+    Messzeilen, Einpegeln, „wenn gar nichts mehr geht").
+  - `test-operatorfenster.js` ist neu: beide Fehlwege enden im Protokoll statt
+    im Nichts, Fenstername und -maße, Stylesheet je Dokument genau einmal, der
+    Wächter gegen eine gestellte Uhr, die Verriegelung in beide Richtungen, das
+    Lebenszeichen. Der Browsertest prüft das Stylesheet im echten Dokument und
+    die Eigenschaft, die immer gelten muss: **der Versuch endet mit einem
+    Fenster oder mit einem Grund im Protokoll** (in headless Chrome wird das
+    Popup blockiert — genau dieser Zweig läuft dort grün).
 
 ---
 
@@ -737,8 +783,8 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
 node Entwickler-Tests/alle-tests.js       # ~2 min
 ```
 
-**Stand 28.08.2026: 557 Zusicherungen, alle grün, Exit 0.** 29 Testdateien in
-31 Läufen (zwei laufen doppelt, einmal je Fassung).
+**Stand 28.08.2026: 599 Zusicherungen, alle grün, Exit 0.** 30 Testdateien in
+32 Läufen (zwei laufen doppelt, einmal je Fassung).
 
 Daneben liegen **Messskripte**, die nicht Teil der Suite sind, weil sie nichts
 über den Spielcode beweisen, sondern eine Eigenschaft der Umgebung messen:

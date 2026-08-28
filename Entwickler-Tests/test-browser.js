@@ -1015,11 +1015,12 @@ const K_ZEILEN = (() => {
         }
 
         /* --- Operator-Panel: das DOM, das Node nicht pruefen kann -------
-         * Die LAGE prueft test-sendebild.js vollstaendig. Was dort fehlt, ist
+         * Die LAGE prueft test-sendebild.js, das ZWEITFENSTER
+         * test-operatorfenster.js — beide gegen Attrappen. Was dort fehlt, ist
          * das Einzige, was ein echter Browser beitragen kann: dass die Knoten
-         * wirklich entstehen, dass der Schalter sie sichtbar macht — und dass
-         * das Panel Klicks NICHT abfaengt. Ein Klick darauf wuerde den
-         * Tastaturfokus aus dem Spielfenster ziehen, und dann kaeme
+         * wirklich entstehen, dass das Stylesheet aus dem Spielcode im echten
+         * Dokument landet, und dass das Panel Klicks NICHT abfaengt. Ein Klick
+         * darauf zoege den Tastaturfokus aus dem Spielfenster, und dann kaeme
          * ausgerechnet der Notausgang Ctrl+Shift+A nicht mehr an. */
         {
             const pan = await b.werteAus(`(() => {
@@ -1027,26 +1028,38 @@ const K_ZEILEN = (() => {
                 if (!K.Klavier) return { arena: false };
                 const el = document.getElementById('operator-panel');
                 if (!el) return { arena: true, da: false };
-                const stil = getComputedStyle(el);
-                const aus = { klasse: el.className, anzeige: stil.display };
+                const stile = document.querySelectorAll(
+                    'style#' + K.OperatorPanel.STIL_ID).length;
+                const aus = { klasse: el.className,
+                    anzeige: getComputedStyle(el).display };
                 K.Renderer.SHOW_AUDIO_METER = true;
                 K.panel.zeichne(K.panelLage());
                 const an = {
                     klasse: el.className,
                     anzeige: getComputedStyle(el).display,
                     zeiger: getComputedStyle(el).pointerEvents,
+                    schrift: getComputedStyle(el).fontFamily,
                     text: el.textContent,
                     knoten: el.querySelectorAll('.zeile').length,
                 };
                 K.Renderer.SHOW_AUDIO_METER = false;
                 K.panel.zeichne(K.panelLage());
-                return { arena: true, da: true, aus, an,
-                    wiederAus: getComputedStyle(el).display };
+                return { arena: true, da: true, stile, aus, an,
+                    wiederAus: getComputedStyle(el).display,
+                    knopf: !!document.getElementById('btnOperatorFenster') };
             })()`);
 
             if (pan.arena) {
                 check('Das Operator-Panel liegt im DOM', pan.da);
                 if (pan.da) {
+                    /* Das Stylesheet kommt seit ARENA-25 aus dem Spielcode und
+                       nicht mehr aus arena.html — nur so kann das Zweitfenster
+                       dasselbe benutzen. Hier wird geprueft, dass der Weg im
+                       ECHTEN Dokument funktioniert. */
+                    check('Das Stylesheet kommt aus dem Spielcode',
+                        pan.stile === 1, `${pan.stile} <style>`);
+                    check('Und es greift wirklich',
+                        /Courier/.test(pan.an.schrift), pan.an.schrift);
                     check('Im Regelfall ist es unsichtbar',
                         pan.aus.anzeige === 'none', pan.aus.anzeige);
                     check('Der Schalter macht es sichtbar',
@@ -1061,11 +1074,50 @@ const K_ZEILEN = (() => {
                         && /RAUM/.test(pan.an.text));
                     check('Ausgeschaltet verschwindet es wieder',
                         pan.wiederAus === 'none', pan.wiederAus);
+                    check('Der Knopf fuer das Operator-Fenster steht im '
+                        + 'Onboarding', pan.knopf);
                 }
             }
         }
 
-        check('Keine Exception und kein console.error während des Laufs',
+        /* --- Das Zweitfenster im echten Browser -------------------------
+         * GEPRUEFT WIRD NICHT, DASS ES AUFGEHT. Ob ein Popup durchkommt, ist
+         * Browserpolitik und haengt an Version, Profil und Startflags —
+         * headless ist nicht der Show-Rechner, und ein gruener Haken hier
+         * saegte nur eine falsche Sicherheit. Die Probe gehoert auf den Mac,
+         * der spielt (OPERATOR-MANUAL.md, 3.2).
+         *
+         * Geprueft wird die Eigenschaft, die IMMER gelten muss: der Versuch
+         * endet entweder mit einem Fenster oder mit einem Grund im Protokoll.
+         * Lautloses Scheitern ist der teuerste Fehler — genau dafuer gibt es
+         * diese Zusicherung. */
+        {
+            const zw = await b.werteAus(`(() => {
+                const K = window.KARAOKOVIC;
+                if (!K.OperatorPanel) return { arena: false };
+                const vorher = K.Protokoll.zeilen.length;
+                const ok = K.operatorFensterOeffnen();
+                /* Mit ' | ' verbunden und NICHT mit einem Zeilenumbruch:
+                   dieser Block reist als Zeichenkette durch ein Template-
+                   Literal, und ein \\n darin wuerde dort zum echten Umbruch —
+                   mitten in einem JS-String. Genau daran ist der Test eben
+                   gescheitert. */
+                const neu = K.Protokoll.zeilen.slice(vorher).join(' | ');
+                if (ok) { try { K.panelFenster.fenster.close(); } catch (e) {} }
+                return { arena: true, ok, neu };
+            })()`);
+
+            if (zw.arena) {
+                console.log(`    Zweitfenster im Test-Chrome: `
+                    + `${zw.ok ? 'geoeffnet' : 'nicht geoeffnet'}`);
+                check('Der Versuch endet mit einem Fenster ODER mit einem '
+                    + 'Grund im Protokoll',
+                    zw.ok || /OPERATOR/.test(zw.neu),
+                    zw.neu || '(Fenster steht)');
+            }
+        }
+
+                check('Keine Exception und kein console.error während des Laufs',
             b.fehler.length === 0, b.fehler.join(' | ') || 'sauber');
 
     } catch (err) {

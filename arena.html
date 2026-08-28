@@ -16,6 +16,11 @@
         button { background: #ff007f; color: white; border: none; padding: 15px 40px; font-size: 1.2rem; cursor: pointer; border-radius: 5px; font-weight: bold; text-transform: uppercase; box-shadow: 0 0 15px rgba(255, 0, 127, 0.6); transition: 0.2s; margin-top: 15px; }
         button:hover { background: #ff3399; transform: scale(1.05); }
         button.cyan { background: #00ffcc; color: #000; box-shadow: 0 0 15px rgba(0, 255, 204, 0.6); }
+        /* Nebenwege, die nicht der Hauptknopf des Schritts sind — das
+           Operator-Fenster etwa. Gleiche Sprache, kleineres Gewicht. */
+        button.klein { padding: 9px 20px; font-size: 0.9rem; background: #2a2a3e;
+            box-shadow: none; margin-top: 10px; }
+        button.klein:hover { background: #3a3a52; transform: none; }
         button.cyan:hover { background: #33ffdd; }
 
         #livePitch { font-size: 2rem; color: #ff007f; margin: 20px 0 4px; font-weight: bold; height: 40px; line-height: 40px; white-space: nowrap; overflow: hidden; }
@@ -61,63 +66,23 @@
         }
 
         /* -------------------------------------------------------------------
-         * OPERATOR-PANEL (ARENA-24)
+         * OPERATOR-PANEL — das Aussehen steht NICHT hier.
          *
-         * Es liegt im DOM und NICHT im Canvas — das ist der ganze Punkt. Der
-         * Canvas geht auf die Wand, ins Programm und auf die Spielermonitore;
-         * was dort steht, sieht das Publikum. Diagnose gehoert nicht dorthin.
+         * Bis ARENA-24 lag es in diesem Block. Seit ARENA-25 gibt es das Panel
+         * zweimal: einmal hier im Spielfenster und einmal in einem eigenen
+         * Fenster auf dem Operator-Bildschirm. Jenes Fenster entsteht aus
+         * `about:blank` und hat kein Stylesheet — es koennte dieses hier gar
+         * nicht laden.
          *
-         * Zusaetzlich ist es im Regelfall AUS und wird mit Ctrl+Shift+M
-         * eingeschaltet. Auf Sendung ist es damit nicht bloss unauffaellig,
-         * sondern gar nicht da.
+         * Deshalb steht das Aussehen in OperatorPanel.CSS (app-arena.js) und
+         * wird je Dokument einmal eingefuegt. EINE Quelle fuer beide Fenster;
+         * zwei Stylesheets waeren genau der Fall, in dem das Zweitfenster beim
+         * naechsten Feintuning still anders aussieht als das Panel im Spiel.
          *
-         * `pointer-events: none` ist keine Kosmetik: das Panel liegt ueber dem
-         * Canvas, und ein Klick darauf wuerde den Tastaturfokus aus dem
-         * Spielfenster ziehen. Genau dann kaeme Ctrl+Shift+A — der Notausgang
-         * — nicht mehr an.
+         * `hidden` am Element unten haelt es unsichtbar, BEVOR der Spielcode
+         * laeuft. Danach uebernimmt die Klasse `an` (Autor-CSS schlaegt die
+         * UA-Regel von `hidden`).
          * ------------------------------------------------------------------ */
-        #operator-panel {
-            display: none;
-            position: fixed; top: 12px; right: 12px; z-index: 20;
-            pointer-events: none;
-            width: 340px; max-height: calc(100vh - 24px); overflow: hidden;
-            background: rgba(6, 8, 18, 0.92);
-            border: 1px solid #36425f; border-radius: 8px;
-            padding: 10px 12px;
-            font-family: 'Courier New', monospace; font-size: 12px;
-            line-height: 17px; text-align: left; color: #c8cede;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
-        }
-        #operator-panel.an { display: block; }
-        #operator-panel .kopf {
-            color: #ffffff; font-weight: bold; letter-spacing: 0.06em;
-            border-bottom: 1px solid #36425f; padding-bottom: 5px;
-            margin-bottom: 6px;
-        }
-        #operator-panel .zeile { display: flex; align-items: baseline; gap: 7px; }
-        #operator-panel .lampe {
-            flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px;
-            background: #3ddc84;
-        }
-        #operator-panel .lampe.alarm { background: #ff4d5e; }
-        #operator-panel .lampe.ruht { background: #39415a; }
-        #operator-panel .code { flex: 0 0 auto; color: #8d97ad; }
-        #operator-panel .was { flex: 1 1 auto; }
-        #operator-panel .zeile.alarm .was { color: #ff4d5e; font-weight: bold; }
-        /* "ruht" heisst: die Bedingung gilt in diesem Modus gar nicht (etwa
-           die Kanalzahl ausserhalb des Duells). Gedaempft statt gruen — gruen
-           hiesse "geprueft und in Ordnung", und das waere gelogen. */
-        #operator-panel .zeile.ruht .was, #operator-panel .zeile.ruht .code {
-            color: #5b6480;
-        }
-        #operator-panel .wert { flex: 0 0 auto; color: #8d97ad; }
-        #operator-panel .zeile.alarm .wert { color: #ff4d5e; }
-        #operator-panel .trenner {
-            border-top: 1px solid #36425f; margin: 7px 0 5px; padding-top: 6px;
-            color: #8d97ad; letter-spacing: 0.06em;
-        }
-        #operator-panel .mess .wert { color: #3ddc84; }
-        #operator-panel .mess.alarm .wert { color: #ff4d5e; }
 
         /* Rückmeldung im Modusschritt. Bleibt leer, bis es etwas zu sagen gibt. */
         .warnung:empty { display: none; }
@@ -200,6 +165,14 @@
             <h3>SCHRITT 3: MIKROFON-CHECK</h3>
             <p>Willkommen im Backstage. Lass uns das System hochfahren.</p>
             <button id="btnMic">Mikrofon aktivieren</button>
+            <!-- HIER und nicht spaeter: Chrome verlaesst den Vollbildmodus,
+                 sobald ein neues Fenster geoeffnet wird. Wer das Operator-
+                 Fenster erst auf der Buehne aufmacht, reisst damit das
+                 Sendebild aus dem Vollbild. Also vorher. -->
+            <div>
+                <button id="btnOperatorFenster" class="klein">Operator-Fenster öffnen</button>
+            </div>
+            <p class="warnung" id="operatorHinweis"></p>
         </div>
 
         <div id="step2" class="step">
@@ -243,11 +216,13 @@
 
     <canvas id="gameCanvas"></canvas>
 
-    <!-- Operator-Panel: leer im HTML, gefuellt von OperatorPanel (app-arena.js).
-         Ctrl+Shift+M schaltet es ein. Siehe den CSS-Block oben. -->
-    <div id="operator-panel"></div>
+    <!-- Operator-Panel: leer im HTML, gefuellt von OperatorPanel (app-arena.js),
+         gestaltet aus OperatorPanel.CSS. Ctrl+Shift+M schaltet es ein,
+         Ctrl+Shift+O schiebt es in ein eigenes Fenster.
+         `hidden` haelt es unsichtbar, bis der Spielcode laeuft. -->
+    <div id="operator-panel" hidden></div>
 
     <!-- Cache Buster V5 -->
-    <script src="./app-arena.js?v=arena_1"></script>
+    <script src="./app-arena.js?v=arena_25"></script>
 </body>
 </html>
