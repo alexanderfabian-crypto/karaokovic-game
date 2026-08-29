@@ -1,11 +1,43 @@
 # Karaokovic — Status quo
 
-**Stand: 20.08.2026, ARENA-10 (`65cf507`), `main`, Arbeitsverzeichnis sauber.**
-Aufzeichnung: Aufbau 19.10., Proben 20.10., Aufzeichnung 21.10.
+**Stand: 29.08.2026, ARENA-26, `main`, Arbeitsverzeichnis sauber.**
+Aufzeichnung: Aufbau 19.10., Proben 20.10., **Aufzeichnung 21.10.**
 
-Dieses Dokument ersetzt die Fassung vom 16.08. (Stand ARENA-1) und ist so
-geschrieben, dass es allein steht: wer nur diese Datei liest, kann den Code
-beurteilen, ohne die Vorgeschichte zu kennen.
+Dieses Dokument ist so geschrieben, dass es allein steht: wer nur diese Datei
+liest, kann den Code beurteilen, ohne die Vorgeschichte zu kennen.
+
+---
+
+## 0. DIE REGEL — zuerst lesen
+
+> **Jeder Sprint muss begründen, warum er das BÜHNENRISIKO SENKT.**
+> Was das nicht kann, wartet bis nach der Aufzeichnung.
+
+Kein neues Untersystem, keine neue externe Abhängigkeit, kein Mechanismus,
+dessen Verhalten auf dem Show-Rechner nicht gemessen ist.
+
+**Die Regel gilt besonders für gut begründete Vorschläge.** ARENA-23 bis 25
+waren alle drei gut begründet — und haben zusammen +17 % Code, drei
+Abhängigkeiten außerhalb unserer Kontrolle (MP3s, Mix-Minus, Chromes
+Popup-Politik) und eine ungemessene Annahme in die Bedienung gebracht.
+ARENA-26 hat das zurückgebaut. Die Hausregel dazu steht seit jeher weiter
+unten und hat nicht gereicht, weil sie zu weit unten stand:
+**„Bühnenrisiko schlägt Eleganz."**
+
+### Drei Messungen fehlen — ohne sie wird gegen Annahmen gebaut
+
+Sie sind der Grund, warum ARENA-25 überhaupt entstehen konnte:
+
+1. **Der Show-Mac** — Vollbild, Bildrate, Anzeigeskalierung.
+   Ablauf: `OPERATOR-MANUAL.md`, Abschnitt 6.
+2. **Die Wand** — ist die Countdown-Ziffer mit Grad 88 lesbar? „AUFSCHLAG!"?
+   „Quiet, please."? Das kann niemand am Schreibtisch beurteilen.
+3. **Der Dante-Feed** — Einpegeln am echten Eingang. Der historische
+   Bühnenausfall hing genau daran (Gesang 0,025 gegen Raum 0,027) und wurde
+   nie am echten Eingang nachgestellt.
+
+Dazu fehlt eine **Definition von „fertig"** für den Aufzeichnungstag. Ohne sie
+wird an „wäre schön" gemessen statt an „muss laufen".
 
 ---
 
@@ -709,6 +741,11 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     | E-09 | Pflicht-Asset fehlt | `assets.failed` minus die optionalen |
     | E-10 | Klavierstück fehlt | `klavier.bereit` (ruht außerhalb Klavier) |
 
+    > **ÜBERHOLT VON ARENA-26** — diese Tabelle ist Geschichte. Es gibt keine
+    > zehn Lampen mehr, sondern EINE Statuszeile; E-10 ist entfallen, E-02 und
+    > E-03 schließen einander aus. Der gültige Stand steht bei ARENA-26 und in
+    > `OPERATOR-MANUAL.md`.
+
     **E-03 ist bewusst breiter als der Klavier-Modus:** die adaptive
     Stillegrenze lernt den Raum nur aus Frames *ohne* Grundton — ein Instrument
     im Mikrofon hält sie also fest, während der Pegel darüber liegt. Die Lampe
@@ -795,8 +832,9 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     Annahme — `about:blank` erbt die Herkunft, das Popup kommt durch — war **auf
     dem Show-Mac nie gemessen**; im Testbrowser wird es blockiert. Damit hätte
     der Operator *beide* Betriebsarten kennen müssen, weil wir nicht wissen,
-    welche gilt. Drei Wochen vor der Aufzeichnung ist das die falsche Sorte
-    Ungewissheit. Weg sind `zweitfensterOeffnen()`, der Wächter samt
+    welche gilt — ungemessene Browserpolitik in der Bedienung, sieben Wochen
+    vor der Aufzeichnung. (Im Commit steht „drei Wochen"; das war schlicht
+    falsch gerechnet. Am Argument ändert es nichts.) Weg sind `zweitfensterOeffnen()`, der Wächter samt
     Lebenszeichen, `Ctrl+Shift+O`, der Knopf im Onboarding und
     `test-operatorfenster.js`.
   - **Das Panel ist eine Zeile geworden.** Der Denkfehler von ARENA-24: es gibt
@@ -826,33 +864,32 @@ mehrere Punkte Korrekturen an vorherigen Punkten sind.
     der einzige Hinweis. Gefunden hat es der Browsertest, weil er prüft, **dass
     das Spiel überhaupt hochkommt.** Genau dafür ist er da.
 
+- **ARENA-27** — **die Regel wird durchsetzbar.** ARENA-26 hat sie
+  aufgeschrieben, aber auf Zeile 831 — dort liest sie niemand. Jetzt steht sie
+  als **Abschnitt 0 ganz oben** und zusätzlich in **`CLAUDE.md`**, der Datei,
+  die ein Chat in diesem Verzeichnis von selbst lädt. Dazu drei Nacharbeiten:
+  - **Der Bootstext bewarb `O = Operator-Fenster`** — einen Griff, den ARENA-26
+    entfernt hatte, und meldete sich weiter als ARENA-25. Lautlos: kein Test
+    hat die Zeile je gelesen. Auf der Bühne hätte sie den Operator auf einen
+    toten Griff geschickt. `test-hotkeys.js` prüft sie jetzt **gegen die
+    Quelle** — welche Tasten `handleKeyDown` auswertet, steht in den
+    `e.code === 'Key…'`-Vergleichen —, und zwar in beide Richtungen: kein
+    beworbener Griff ohne Code, kein Griff ohne Werbung. Mit einer Gegenprobe
+    abgesichert (der Test fällt durch, wenn man das `O` wieder einsetzt).
+  - **Abschnitt 9b** handelte noch vom Klavier-Modus. Der MECHANISMUS gilt
+    weiter und für jede Tonquelle im Raum — Zuspieler, offener Monitor,
+    Instrument daneben —, deshalb steht er jetzt allgemein da statt
+    modusgebunden. Er ist der Grund, warum es E-03 gibt.
+  - Die alte E-01…E-10-Lampentabelle bei ARENA-24 hat einen
+    **Vorwärtsverweis** bekommen. Sie ist Geschichte, liest sich ohne Hinweis
+    aber wie der gültige Stand.
+  - Korrektur einer eigenen Zahl: in der ARENA-26-Commit-Message steht „drei
+    Wochen vor der Aufzeichnung". Es sind **sieben**. Am Argument ändert das
+    nichts, an der Sorgfalt schon.
+
 ---
 
-## 7c. Die Regel für die Wochen bis zur Aufzeichnung
-
-**Jeder Sprint muss begründen, warum er das BÜHNENRISIKO SENKT.**
-
-Was das nicht kann, wartet bis nach der Aufzeichnung. Kein neues Untersystem,
-keine neue externe Abhängigkeit, kein Mechanismus, dessen Verhalten auf dem
-Show-Rechner nicht gemessen ist. Die Regel gilt auch — und besonders — für
-Vorschläge, die gut begründet sind: ARENA-23 bis 25 waren alle drei gut
-begründet.
-
-**Drei Messungen fehlen, und sie sind der Grund, warum ARENA-25 überhaupt
-entstehen konnte.** Ohne sie wird gegen Annahmen gebaut:
-
-1. **Der Show-Mac** — Vollbild, Bildrate, Anzeigeskalierung. Ablauf steht in
-   `OPERATOR-MANUAL.md`, Abschnitt 6.
-2. **Die Wand** — ist die Countdown-Ziffer mit Grad 88 lesbar? „AUFSCHLAG!"?
-   „Quiet, please."? Das kann niemand am Schreibtisch beurteilen.
-3. **Der Dante-Feed** — Einpegeln am echten Eingang. Der historische
-   Bühnenausfall hing genau daran (Gesang 0,025 gegen Raum 0,027) und wurde nie
-   am echten Eingang nachgestellt.
-
-Dazu fehlt eine **Definition von „fertig"** für den Aufzeichnungstag. Ohne sie
-wird an „wäre schön" gemessen statt an „muss laufen".
-
-### Was aus dem Klavier-Sprint als Wissen bleibt
+## 7c. Was aus dem Klavier-Sprint als Wissen bleibt
 
 **Unter `file://` ist die Web-Audio-Kette STUMM.** Gemessen am 27.08.2026 in
 Chrome headless, Seite und MP3 im selben Verzeichnis:
@@ -979,30 +1016,33 @@ aufruft, sieht den Platz mit einigen Sekunden Verzug.
 
 ---
 
-## 9b. Betrieb: Mix-Minus im Klavier-Modus — showkritisch
+## 9b. Betrieb: Kein klingender Ton auf das Gesangsmikrofon
 
-**Das Klavier darf niemals ins Gesangsmikrofon.** Der bekannte Grund ist die
-Tonhöhenerkennung: die Steuerung folgte dem Klavier statt der Stimme. Der
-zweite ist gravierender und **garantiert** einen Ausfall:
+**Der Klavier-Modus ist mit ARENA-26 entfallen** — der MECHANISMUS dahinter
+gilt aber unverändert und für jede Tonquelle im Raum: einen Zuspieler, einen
+offenen Monitor, ein Instrument daneben.
+
+Der bekannte Grund ist die Tonhöhenerkennung: die Steuerung folgt dann dem
+Fremdton statt der Stimme. Der zweite ist gravierender und **garantiert** einen
+Ausfall:
 
 Die adaptive Stillegrenze lernt den Raumpegel ausdrücklich **nur aus Frames
 ohne erkennbaren Grundton** — das war ein eigener Fix, damit Gesang die Grenze
-nicht anhebt. Klavier *hat* einen Grundton. Die Grenze wächst also **nicht**
-mit, während der gemessene Pegel dauerhaft darüber liegt. Folge: **die
-Ruheprüfung wird nie fertig, das Spiel hängt im Countdown** — reproduzierbar,
-jedes Mal.
+nicht anhebt. Ein klingender Ton *hat* einen Grundton. Die Grenze wächst also
+**nicht** mit, während der gemessene Pegel dauerhaft darüber liegt. Folge:
+**die Ruheprüfung wird nie fertig, das Spiel hängt im Countdown** —
+reproduzierbar, jedes Mal.
 
 Deshalb:
 
-- **In der Arena muss der Klavierweg zur PA ein Mix-Minus sein**: das Signal,
-  das die Spielerinnen-Mikrofone abgreifen, darf das Klavier nicht enthalten.
-  Das ist eine Frage an die Tontechnik und vor der Show zu klären.
-- Im Spiel ist die **Kopfhörer-Bestätigung eine Sperre** und kein Hinweis —
-  ohne sie geht es im Onboarding nicht weiter.
-- Hängt der Countdown im Klavier-Modus länger als 8 s, nennt die Warnung den
-  Verdacht ausdrücklich („KLAVIER IM MIKROFON? Mix-Minus prüfen"), im
-  Protokoll **und** im Bild. Der Operator schaut auf die Wand, nicht ins
-  Protokoll.
+- **Führt in der Arena irgendein Programmton auf die PA, muss der Weg zu den
+  Spielerinnen-Mikrofonen ein Mix-Minus sein.** Das ist eine Frage an die
+  Tontechnik und vor der Show zu klären.
+- Das Operator-Panel meldet genau diesen Fall als **E-03 „TON IM MIKROFON"** —
+  und es unterscheidet ihn von E-02 „RAUM ZU LAUT". Der Hänger ist derselbe,
+  den Unterschied macht der Grundton: **E-02 kann sich legen, E-03 nie.**
+- Auf der Wand steht dabei nur **„Quiet, please."** Die Diagnose bleibt im
+  Panel, das Publikum liest sie nicht mit.
 - Der **Notausgang bleibt** `Ctrl+Shift+A`: er schlägt auch dann auf, wenn die
   Ruhe nie fertig wird.
 

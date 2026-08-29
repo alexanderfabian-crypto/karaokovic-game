@@ -61,21 +61,11 @@
         /* -------------------------------------------------------------------
          * OPERATOR-PANEL — das Aussehen steht NICHT hier.
          *
-         * Bis ARENA-24 lag es in diesem Block. Seit ARENA-25 gibt es das Panel
-         * zweimal: einmal hier im Spielfenster und einmal in einem eigenen
-         * Fenster auf dem Operator-Bildschirm. Jenes Fenster entsteht aus
-         * `about:blank` und hat kein Stylesheet — es koennte dieses hier gar
-         * nicht laden.
-         *
-         * Deshalb steht das Aussehen in OperatorPanel.CSS (app-arena.js) und
-         * wird je Dokument einmal eingefuegt. EINE Quelle fuer beide Fenster;
-         * zwei Stylesheets waeren genau der Fall, in dem das Zweitfenster beim
-         * naechsten Feintuning still anders aussieht als das Panel im Spiel.
-         *
-         * `hidden` am Element unten haelt es unsichtbar, BEVOR der Spielcode
-         * laeuft. Danach uebernimmt die Klasse `an` (Autor-CSS schlaegt die
-         * UA-Regel von `hidden`).
-         * ------------------------------------------------------------------ */
+         * Bis ARENA-24 lag es in diesem Block. Seit ARENA-25 steht es im
+         * Spielcode (OperatorPanel.CSS): EINE Quelle, und der Node-Test
+         * kann sie lesen. Zwei Stylesheets waeren genau der Fall, in dem
+         * die Anzeige beim naechsten Feintuning still auseinanderlaeuft.
+         */
 
         /* Rückmeldung im Modusschritt. Bleibt leer, bis es etwas zu sagen gibt. */
         .warnung:empty { display: none; }

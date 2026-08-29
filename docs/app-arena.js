@@ -9084,7 +9084,7 @@
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.running) this.wachhalten();
             });
-            console.info('[Karaokovic] ARENA-25 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Operator-Panel, O = Operator-Fenster, L = Protokoll.');
+            console.info('[Karaokovic] ARENA-26 bereit. Hotkeys (Ctrl+Shift oder Alt+Shift): U = Undo, X = Reset, A = Aufschlag erzwingen, M = Operator-Panel, L = Protokoll.');
         }
 
         /**

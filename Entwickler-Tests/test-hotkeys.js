@@ -112,4 +112,36 @@ check('Die Panel-Umschaltung ist protokolliert',
 check('Der erzwungene Aufschlag ebenso',
     /OPERATOR.*von Hand erzwungen/.test(game.protokoll()));
 
+/* --- 7. Der Bootstext bewirbt GENAU die Griffe, die es gibt -------------- *
+ * ARENA-26 hat Ctrl+Shift+O entfernt — die Konsolenzeile beim Start pries ihn
+ * trotzdem weiter an, und zwar lautlos: kein Test hat sie gelesen. Auf der
+ * Buehne schickt so eine Zeile den Operator auf einen Griff, der nichts tut,
+ * und im Zweifel sucht er den Fehler bei sich.
+ *
+ * Geprueft wird deshalb gegen die QUELLE und nicht gegen eine getippte Liste:
+ * welche Tasten der Handler tatsaechlich auswertet, steht in den
+ * `e.code === 'KeyX'`-Vergleichen. Beide Richtungen — kein beworbener Griff
+ * ohne Code, kein Griff ohne Werbung. */
+const quelle = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'app-arena.js'), 'utf8');
+
+const bootZeile = (quelle.match(/\[Karaokovic\] ARENA-\d+ bereit\.[^']*/) || [''])[0];
+check('Der Bootstext nennt die aktuelle Fassung',
+    /ARENA-26 bereit/.test(bootZeile), bootZeile.slice(0, 34));
+
+/* Nur die Hotkeys aus handleKeyDown, nicht der Enter+Leertaste-Cue. */
+const behandelt = [...new Set(
+    (quelle.match(/e\.code === 'Key([A-Z])'/g) || [])
+        .map((s) => s.slice(-2, -1)))].sort();
+const beworben = [...new Set(
+    (bootZeile.match(/\b([A-Z]) = /g) || []).map((s) => s[0]))].sort();
+console.log(`  Code: ${behandelt.join(' ')}   |   Bootstext: ${beworben.join(' ')}`);
+
+check('Jeder beworbene Griff existiert auch im Code',
+    beworben.every((k) => behandelt.includes(k)),
+    beworben.filter((k) => !behandelt.includes(k)).join(' ') || 'keiner uebrig');
+check('Und jeder Griff im Code wird auch beworben',
+    behandelt.every((k) => beworben.includes(k)),
+    behandelt.filter((k) => !beworben.includes(k)).join(' ') || 'keiner fehlt');
+
 summary();
